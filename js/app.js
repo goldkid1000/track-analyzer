@@ -14,6 +14,10 @@
       ];
       var analysisProgress=document.getElementById('analysisProgress'),analysisProgressLabel=document.getElementById('analysisProgressLabel');
       var analysisProgressPercent=document.getElementById('analysisProgressPercent'),analysisProgressBar=document.getElementById('analysisProgressBar'),analysisProgressDetail=document.getElementById('analysisProgressDetail');
+      var coachPanel=document.getElementById('coachPanel'),intentPill=document.getElementById('intentPill'),intentText=document.getElementById('intentText'),intentBubbles=document.getElementById('intentBubbles');
+      function setCoachIdle(on){coachPanel.classList.toggle('idle',!!on);}
+      function setIntentPill(text,warn){intentText.textContent=text;intentPill.hidden=false;intentPill.classList.toggle('warn',!!warn);}
+      function hideIntentPill(){intentPill.hidden=true;}
 
       function setProgress(percent,label,detail,state){
         percent=clamp(Math.round(percent),0,100);
@@ -132,7 +136,7 @@ var content={
         document.getElementById('sideGuide').hidden=mode!=='side';
         document.getElementById('frameGuide').setAttribute('data-view',mode==='side'?'side':'standard');
         if(pose)pose.setOptions({modelComplexity:mode==='side'?2:1,smoothLandmarks:true,enableSegmentation:false,minDetectionConfidence:mode==='side'?.5:.55,minTrackingConfidence:mode==='side'?.5:.55});
-        history=[];featureWindow=[];stableHeadline='';stableCount=0;repReviewCount=0;latestAnalysis=null;latestMetrics=null;resetVideo();resetCoach();
+        history=[];featureWindow=[];stableHeadline='';stableCount=0;repReviewCount=0;latestAnalysis=null;latestMetrics=null;resetVideo();resetCoach();resetIntent();
       }
 
       function resetVideo(){
@@ -272,14 +276,14 @@ var content={
           video.removeAttribute('src');video.srcObject=stream;video.loop=false;video.playbackRate=1;featureWindow=[];history=[];resetVideo();await video.play();
           video.style.transform=facing==='user'?'scaleX(-1)':'none';
           fitVideoFrame();
-          empty.classList.add('hidden');statusPill.textContent='Warming up analyzer…';statusPill.classList.add('live');
+          empty.classList.add('hidden');setCoachIdle(false);statusPill.textContent='Warming up analyzer…';statusPill.classList.add('live');
           setProgress(12,'Warming up pose model…','This first step can take a moment. Keep your full body visible while the model starts.','working');showPoseLoader('Warming up pose model…');
           document.getElementById('cameraToggle').setAttribute('aria-label','Stop camera');
           runLoop();
         }catch(err){
           var modelError=err&&err.message==='Analyzer model unavailable.';
           hidePoseLoader();statusPill.textContent=modelError?'Analyzer unavailable':'Camera unavailable';statusPill.classList.remove('live');
-          empty.classList.remove('hidden');
+          empty.classList.remove('hidden');setCoachIdle(true);
           document.querySelector('.camera-empty h2').textContent=modelError?'Analyzer did not load':'Camera needs permission';
           document.querySelector('.camera-empty p').textContent=modelError?'Reload the app and try again. You can also upload a clip after the analyzer starts.':'Allow camera access in your browser, or upload a video clip instead.';
           setProgress(0,modelError?'Pose model unavailable':'Camera access needed',modelError?'Reload the app, then try again. No score can be calculated without the model.':'Allow camera permission or upload a saved video clip.','error');
@@ -294,11 +298,11 @@ var content={
         document.getElementById('slowReview').setAttribute('aria-pressed','false');
         ctx.clearRect(0,0,canvas.width,canvas.height);featureWindow=[];history=[];lostFrames=0;
         stableHeadline='';stableCount=0;latestAnalysis=null;latestMetrics=null;latestScore=0;
-        resetVideo();
+        resetVideo();resetIntent();
       }
 
       function stopAndReset(){
-        stopSource();empty.classList.remove('hidden');statusPill.textContent='Camera off';statusPill.classList.remove('live');
+        stopSource();empty.classList.remove('hidden');setCoachIdle(true);statusPill.textContent='Camera off';statusPill.classList.remove('live');
         document.getElementById('cameraToggle').setAttribute('aria-label','Start camera');resetCoach();
       }
 
@@ -319,6 +323,7 @@ var content={
 
       document.getElementById('startCameraTop').addEventListener('click',startCamera);
       document.getElementById('uploadClip').addEventListener('click',function(){document.getElementById('fileInput').click();});
+      document.getElementById('uploadClipTop').addEventListener('click',function(){document.getElementById('fileInput').click();});
       document.getElementById('cameraToggle').addEventListener('click',function(){stream||objectUrl?stopAndReset():startCamera()});
       document.getElementById('flipCamera').addEventListener('click',function(){facing=facing==='user'?'environment':'user';if(stream)startCamera();});
       document.getElementById('slowReview').addEventListener('click',function(){
@@ -335,7 +340,7 @@ var content={
         setProgress(8,'Opening clip…','Preparing the video for on-device pose analysis.','working');showPoseLoader('Opening clip…');
         objectUrl=URL.createObjectURL(file);video.src=objectUrl;video.loop=false;video.playbackRate=1;video.style.transform='none';featureWindow=[];history=[];resetVideo();
         video.addEventListener('loadedmetadata',fitVideoFrame,{once:true});
-        video.play().then(function(){fitVideoFrame();empty.classList.add('hidden');statusPill.textContent='Warming up analyzer…';statusPill.classList.add('live');setProgress(12,'Warming up pose model…','Keep the whole athlete visible while the first frames are checked.','working');runLoop();}).catch(function(){statusPill.textContent='Could not open clip';setProgress(0,'Clip could not open','Choose a supported video file and try again.','error');});
+        video.play().then(function(){fitVideoFrame();empty.classList.add('hidden');setCoachIdle(false);statusPill.textContent='Warming up analyzer…';statusPill.classList.add('live');setProgress(12,'Warming up pose model…','Keep the whole athlete visible while the first frames are checked.','working');runLoop();}).catch(function(){statusPill.textContent='Could not open clip';setProgress(0,'Clip could not open','Choose a supported video file and try again.','error');});
       });
 
       document.querySelectorAll('.photo-input').forEach(function(input){input.addEventListener('change',function(e){
@@ -395,6 +400,101 @@ var content={
           hipLift:(shoulder.y-hip.y)/torso,
           sideRatio:Math.hypot(lm[11].x-lm[12].x,lm[11].y-lm[12].y)/torso
         };
+      }
+
+      /* ---------- proactive intent detection (pose-based, no voice) ---------- */
+      var intentTips={
+        block:{
+          set:['Hips 3-6 in above shoulders, shoulders stacked over the hands.','Eyes down - keep the head neutral, don\u2019t peek at the lane.','Front knee near 90\u00b0, rear knee 120-135\u00b0, both feet loaded.'],
+          ready:['Set the power foot one lower-leg length from the line.','One breath in - then explode out. Don\u2019t rush the gun.','Plan to stay low through the first 10 meters.'],
+          moving:['Rip the hands apart - one punches forward, one drives back.','Push the track away; keep one long line from head to heel.','Punch the rear leg through low and fast.']
+        },
+        side:{
+          set:['Walk back and settle into your drive posture.','Decide your first three steps before you run.','Tall hips, lean from the ankles - not the waist.'],
+          ready:['Eyes down the lane, one cue in mind.','First steps: push back into the track, don\u2019t reach.','Relax the jaw and shoulders before you go.'],
+          moving:['Piston-like leg action - down and back under the hips.','Earn your height gradually; don\u2019t pop up early.','Knee forward, toe up, strike beneath you.']
+        },
+        askip:{
+          set:['Stand tall, ribs stacked over hips.','Find your rhythm before the first skip.','Relaxed shoulders - the arms set the tempo.'],
+          ready:['Thigh toward parallel, strike down under the hip.','Short ground contacts - think hot ground.','Keep the bounce in the ankles, not the knees.'],
+          moving:['Punch the knee forward with the toe up.','Match the arms to the skip - hip to lip.','Stay tall; don\u2019t lean back to lift the knee.']
+        },
+        arms:{
+          set:['Stand side-on so the camera sees both shoulders.','Loosen the jaw and drop the shoulders.','Hands relaxed - no fists.'],
+          ready:['Think \u201chip to lip\u201d before the first rep.','Elbows drive back, not across the body.','Loose shoulders let the arms swing big.'],
+          moving:['Drive the arms backward with loose hands.','Hands travel on two straight rails - no crossing.','Let the arms set the rhythm for the legs.']
+        },
+        sprint:{
+          set:['Walk into the lane and find tall posture.','Hips tall, head quiet, shoulders low.','Pick one cue - posture, arms, or foot strike.'],
+          ready:['Push, then rise - earn your height gradually.','Quick feet under the hips from step one.','Stay loose; tension kills speed.'],
+          moving:['Run tall through the hips, head quiet.','Down and back with the foot - no reaching ahead.','Drop the shoulders and unclench the jaw.']
+        }
+      };
+      var intentState={current:'none',since:0,stable:'none',tipIdx:0,moveHist:[],lastBubble:''};
+      var intentLabels={
+        set:['Setting up','Looks like a set position - here is your focus:'],
+        ready:['Standing by','You look ready - one thing before you go:'],
+        moving:['Moving','You are moving - I will score this rep:']
+      };
+      function modeName(){var names={block:'block start',side:'side sprint',askip:'A-skip',arms:'arm action',sprint:'sprint form'};return names[mode]||mode;}
+      function classifyIntent(lm,f){
+        if(!f)return 'partial';
+        var hipX=(lm[23].x+lm[24].x)/2;
+        intentState.moveHist.push(hipX);
+        if(intentState.moveHist.length>10)intentState.moveHist.shift();
+        if(intentState.moveHist.length>=6){
+          var r=Math.max.apply(null,intentState.moveHist)-Math.min.apply(null,intentState.moveHist);
+          if(r>0.12)return 'moving';
+        }
+        var kneeBent=Math.min(f.kneeL,f.kneeR)<135;
+        if(f.hipY>0.52&&kneeBent)return 'set';
+        return 'ready';
+      }
+      function showIntentBubble(label,tip){
+        var text=label+' '+tip;
+        if(text===intentState.lastBubble)return;
+        intentState.lastBubble=text;
+        var b=document.createElement('div');
+        b.className='intent-bubble';
+        var strong=document.createElement('strong');strong.textContent=label+' ';
+        b.appendChild(strong);
+        b.appendChild(document.createTextNode(tip));
+        intentBubbles.appendChild(b);
+        while(intentBubbles.children.length>3)intentBubbles.removeChild(intentBubbles.firstChild);
+        setTimeout(function(){b.classList.add('out');setTimeout(function(){if(b.parentNode)b.parentNode.removeChild(b);},350);},5000);
+      }
+      function onStableIntent(inst){
+        if(!(stream||objectUrl))return;
+        var label=intentLabels[inst];
+        if(!label){
+          if(inst==='partial')setIntentPill('Partial body - step back',true);
+          else setIntentPill('Waiting for athlete',true);
+          return;
+        }
+        var tips=(intentTips[mode]||intentTips.sprint)[inst];
+        var tip=tips[intentState.tipIdx%tips.length];
+        intentState.tipIdx++;
+        setIntentPill(label[0]+' \u00b7 '+modeName(),false);
+        showIntentBubble(label[1],tip);
+      }
+      function updateIntent(lm){
+        var f=null;
+        try{f=extractFeatures(lm);}catch(e){f=null;}
+        var inst=classifyIntent(lm,f);
+        var now=Date.now();
+        if(inst!==intentState.current){intentState.current=inst;intentState.since=now;}
+        else if(inst!==intentState.stable&&now-intentState.since>1000){
+          intentState.stable=inst;
+          onStableIntent(inst);
+        }
+      }
+      function noteNoAthlete(){
+        intentState.current='none';intentState.stable='none';intentState.moveHist=[];
+        if(stream||objectUrl)setIntentPill('Waiting for athlete',true);
+      }
+      function resetIntent(){
+        intentState.current='none';intentState.stable='none';intentState.moveHist=[];intentState.tipIdx=0;intentState.lastBubble='';
+        intentBubbles.innerHTML='';hideIntentPill();
       }
 
       function analyze(lm){
@@ -555,8 +655,8 @@ var content={
         if(results.poseLandmarks){if(poseLoaderShown)hidePoseLoader();
           if(window.drawConnectors&&window.POSE_CONNECTIONS)drawConnectors(ctx,results.poseLandmarks,POSE_CONNECTIONS,{color:'#54e1ac',lineWidth:5});
           if(window.drawLandmarks)drawLandmarks(ctx,results.poseLandmarks,{color:'#ff7040',fillColor:'#ffffff',lineWidth:2,radius:4});
-          var a=analyze(results.poseLandmarks);if(a)updateCoach(a);
-        }else{featureWindow=[];analysisState.textContent='No athlete detected';setProgress(12,'Looking for an athlete','Move into frame and make sure your whole body is visible from head to ankles.','working');}
+          updateIntent(results.poseLandmarks);var a=analyze(results.poseLandmarks);if(a)updateCoach(a);
+        }else{featureWindow=[];noteNoAthlete();analysisState.textContent='No athlete detected';setProgress(12,'Looking for an athlete','Move into frame and make sure your whole body is visible from head to ankles.','working');}
         ctx.restore();
       }
 
