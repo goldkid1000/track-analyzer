@@ -59,10 +59,16 @@
             <div class="record-ring"></div>
             <h2>Ready for a block start</h2>
             <p>Place your phone sideways, step back until your full body fits, then turn on the camera.</p>
-            <button class="primary" id="startCameraTop">
+            <div class="empty-actions">
+            <button class="primary volt-start" id="startCameraTop">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 10l4.55-2.27A1 1 0 0121 8.62v6.76a1 1 0 01-1.45.89L15 14M4 6h9a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V8a2 2 0 012-2z"/></svg>
               Turn on camera
             </button>
+            <button class="ghost-control wide" id="uploadClipTop" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 16V4m0 0L7 9m5-5l5 5M5 20h14"/></svg>
+              <span>Upload a clip</span>
+            </button>
+            </div>
           </div>
         </div>
         <div class="camera-controls">
@@ -82,12 +88,22 @@
         </div>
       </div>
 
-      <aside class="coach" aria-live="polite">
+      <aside class="coach idle" id="coachPanel" aria-live="polite">
         <div class="coach-top">
           <div><h2>Coach</h2><p class="coach-sub" id="analysisState">Start the camera or upload a clip</p></div>
           <div class="coach-actions">
             <div class="score" id="scoreRing"><div><b id="scoreValue">—</b><small>2D match</small></div></div>
           </div>
+        </div>
+        <div class="intent-pill" id="intentPill" hidden><span class="intent-dot" aria-hidden="true"></span><span id="intentText">Waiting for athlete</span></div>
+        <div class="intent-bubbles" id="intentBubbles" aria-live="polite"></div>
+        <div class="coach-getstarted">
+          <h3>Ready in 10 seconds</h3>
+          <ol>
+            <li>Pick a movement above</li>
+            <li>Turn on the camera or upload a clip</li>
+            <li>Keep your full body in frame — I’ll coach each rep</li>
+          </ol>
         </div>
         <div class="analysis-progress" id="analysisProgress" data-state="waiting" aria-live="polite">
           <div class="analysis-progress-head"><strong id="analysisProgressLabel">Waiting to analyze</strong><span id="analysisProgressPercent">0%</span></div>
