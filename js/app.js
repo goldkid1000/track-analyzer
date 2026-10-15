@@ -174,7 +174,7 @@ var content={
         metricEls.forEach(function(m){m.value.textContent='—';m.bar.style.width='0%';});
       }
 
-      function buildCoachReview(issue,metrics){
+      function buildCoachReview(issue,metrics,asym){
         var strongest=[];
         metrics.forEach(function(v,i){if(v!==null)strongest.push({i:i,v:v});});
         strongest.sort(function(a,b){return b.v-a.v;});
@@ -186,7 +186,15 @@ var content={
         var praise=openings[repReviewCount%openings.length]+goodOne+joins[repReviewCount%joins.length]+(goodTwo?' and '+goodTwo+' is solid too':'')+'.';
         if(praise===lastCoachSentence)praise=openings[(repReviewCount+1)%openings.length]+goodOne+' is working well.';
         lastCoachSentence=praise;repReviewCount++;
-        return praise+' One thing: '+fix.fix+' Cue: “'+fix.cue+'” Drill: '+fix.drill+'.';
+        var out=praise+' One thing: '+fix.fix+' Cue: “'+fix.cue+'” Drill: '+fix.drill+'.';
+        // Left/right asymmetry: peak knee extension and median elbow angle are
+        // compared across the whole window, so a normal stride cycle (one leg
+        // flexed while the other extends) does not trigger it. Only a
+        // sustained side-to-side gap is reported, and only as a check — not
+        // an injury assessment.
+        if(asym&&asym.type==='knee')out+=' Asymmetry check: your '+asym.lagging+' leg finishes about '+asym.diff+'° less extended than your '+asym.strong+' leg. Add single-leg work on the '+asym.lagging+' side and re-check — if it persists, show your coach.';
+        else if(asym&&asym.type==='elbow')out+=' Asymmetry check: your '+asym.open+' elbow averages about '+asym.diff+'° more open than your '+asym.closed+' elbow. Mirror the arms in seated arm swings and re-check.';
+        return out;
       }
 
       document.querySelectorAll('.mode').forEach(function(btn){btn.addEventListener('click',function(){
@@ -200,10 +208,14 @@ var content={
         side:['Side View','Profile tracking tuned for acceleration and sprint form'],
         guide:['Guide','Technique cues, drills, and the exact fix video']
       };
-      var viewSwitching=false;
+      var viewSwitching=false,pendingView=null;
       function activateView(view){
-        if(!screenCopy[view]||viewSwitching)return;
-        if(document.body.dataset.activeView===view)return;
+        if(!screenCopy[view])return;
+        // Never drop a tap: a second tap during the 130ms+340ms transition
+        // used to be silently ignored, so quick tab taps lost navigation.
+        // Last tap wins — it is queued and applied when the transition ends.
+        if(viewSwitching){pendingView=view;return;}
+        if(document.body.dataset.activeView===view){pendingView=null;return;}
         viewSwitching=true;
         var page=document.querySelector('.page');
         page.classList.add('view-leaving');
@@ -219,7 +231,7 @@ var content={
             void cards[i].offsetWidth;
             cards[i].classList.add('stagger-in');
           }
-          setTimeout(function(){page.classList.remove('view-entering');viewSwitching=false;},340);
+          setTimeout(function(){page.classList.remove('view-entering');viewSwitching=false;if(pendingView&&pendingView!==document.body.dataset.activeView){var pv=pendingView;pendingView=null;activateView(pv);}else pendingView=null;},340);
         },130);
         document.getElementById('screenTitle').textContent=screenCopy[view][0];
         document.getElementById('screenSubtitle').textContent=screenCopy[view][1];
@@ -346,10 +358,15 @@ var content={
       document.querySelectorAll('.photo-input').forEach(function(input){input.addEventListener('change',function(e){
         var file=e.target.files&&e.target.files[0];if(!file)return;
         var slot=Number(input.dataset.slot),card=document.querySelector('[data-photo-slot="'+slot+'"]'),img=card.querySelector('img'),readout=card.querySelector('.photo-readout');
+        // Guard the photo race: onResults has no per-photo token, so a second
+        // pick while one is in flight would get the first photo's landmarks
+        // applied to the second photo's card. Queue instead of overlapping.
+        if(photoRequest){readout.textContent='Still analyzing the last photo — one moment, then pick again.';input.value='';return;}
         stopSource();empty.classList.remove('hidden');statusPill.textContent='Photo analysis';statusPill.classList.remove('live');resetCoach();
         if(!initPose()){readout.textContent='The pose model could not start. Reload and try again.';return;}
         if(photoUrls[slot])URL.revokeObjectURL(photoUrls[slot]);photoUrls[slot]=URL.createObjectURL(file);img.src=photoUrls[slot];img.alt='Athlete form photo '+(slot===0?'A':'B');
         readout.textContent='Reading the side-view skeleton and measuring angles…';showPoseLoader('Analyzing photo…');
+        img.onerror=function(){hidePoseLoader();photoRequest=null;readout.textContent='That image could not be opened. Try a different photo file.';};
         img.onload=function(){card.querySelector('.photo-placeholder').hidden=true;img.hidden=true;photoRequest={slot:slot,img:img,card:card};pose.send({image:img}).catch(function(){readout.textContent='This photo could not be analyzed. Try a clear, full-body side view.';photoRequest=null;});};
       });});
 
@@ -394,7 +411,7 @@ var content={
           elbow:(angle(lm[11],lm[13],lm[15])+angle(lm[12],lm[14],lm[16]))/2,
           elbowL:angle(lm[11],lm[13],lm[15]),elbowR:angle(lm[12],lm[14],lm[16]),
           kneeL:angle(lm[23],lm[25],lm[27]),kneeR:angle(lm[24],lm[26],lm[28]),
-          thigh:Math.min(thighL,thighR),thighSeparation:angle(lm[25],hip,lm[26]),wristLY:lm[15].y,wristRY:lm[16].y,
+          thigh:Math.min(thighL,thighR),thighL:thighL,thighR:thighR,thighSeparation:angle(lm[25],hip,lm[26]),wristLY:lm[15].y,wristRY:lm[16].y,
           armSplit:Math.abs(lm[15].y-lm[16].y)/torso,crossing:crossing/2,
           shinReach:Math.max((lm[27].x-lm[25].x)*facing,(lm[28].x-lm[26].x)*facing)/torso,
           hipLift:(shoulder.y-hip.y)/torso,
@@ -555,8 +572,20 @@ var content={
           else{issue='rearPush';headline='Finish the rear-block push';copy='The rear leg leaves before it reaches a long extension through block clearance.';}
         }else if(mode==='side'){
           if(frontView){analysisState.textContent='Turn fully side-on for sagittal scoring';setProgress(76,'Profile view needed','Place the phone square to the lane so the shoulders and hips overlap in profile.','working');return null;}
-          metrics=[bandScore(lean,28,52,28),bandScore(thighSeparation,70,125,60),Math.round((ceilingScore(shinReach,.12,.35)+floorScore(hipLift,-.15,.35))/2)];
-          if(metrics[0]<=metrics[1]&&metrics[0]<=metrics[2]){issue=lean<28?'earlyRise':'foldedHips';headline=lean<28?'Earn your height':'Hold one long drive line';copy=lean<28?'The torso comes tall before the push is finished.':'The trunk and hips lose their connected line during the drive phase.';}
+          // Phase-aware trunk scoring: a tall, near-vertical trunk is CORRECT at
+          // max velocity but a fault (early rise) during acceleration. Median lean
+          // across the window separates the two phases (<18 deg = max velocity).
+          // NOTE: hipLift here is (shoulder.y-hip.y)/torso, so an upright trunk
+          // gives hipLift near -1; -hipLift (= cos(lean) when the shoulder is
+          // above the hip) is the tall-posture term. floorScore(hipLift,...)
+          // would score every upright rep 0, which is what it did before.
+          var isMaxV=lean<18;
+          var trunkScore=isMaxV?bandScore(lean,4,16,12):bandScore(lean,18,52,22);
+          metrics=[trunkScore,bandScore(thighSeparation,70,125,60),Math.round((ceilingScore(shinReach,.12,.35)+floorScore(-hipLift,.55,.45))/2)];
+          if(metrics[0]<=metrics[1]&&metrics[0]<=metrics[2]){
+            if(isMaxV){issue='sprintPosture';headline='Keep the hips traveling tall';copy='The hip line drops during the stride instead of staying tall with a quiet head.';}
+            else{issue=lean<28?'earlyRise':'foldedHips';headline=lean<28?'Earn your height':'Hold one long drive line';copy=lean<28?'The torso comes tall before the push is finished.':'The trunk and hips lose their connected line during the drive phase.';}
+          }
           else if(metrics[1]<=metrics[2]){issue='thighSeparation';headline='Create more thigh separation';copy='The legs are cycling close together instead of pushing back while the free knee punches forward.';}
           else if(shinReach>.12){issue='underHip';headline='Put the foot down under you';copy='The shin and foot reach ahead of the hip at contact, which adds braking.';}
           else{issue='sprintPosture';headline='Keep the hips traveling tall';copy='The hip line drops during the drive pattern instead of rising gradually with the torso.';}
@@ -583,8 +612,26 @@ var content={
           else if(metrics[1]!==null&&metrics[1]<=metrics[2]){issue='frontSide';headline='Review thigh position';copy='The forward thigh does not reach the review range in this side-view sample. Check that the foot strikes back beneath the hips.'}
           else{issue='armRhythm';headline='Let the arms set rhythm';copy='The hands show limited travel during the window. Drive the elbows back with relaxed hands as fatigue builds.'}
         }
+        // NEW: left/right asymmetry across the window (peak extension + median elbow).
+        // Only in cyclic modes (sprint / side / A-skip), where both legs cycle
+        // through flexion and extension. In block mode the legs have different
+        // jobs (rear extends once, front has not yet) and in arms mode the legs
+        // may not cycle at all, so a peak gap there would be a false positive.
+        var asym=null;
+        if(mode==='sprint'||mode==='side'||mode==='askip'){
+        var kneeExtL=Math.max.apply(null,featureWindow.map(function(x){return x.kneeL}));
+        var kneeExtR=Math.max.apply(null,featureWindow.map(function(x){return x.kneeR}));
+        var kneeGap=kneeExtL-kneeExtR;
+        if(Math.abs(kneeGap)>=18)asym={type:'knee',diff:Math.round(Math.abs(kneeGap)),strong:kneeGap>0?'left':'right',lagging:kneeGap>0?'right':'left'};
+        else{
+          var elbowMedL=median(featureWindow.map(function(x){return x.elbowL}));
+          var elbowMedR=median(featureWindow.map(function(x){return x.elbowR}));
+          var elbowGap=elbowMedL-elbowMedR;
+          if(Math.abs(elbowGap)>=20)asym={type:'elbow',diff:Math.round(Math.abs(elbowGap)),open:elbowGap>0?'left':'right',closed:elbowGap>0?'right':'left'};
+        }
+        }
         var available=metrics.filter(function(v){return v!==null});
-        return {metrics:metrics,score:available.reduce(function(sum,v){return sum+v},0)/available.length,headline:headline,copy:copy,issue:issue};
+        return {metrics:metrics,score:available.reduce(function(sum,v){return sum+v},0)/available.length,headline:headline,copy:copy,issue:issue,asym:asym};
       }
 
       function updateCoach(a){
@@ -599,7 +646,7 @@ var content={
         var allStrong=availableMetrics.length>1&&availableMetrics.every(function(v){return v>=80});
         analysisState.textContent=allStrong?'Strong visible match · '+featureWindow.length+' frames':score>=60?'Solid base · '+featureWindow.length+' frames':'One clear review point · '+featureWindow.length+' frames';
         var feedback={issue:a.issue,headline:a.headline,copy:a.copy};
-        feedback.review=(latestAnalysis&&latestAnalysis.issue===feedback.issue&&stableCount%90!==0)?latestAnalysis.review:buildCoachReview(feedback.issue,metrics);
+        feedback.review=(latestAnalysis&&latestAnalysis.issue===feedback.issue&&stableCount%90!==0)?latestAnalysis.review:buildCoachReview(feedback.issue,metrics,a.asym);
         coachHeadline.textContent=feedback.headline;coachCopy.textContent=feedback.review;
         metricEls.forEach(function(m,i){
           if(metrics[i]===null){m.value.textContent=(mode==='block'&&i===2)?'Clearance not captured':'Side view needed';m.bar.style.width='0%';m.bar.style.background='var(--line)';}
@@ -623,22 +670,36 @@ var content={
         var knees=[Math.round(f.kneeL),Math.round(f.kneeR)].sort(function(a,b){return a-b}),trunk=Math.round(f.lean),armL=Math.round(f.elbowL),armR=Math.round(f.elbowR);
         var shinL=Math.round(Math.atan2(Math.abs(lm[27].x-lm[25].x),Math.abs(lm[27].y-lm[25].y))*180/Math.PI);
         var shinR=Math.round(Math.atan2(Math.abs(lm[28].x-lm[26].x),Math.abs(lm[28].y-lm[26].y))*180/Math.PI);
+        // Phase-gated photo checks: a single photo can be a crouched SET
+        // position (trunk near horizontal) or an upright SPRINT/DRIVE photo.
+        // Set-position criteria (front knee ~90, rear knee 120-135, hips
+        // above shoulders) are meaningless on a sprint photo — previously
+        // every upright photo with good knees was misdiagnosed as a
+        // hip-height fault, and every set photo as "folded hips".
+        var isSet=trunk>=55;
         var good=[];
         if(trunk>=28&&trunk<=55)good.push('trunk projects through a useful drive range');
-        if(knees[0]>=78&&knees[0]<=105)good.push('front-knee shape is close to 90°');
-        if(knees[1]>=115&&knees[1]<=145)good.push('rear-knee shape is in the 120–135° window');
+        else if(isSet&&trunk<=75)good.push('crouched set trunk line');
+        else if(!isSet&&trunk<28)good.push('tall sprint trunk line');
+        if(isSet&&knees[0]>=78&&knees[0]<=105)good.push('front-knee shape is close to 90°');
+        if(isSet&&knees[1]>=115&&knees[1]<=145)good.push('rear-knee shape is in the 120–135° window');
         if(armL>=65&&armL<=130&&armR>=65&&armR<=130)good.push('arms are loose rather than locked at 90°');
         if(!good.length)good.push('full-body position is clear enough to review');
         var issue='projection';
         if(f.sideRatio>.58)issue='projection';
-        else if(knees[0]<78||knees[0]>105)issue='frontKnee';
-        else if(knees[1]<115||knees[1]>145)issue='rearKnee';
-        else if(f.hipLift<.06)issue='hipHeight';
-        else if(trunk<28)issue='earlyRise';
-        else if(trunk>55)issue='foldedHips';
-        else if(f.shinReach>.12)issue='underHip';
-        else if(armL<65||armL>130||armR<65||armR>130)issue='elbowShape';
-        else issue='thighSeparation';
+        else if(isSet){
+          if(knees[0]<78||knees[0]>105)issue='frontKnee';
+          else if(knees[1]<115||knees[1]>145)issue='rearKnee';
+          else if(f.hipLift<.06)issue='hipHeight';
+          else issue='thighSeparation';
+        }else{
+          // Sprint/drive photo: a tall trunk is correct here, so earlyRise /
+          // foldedHips / set-knee checks do not apply.
+          if(f.shinReach>.12)issue='underHip';
+          else if(armL<65||armL>130||armR<65||armR>130)issue='elbowShape';
+          else if(f.thighSeparation<60)issue='thighSeparation';
+          else issue='sprintPosture';
+        }
         hidePoseLoader();var fix=coachFix[issue],v=fixVideos[issue];
         var scale=Math.max(1,pcanvas.width/900),pad=12*scale,lineH=25*scale,font=Math.round(17*scale)+'px Barlow';
         function callout(y,color,label,text){pctx.font=font;var shown=text.length>58?text.slice(0,56)+'…':text,w=Math.min(pcanvas.width-pad*2,pctx.measureText(label+'  '+shown).width+pad*2);pctx.fillStyle=color;pctx.fillRect(pad,y,w,lineH+pad);pctx.fillStyle='#07100c';pctx.fillText(label+'  '+shown,pad*2,y+lineH);}
