@@ -1,5 +1,17 @@
 [
   {
+    "version": "2.1.2",
+    "date": "2026-10-17",
+    "notes": [
+      "Rep check merged into AI Analyzer: the separate block is gone. One “What to check” pick (Block start, Side-angle sprint, A-skip, Arm action, Sprint form) sets both the live coaching and the rep check. One camera, one Start / Stop flow, one score + one fix.",
+      "Live skeleton on the camera: a flat 2D drawing sits on top of the preview while you record — problem joint in red, good joints in green. Still in your results on best + worst frames too. Never fake 3D.",
+      "Recording, plainly named: the button says “Start recording”, the status says “Recording…”, and 1 finger starts recording + analyzing while 2 fingers stop it. Buttons do exactly what the hand signs do.",
+      "Voice says “Recording has started” and “Recording has ended” when recording starts and stops — with the hand signs or the buttons — even when voice coaching is off.",
+      "Upload a clip lives inside the AI Analyzer now (one option, same analysis), plus slow review and switch camera in the same controls."
+    ],
+    "notify": true
+  },
+  {
     "version": "2.1.1",
     "date": "2026-10-17",
     "notes": [
