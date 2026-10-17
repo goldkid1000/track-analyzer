@@ -1,5 +1,21 @@
 [
   {
+    "version": "2.1.5",
+    "date": "2026-10-17",
+    "notes": [
+      "Camera works on PC too — if there is no back camera, the app just uses whatever camera is there. If the camera does not start, it tells you exactly why (in use, permission off, no camera, or needs the secure link).",
+      "Two cameras: the live views are now plainly labeled Camera 1 and Camera 2. You can see skeleton lines on you in the Camera 2 video.",
+      "Every camera can now switch: tap Switch camera to move between the front camera, the back camera, and any webcam on that device. Each camera can also be turned off and back on.",
+      "Two-camera join is one straight flow: open Two cameras, tap Join as second camera, type the code, tap Join — that camera turns on and connects.",
+      "Recording never records a black feed: if a camera is off, recording waits until it is back on.",
+      "Guide tab is simpler and easier to read: bigger text, more space, one fix per card. Same 40 entries — presentation only.",
+      "Your form vs Pro form is now a 3D-style side-by-side comparison — cartoon runners, not your real video, not motion capture. New view toggle: AI picks (the AI picks a view by a plain rule on your top fix and says why), You vs Pro, or Just me (your form alone, bigger).",
+      "AI Photo results now draw circles, lines, and short labels right on your best and worst photos — green for what looks good, yellow for needs work, red for the top fix. Tap a circle to see its cue and drill. A toggle hides the markings to see the clean photo. A joint that cannot be seen clearly in a photo is never marked.",
+      "Uploaded clips now get the full analysis — same pose and skeleton analysis, deep check, per-rep breakdown, and best/worst photos as a live recording, with results in AI Photo and Guide."
+    ],
+    "notify": true
+  },
+  {
     "version": "2.1.4",
     "date": "2026-10-17",
     "notes": [
