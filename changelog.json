@@ -1,1 +1,34 @@
-[{"date":"2026-10-17","notes":["AI Analyzer tab: live on-device coaching — watches you through the camera (one or both angles), names the activity, gives one fix at a time with cue + drill, rep counting, voice coaching, and a session summary. Embedded track-and-field + workouts knowledge, no API key, never guesses unseen body parts.","Dual-Angle two-camera analysis: connect an iPad as a second camera with a 6-character code, synced recording + auto-stop + synced replay + combined verdict (two 2D views, never fake 3D).","Photo access asks once: Camera / Photo Library preference is remembered, the picker only opens on your tap, and a cancelled pick shows a retry line instead of re-prompting.","Update system: visible version, What's New panel, Check for updates, and an update banner that fires only on real version bumps."],"notify":true,"version":"2.1.0"},{"date":"2026-10-11","notes":["Private rebuild: no-voice on-screen coaching, smooth UI, two-photo GOOD/FIX analyzer, side-view mode, cue memory, partial-body coaching, fix videos."],"notify":false,"version":"2.0.0"}]
+[
+  {
+    "version": "2.1.1",
+    "date": "2026-10-17",
+    "notes": [
+      "One AI Analyzer screen: the old Analyze tab and the two-camera tab are gone \u2014 live coaching, two cameras, photo check, and your results all live here now. Nothing was removed.",
+      "Hands-free gestures: look at the camera and hold up 1 finger to start coaching, 2 fingers to stop. Hold about 1 second. Buttons always work too.",
+      "Deep check after every workout: after you stop, the app re-reads the full clip and gives a per-rep breakdown, best + worst frames, and measurements it can actually support \u2014 estimates are labeled, and it never invents a speed or a distance.",
+      "Videos to watch: after the deep check, 1\u20132 videos matched to your top fix, from the videos already in the app.",
+      "Skeleton drawings in your results: a flat 2D drawing from the camera (never fake 3D) on the best and worst frames, with the joint to fix in red. Tap a red joint to see its fix.",
+      "Simpler words everywhere: buttons say what they do, errors say what happened and what to tap next."
+    ],
+    "notify": true
+  },
+  {
+    "date": "2026-10-17",
+    "notes": [
+      "AI Analyzer tab: live on-device coaching \u2014 watches you through the camera (one or both angles), names the activity, gives one fix at a time with cue + drill, rep counting, voice coaching, and a session summary. Embedded track-and-field + workouts knowledge, no API key, never guesses unseen body parts.",
+      "Dual-Angle two-camera analysis: connect an iPad as a second camera with a 6-character code, synced recording + auto-stop + synced replay + combined verdict (two 2D views, never fake 3D).",
+      "Photo access asks once: Camera / Photo Library preference is remembered, the picker only opens on your tap, and a cancelled pick shows a retry line instead of re-prompting.",
+      "Update system: visible version, What's New panel, Check for updates, and an update banner that fires only on real version bumps."
+    ],
+    "notify": true,
+    "version": "2.1.0"
+  },
+  {
+    "date": "2026-10-11",
+    "notes": [
+      "Private rebuild: no-voice on-screen coaching, smooth UI, two-photo GOOD/FIX analyzer, side-view mode, cue memory, partial-body coaching, fix videos."
+    ],
+    "notify": false,
+    "version": "2.0.0"
+  }
+]
