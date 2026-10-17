@@ -1,5 +1,15 @@
 [
   {
+    "version": "2.1.4",
+    "date": "2026-10-17",
+    "notes": [
+      "Update notice shows once per update (what changed), then never again until the next update — works on PC and phone.",
+      "Removed activity pickers — the AI auto-detects what you are doing (sprint, drill, squat, and more). One Block Starts toggle: turn it on for block starts, off for everything else.",
+      "Works on PC and phone: same tabs, same controls, same one-time update notice on both."
+    ],
+    "notify": true
+  },
+  {
     "version": "2.1.3",
     "date": "2026-10-17",
     "notes": [
@@ -16,7 +26,7 @@
     "version": "2.1.2",
     "date": "2026-10-17",
     "notes": [
-      "Rep check merged into AI Analyzer: the separate block is gone. One “What to check” pick (Block start, Side-angle sprint, A-skip, Arm action, Sprint form) sets both the live coaching and the rep check. One camera, one Start / Stop flow, one score + one fix.",
+      "Rep check merged into AI Analyzer: the separate block is gone. One pick sets both the live coaching and the rep check. One camera, one Start / Stop flow, one score + one fix.",
       "Live skeleton on the camera: a flat 2D drawing sits on top of the preview while you record — problem joint in red, good joints in green. Still in your results on best + worst frames too. Never fake 3D.",
       "Recording, plainly named: the button says “Start recording”, the status says “Recording…”, and 1 finger starts recording + analyzing while 2 fingers stop it. Buttons do exactly what the hand signs do.",
       "Voice says “Recording has started” and “Recording has ended” when recording starts and stops — with the hand signs or the buttons — even when voice coaching is off.",
@@ -28,10 +38,10 @@
     "version": "2.1.1",
     "date": "2026-10-17",
     "notes": [
-      "One AI Analyzer screen: the old Analyze tab and the two-camera tab are gone \u2014 live coaching, two cameras, photo check, and your results all live here now. Nothing was removed.",
+      "One AI Analyzer screen: the old Analyze tab and the two-camera tab are gone — live coaching, two cameras, photo check, and your results all live here now. Nothing was removed.",
       "Hands-free gestures: look at the camera and hold up 1 finger to start coaching, 2 fingers to stop. Hold about 1 second. Buttons always work too.",
-      "Deep check after every workout: after you stop, the app re-reads the full clip and gives a per-rep breakdown, best + worst frames, and measurements it can actually support \u2014 estimates are labeled, and it never invents a speed or a distance.",
-      "Videos to watch: after the deep check, 1\u20132 videos matched to your top fix, from the videos already in the app.",
+      "Deep check after every workout: after you stop, the app re-reads the full clip and gives a per-rep breakdown, best + worst frames, and measurements it can actually support — estimates are labeled, and it never invents a speed or a distance.",
+      "Videos to watch: after the deep check, 1–2 videos matched to your top fix, from the videos already in the app.",
       "Skeleton drawings in your results: a flat 2D drawing from the camera (never fake 3D) on the best and worst frames, with the joint to fix in red. Tap a red joint to see its fix.",
       "Simpler words everywhere: buttons say what they do, errors say what happened and what to tap next."
     ],
@@ -40,7 +50,7 @@
   {
     "date": "2026-10-17",
     "notes": [
-      "AI Analyzer tab: live on-device coaching \u2014 watches you through the camera (one or both angles), names the activity, gives one fix at a time with cue + drill, rep counting, voice coaching, and a session summary. Embedded track-and-field + workouts knowledge, no API key, never guesses unseen body parts.",
+      "AI Analyzer tab: live on-device coaching — watches you through the camera (one or both angles), names the activity, gives one fix at a time with cue + drill, rep counting, voice coaching, and a session summary. Embedded track-and-field + workouts knowledge, no API key, never guesses unseen body parts.",
       "Dual-Angle two-camera analysis: connect an iPad as a second camera with a 6-character code, synced recording + auto-stop + synced replay + combined verdict (two 2D views, never fake 3D).",
       "Photo access asks once: Camera / Photo Library preference is remembered, the picker only opens on your tap, and a cancelled pick shows a retry line instead of re-prompting.",
       "Update system: visible version, What's New panel, Check for updates, and an update banner that fires only on real version bumps."
