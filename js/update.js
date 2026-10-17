@@ -9,9 +9,16 @@
  */
 (function(){
 'use strict';
-var VERSION = '2.1.1';
+var VERSION = '2.1.2';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: '2.1.2', date: '2026-10-17', notes: [
+    'Rep check merged into AI Analyzer: the separate block is gone. One “What to check” pick sets both the live coaching and the rep check. One camera, one Start / Stop flow, one score + one fix.',
+    'Live skeleton on the camera: a flat 2D drawing on top of the preview while you record — problem joint in red, good joints in green. Never fake 3D.',
+    'Recording, plainly named: “Start recording”, “Recording…”, 1 finger starts recording + analyzing, 2 fingers stop it. Buttons do exactly what the hand signs do.',
+    'Voice says “Recording has started” and “Recording has ended” when recording starts and stops — with the hand signs or the buttons — even when voice coaching is off.',
+    'Upload a clip lives inside the AI Analyzer now (one option, same analysis), plus slow review and switch camera in the same controls.'
+  ]},
   { version: '2.1.1', date: '2026-10-17', notes: [
     'One AI Analyzer screen: the old Analyze tab and the two-camera tab are gone — live coaching, two cameras, photo check, and your results all live here now. Nothing was removed.',
     'Hands-free gestures: look at the camera and hold up 1 finger to start coaching, 2 fingers to stop. Hold about 1 second. Buttons always work too.',
