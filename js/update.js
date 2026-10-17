@@ -1,4 +1,4 @@
-/* Track Analyzer — update system (v2.1.4)
+/* Track Analyzer — update system (v2.1.5)
  *
  * Tenno Vault-style: visible version, What's New panel, Check for updates,
  * and an update banner. The banner fires ONLY when version.json reports a
@@ -15,12 +15,28 @@
  * when ANOTHER (newer) update launches. The What's New button still opens
  * the full history anytime — it never re-triggers the auto-notice and
  * never un-sees a version.
+ *
+ * v2.1.5 — camera works on PC too; two-camera views labeled Camera 1 /
+ * Camera 2 with the skeleton rig on the Camera 2 video; every camera can
+ * switch and can be turned off and back on; Your form vs Pro form is a
+ * 3D-style comparison with a view toggle (AI picks / You vs Pro / Just me).
  */
 (function(){
 'use strict';
-var VERSION = '2.1.4';
+var VERSION = '2.1.5';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: '2.1.5', date: '2026-10-17', notes: [
+    'Camera works on PC too — if there is no back camera, the app just uses whatever camera is there. If the camera does not start, it tells you exactly why (in use, permission off, no camera, or needs the secure link).',
+    'Two cameras: the live views are now plainly labeled Camera 1 and Camera 2. You can see skeleton lines on you in the Camera 2 video.',
+    'Every camera can now switch: tap Switch camera to move between the front camera, the back camera, and any webcam on that device. Each camera can also be turned off and back on.',
+    'Two-camera join is one straight flow: open Two cameras, tap Join as second camera, type the code, tap Join — that camera turns on and connects.',
+    'Recording never records a black feed: if a camera is off, recording waits until it is back on.',
+    'Guide tab is simpler and easier to read: bigger text, more space, one fix per card. Same 40 entries — presentation only.',
+    'Your form vs Pro form is now a 3D-style side-by-side comparison — cartoon runners, not your real video, not motion capture. New view toggle: AI picks (the AI picks a view by a plain rule on your top fix and says why), You vs Pro, or Just me (your form alone, bigger).',
+    'AI Photo results now draw circles, lines, and short labels right on your best and worst photos — green for what looks good, yellow for needs work, red for the top fix. Tap a circle to see its cue and drill. A toggle hides the markings to see the clean photo. A joint that cannot be seen clearly in a photo is never marked.',
+    'Uploaded clips now get the full analysis — same pose and skeleton analysis, deep check, per-rep breakdown, and best/worst photos as a live recording, with results in AI Photo and Guide.'
+  ]},
   { version: '2.1.4', date: '2026-10-17', notes: [
     'Update notice shows once per update (what changed), then never again until the next update — works on PC and phone.',
     'Removed activity pickers — the AI auto-detects what you are doing (sprint, drill, squat, and more). One Block Starts toggle: turn it on for block starts, off for everything else.',
