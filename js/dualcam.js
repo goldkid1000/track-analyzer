@@ -147,8 +147,12 @@ function makeCode(){
   return out;
 }
 function currentMode(){
-  var btn = document.querySelector('.mode[aria-pressed="true"]');
-  return (btn && btn.dataset.mode) || 'block';
+  // Follows the single Block Starts toggle (via TrackClassic). Off =
+  // auto-detect, scored with the generic sprint branch.
+  try{
+    if(window.TrackClassic && window.TrackClassic.getBlockStarts && window.TrackClassic.getBlockStarts()) return 'block';
+  }catch(e){}
+  return 'sprint';
 }
 function attachStream(video, stream){
   if(!video) return;
@@ -531,16 +535,6 @@ function summarizeDual(mode, feats){
   if(mode === 'block'){
     metrics = [dBand(Math.max.apply(null, feats.map(function(f){ return f.lean; })), 28, 55, 25), dFloor(armSplit, 0.65, 0.5), dFloor(rearExt, 150, 35)];
     issues = ['projection', 'armSplit', 'rearPush'];
-  } else if(mode === 'side'){
-    var isMaxV = lean < 18;
-    metrics = [isMaxV ? dBand(lean, 4, 16, 12) : dBand(lean, 18, 52, 22), dBand(thighSep, 70, 125, 60), Math.round((dCeil(shin, 0.12, 0.35) + dFloor(-hipLift, 0.55, 0.45)) / 2)];
-    issues = ['sprintPosture', 'thighSeparation', 'underHip'];
-  } else if(mode === 'askip'){
-    metrics = [dCeil(thigh, 24, 30), dCeil(lean, 14, 20), dBand(minKnee, 55, 105, 45)];
-    issues = ['kneeForward', 'tallPosture', 'footRecovery'];
-  } else if(mode === 'arms'){
-    metrics = [dBand(elbow, 70, 120, 55), dFloor(armExc, 0.55, 0.55), dCeil(cross, 0.12, 0.45)];
-    issues = ['elbowShape', 'backDrive', 'straightTrack'];
   } else {
     metrics = [dCeil(lean, 16, 22), dCeil(thigh, 26, 34), dFloor(armExc, 0.5, 0.55)];
     issues = ['sprintPosture', 'frontSide', 'armRhythm'];
