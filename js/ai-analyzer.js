@@ -123,6 +123,81 @@ function announce(text){
     window.speechSynthesis.speak(u);
   }catch(e){}
 }
+
+/* ================= Notifications: AI Photo + Guide badges =================
+ * When an analysis finishes, AI Photo and Guide each get a "New" badge
+ * (sidebar + bottom tab bar) and AI Analyzer shows a short toast. Opening
+ * the tab clears its badge; badges stay cleared until the next analysis.
+ * State lives in localStorage so it survives tab switches + reloads. */
+var notifyToastTimer = null;
+function badgeEls(which){
+  return which === 'photo'
+    ? [$('badgeAiPhotoSide'), $('badgeAiPhotoTab')]
+    : [$('badgeGuideSide'), $('badgeGuideTab')];
+}
+function setBadge(which, on){
+  badgeEls(which).forEach(function(el){ if(el) el.hidden = !on; });
+  try{
+    if(on) localStorage.setItem('trackAnalyzer.notify.' + which, '1');
+    else localStorage.removeItem('trackAnalyzer.notify.' + which);
+  }catch(e){}
+}
+function restoreBadges(){
+  ['photo', 'guide'].forEach(function(which){
+    var on = false;
+    try{ on = localStorage.getItem('trackAnalyzer.notify.' + which) === '1'; }catch(e){}
+    badgeEls(which).forEach(function(el){ if(el) el.hidden = !on; });
+  });
+}
+function renderLatestFix(){
+  var box = $('latestFixBox'), text = $('latestFixText');
+  if(!box || !text) return;
+  var rep = AI.deepReport, top = rep && rep.faultList && rep.faultList[0];
+  if(top) text.textContent = top.fault + ' — Cue: “' + top.cue + '” Drill: ' + top.drill + '.';
+  else if(AI.lastSession && AI.lastSession.fixes.length) text.textContent = 'Top fix this run: ' + AI.lastSession.fixes[0] + '.';
+  else text.textContent = 'No repeated fault stood out in this run — nice work.';
+  box.hidden = false;
+}
+function renderLatestAiPhoto(){
+  var card = $('latestAiResults'), body = $('latestAiResultsBody');
+  if(!card || !body) return;
+  var s = AI.lastSession, rep = AI.deepReport;
+  if(!s){ card.hidden = true; return; }
+  var repsHtml = '<p>Total reps: ' + totalReps(s) + '</p>';
+  var faultsHtml;
+  if(rep && rep.faultList.length){
+    faultsHtml = '<h4>Top fixes</h4><ul>' + rep.faultList.map(function(f){
+      return '<li><strong>' + f.fault + '</strong> — Cue: “' + f.cue + '” Drill: ' + f.drill + '.</li>';
+    }).join('') + '</ul>';
+  } else {
+    faultsHtml = '<h4>Top fixes</h4><p>No repeated faults — nice.</p>';
+  }
+  var framesHtml = '';
+  if(s.bestFrames.length){
+    framesHtml = '<h4>Best frames</h4><div class="ai-best-frames">' + s.bestFrames.map(function(fr){
+      return '<figure><img src="' + fr.url + '" alt="Best frame"><figcaption>' + (ACTIVITY_LABEL[fr.activity] || fr.activity) + ' · ' + fr.score + '%</figcaption></figure>';
+    }).join('') + '</div>';
+  }
+  if(AI.deep.worst){
+    framesHtml += '<h4>Worst frame</h4><figure><img src="' + AI.deep.worst.url + '" alt="Worst frame"><figcaption>' +
+      (ACTIVITY_LABEL[AI.deep.worst.activity] || AI.deep.worst.activity) + ' · ~' + AI.deep.worst.score + '%</figcaption></figure>';
+  }
+  body.innerHTML = repsHtml + faultsHtml + framesHtml;
+  card.hidden = false;
+}
+function notifyAnalysisDone(){
+  renderLatestFix();
+  renderLatestAiPhoto();
+  renderRunway();
+  setBadge('photo', true);
+  setBadge('guide', true);
+  var toast = $('aiNotifyToast');
+  if(toast){
+    toast.hidden = false;
+    clearTimeout(notifyToastTimer);
+    notifyToastTimer = setTimeout(function(){ toast.hidden = true; }, 8000);
+  }
+}
 function addBubble(html){
   var box = $('aiCallouts');
   if(!box) return;
@@ -430,6 +505,126 @@ function clearLiveSkeleton(){
   if(!canvas) return;
   var ctx = canvas.getContext('2d');
   if(ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+/* ================= Runway: Your form vs Pro form (2D demo) =================
+ * Two 2D stick-rig characters running on a track lane. LEFT runs with
+ * YOUR measured angles from the analysis (trunk lean, thigh separation,
+ * foot strike); RIGHT runs with ideal angles for the activity. The fix
+ * shown is the analysis's actual top fix. This is an animated 2D drawing
+ * from measured angles — never 3D, never motion capture, never the
+ * athlete's real video. */
+var RUNWAY_IDEAL = {
+  overstride: 'foot lands under the hips', earlyRise: 'stays low, rises gradually',
+  armCross: 'hands run on two straight rails', elbowShape: 'elbows drive hip to lip, loose shoulders',
+  tallPosture: 'tall through the hips, head quiet', footRecovery: 'heel zips tight under the hamstring',
+  thighSep: 'thighs open wide — one knee forward, one leg pushing back',
+  squatDepth: 'deep, tall squat', hingeBack: 'flat back, hips back', squatKnee: 'knees track over the toes',
+  armSplit: 'hands rip apart at clearance'
+};
+var runway = { playing: false, phase: 0, raf: 0, lastT: 0,
+  your: { lean: 14, thigh: 80, shin: 0.18 }, pro: { lean: 12, thigh: 100, shin: 0.05 }, fix: null };
+function runwayMedians(){
+  var frames = AI.deep.frames1 || [];
+  function med(key){
+    var vals = frames.map(function(fr){ return fr.f && typeof fr.f[key] === 'number' ? fr.f[key] : null; })
+      .filter(function(v){ return v !== null; });
+    return vals.length ? median(vals) : null;
+  }
+  return { lean: med('lean'), thigh: med('thighSep'), shin: med('shinReach') };
+}
+function renderRunway(){
+  var canvas = $('runwayCanvas'), ph = $('runwayPlaceholder'), call = $('runwayCallout');
+  var m = runwayMedians();
+  if(m.lean !== null) runway.your.lean = Math.max(0, Math.min(60, m.lean));
+  if(m.thigh !== null) runway.your.thigh = Math.max(20, Math.min(140, m.thigh));
+  if(m.shin !== null) runway.your.shin = Math.max(0, Math.min(0.5, m.shin));
+  var rep = AI.deepReport;
+  runway.fix = rep && rep.faultList && rep.faultList[0] ? rep.faultList[0] : null;
+  if(ph) ph.hidden = true;
+  if(canvas) canvas.hidden = false;
+  if(call){
+    if(runway.fix){
+      var ideal = RUNWAY_IDEAL[runway.fix.check] || 'clean, tall, relaxed shape';
+      call.textContent = 'Your form: ' + runway.fix.fault + ' — ' + runway.fix.cue + '. Pro form: ' + ideal + '.';
+    } else {
+      call.textContent = 'Your form looked clean this run — the pro shows the same tall, relaxed shape.';
+    }
+  }
+  runwayStart();
+}
+function drawRunner(ctx, cx, groundY, p, phase, color){
+  var leanRad = p.lean * Math.PI / 180;
+  var hipX = cx, hipY = groundY - 78;
+  var shX = hipX + Math.sin(leanRad) * 52, shY = hipY - 52 * Math.cos(leanRad);
+  var headX = shX + Math.sin(leanRad) * 18, headY = shY - 18 * Math.cos(leanRad) - 8;
+  ctx.strokeStyle = color; ctx.lineWidth = 6; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(hipX, hipY); ctx.lineTo(shX, shY); ctx.stroke();
+  ctx.beginPath(); ctx.arc(headX, headY, 13, 0, Math.PI * 2); ctx.stroke();
+  var swing = (p.thigh / 100) * 0.9;
+  for(var s = 0; s < 2; s++){
+    var ph = phase + s * Math.PI;
+    var thighAng = Math.sin(ph) * swing;
+    var kx = hipX + Math.sin(thighAng) * 42, ky = hipY + Math.cos(thighAng) * 42;
+    var footSwing = Math.sin(ph - 0.6) * swing;
+    var fx = kx + Math.sin(footSwing) * 40 + p.shin * 120, fy = groundY - Math.max(0, Math.cos(ph) * 10);
+    ctx.beginPath(); ctx.moveTo(hipX, hipY); ctx.lineTo(kx, ky); ctx.lineTo(fx, fy); ctx.stroke();
+    var armPh = ph + Math.PI;
+    var ex = shX + Math.sin(Math.sin(armPh) * 0.7) * 30, ey = shY + 30;
+    var hx = ex + Math.sin(Math.sin(armPh - 0.6) * 0.7) * 26, hy = ey + 26;
+    ctx.beginPath(); ctx.moveTo(shX, shY); ctx.lineTo(ex, ey); ctx.lineTo(hx, hy); ctx.stroke();
+  }
+}
+function runwayDraw(){
+  var canvas = $('runwayCanvas');
+  if(!canvas) return;
+  var ctx = canvas.getContext('2d');
+  if(!ctx) return;
+  var W = canvas.width || 640, H = canvas.height || 280;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#0e2a1a'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#b3552f'; ctx.fillRect(0, H - 52, W, 52);
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2;
+  var dashOff = (runway.phase * 60) % 48;
+  ctx.beginPath();
+  for(var x = -48 + dashOff; x < W; x += 48){ ctx.moveTo(x, H - 26); ctx.lineTo(x + 24, H - 26); }
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.beginPath(); ctx.moveTo(W / 2, 8); ctx.lineTo(W / 2, H - 56); ctx.stroke();
+  ctx.fillStyle = '#ffffff'; ctx.font = 'bold 15px Barlow, sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('Your form', W / 4, 24);
+  ctx.fillText('Pro form', (3 * W) / 4, 24);
+  ctx.fillStyle = '#ffd23d'; ctx.font = '12px Barlow, sans-serif';
+  ctx.fillText('from your measured angles', W / 4, 42);
+  ctx.fillText('ideal angles', (3 * W) / 4, 42);
+  drawRunner(ctx, W / 4, H - 52, runway.your, runway.phase, '#ffd23d');
+  drawRunner(ctx, (3 * W) / 4, H - 52, runway.pro, runway.phase, '#3ddc97');
+  if(runway.fix){
+    ctx.fillStyle = '#ff5c5c'; ctx.font = 'bold 13px Barlow, sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('Fix this: ' + runway.fix.fault, W / 4, H - 210);
+  }
+}
+function runwayTick(ts){
+  if(!runway.playing) return;
+  var now = ts || 0;
+  var dt = runway.lastT ? Math.min(50, now - runway.lastT) : 16;
+  runway.lastT = now;
+  runway.phase += dt * 0.006;
+  runwayDraw();
+  if(typeof requestAnimationFrame === 'function') runway.raf = requestAnimationFrame(runwayTick);
+}
+function runwayStart(){
+  if(runway.playing) return;
+  runway.playing = true; runway.lastT = 0;
+  if(typeof requestAnimationFrame === 'function') runway.raf = requestAnimationFrame(runwayTick);
+  else runwayDraw();
+}
+function runwayPause(){
+  runway.playing = false;
+  if(typeof cancelAnimationFrame === 'function' && runway.raf) cancelAnimationFrame(runway.raf);
+}
+function runwayReplay(){
+  runway.phase = 0; runwayDraw(); runwayStart();
 }
 
 /* ================= Gesture control (1 finger = start, 2 = stop) ================= */
@@ -872,6 +1067,7 @@ function stopAndAnalyze(){
   runDeepAnalysis().then(function(){
     renderSessionSummary(AI.lastSession);
     showEl($('aiSummary'), true);
+    notifyAnalysisDone();
     var s = $('aiSummary');
     if(s) s.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
@@ -1049,6 +1245,15 @@ function aiTeardown(){
 }
 
 function initAI(){
+  restoreBadges();
+  var toastClose = $('aiNotifyClose');
+  if(toastClose) toastClose.addEventListener('click', function(){ var t = $('aiNotifyToast'); if(t) t.hidden = true; });
+  var playBtn = $('runwayPlay');
+  if(playBtn) playBtn.addEventListener('click', runwayStart);
+  var pauseBtn = $('runwayPause');
+  if(pauseBtn) pauseBtn.addEventListener('click', runwayPause);
+  var replayBtn = $('runwayReplay');
+  if(replayBtn) replayBtn.addEventListener('click', runwayReplay);
   var startBtn = $('aiStartBtn');
   if(startBtn) startBtn.addEventListener('click', function(){
     if(AI.mode === 'watching') startCoachingFromWatch();
@@ -1118,6 +1323,10 @@ function initAI(){
 }
 
 // Test hooks (smoke tests only — the app never calls these on its own).
+window.TrackNotify = { notifyDone: notifyAnalysisDone, clear: function(which){ setBadge(which, false); },
+  has: function(which){ var els = badgeEls(which); return els.some(function(el){ return el && !el.hidden; }); } };
+window.TrackRunway = { render: renderRunway, draw: runwayDraw, start: runwayStart, pause: runwayPause, replay: runwayReplay,
+  getState: function(){ return { playing: runway.playing, phase: runway.phase, your: runway.your, fix: runway.fix }; } };
 window.TrackAI = { setClassicMode: setClassicMode, getClassicMode: function(){ return AI.classicMode; },
   getLastClassic: function(){ return AI.lastClassic; }, announce: announce };
 window.TrackAIAnnounce = { announce: announce, speakNow: announce };
