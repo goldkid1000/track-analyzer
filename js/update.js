@@ -1,4 +1,4 @@
-/* Track Analyzer — update system (v2.1.0)
+/* Track Analyzer — update system (v2.1.1)
  *
  * Tenno Vault-style: visible version, What's New panel, Check for updates,
  * and an update banner. The banner fires ONLY when version.json reports a
@@ -9,9 +9,17 @@
  */
 (function(){
 'use strict';
-var VERSION = '2.1.0';
+var VERSION = '2.1.1';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: '2.1.1', date: '2026-10-17', notes: [
+    'One AI Analyzer screen: the old Analyze tab and the two-camera tab are gone — live coaching, two cameras, photo check, and your results all live here now. Nothing was removed.',
+    'Hands-free gestures: look at the camera and hold up 1 finger to start coaching, 2 fingers to stop. Hold about 1 second. Buttons always work too.',
+    'Deep check after every workout: after you stop, the app re-reads the full clip and gives a per-rep breakdown, best + worst frames, and measurements it can actually support — estimates are labeled, and it never invents a speed or a distance.',
+    'Videos to watch: after the deep check, 1–2 videos matched to your top fix, from the videos already in the app.',
+    'Skeleton drawings in your results: a flat 2D drawing from the camera (never fake 3D) on the best and worst frames, with the joint to fix in red. Tap a red joint to see its fix.',
+    'Simpler words everywhere: buttons say what they do, errors say what happened and what to tap next.'
+  ]},
   { version: '2.1.0', date: '2026-10-17', notes: [
     'Dual-Angle two-camera analysis: connect an iPad as a second camera with a 6-character code, synced recording + auto-stop + synced replay + combined verdict (two 2D views, never fake 3D).',
     'Photo access asks once: Camera / Photo Library preference is remembered, the picker only opens on your tap, and a cancelled pick shows a retry line instead of re-prompting.',
