@@ -1,8 +1,17 @@
-/* Track Analyzer — AI Analyzer (v2.1.1)
+/* Track Analyzer — AI Analyzer (v2.1.2)
  *
  * On-device coaching: the camera watches the athlete, names what it sees,
  * and gives one fix at a time from the embedded knowledge base
  * (js/ai-knowledge.js). No cloud model, no API key, no network calls.
+ *
+ * v2.1.2: the old separate rep-check screen is merged in — one "What to
+ * check" picker drives both this coaching and the rep check
+ * (js/app.js, TrackClassic), and the rep check's score + one fix feed
+ * this live panel. A live 2D skeleton drawing sits on top of the camera
+ * preview. Gestures mean record: 1 finger = start recording + analyzing,
+ * 2 fingers = stop + deep check. The voice always says "Recording has
+ * started." / "Recording has ended." on those transitions, even when
+ * voice coaching is off.
  *
  * Honest limits: it only coaches what the camera can see. If joints are out
  * of frame it says what it can't see instead of guessing. Activity labels
@@ -11,14 +20,8 @@
  * Works with the single camera, or with the two-camera setup when connected
  * (borrows the live two-camera streams via window.TrackDual — it never stops
  * the two-camera setup). Voice coaching uses the device's built-in speech
- * (speechSynthesis), off by default.
- *
- * v2.1.1: gesture control (1 finger = start, 2 fingers = stop, ~1s hold,
- * face must face the camera, MediaPipe Hands; buttons always work),
- * post-rep deep analysis (full-clip review with progress, per-rep breakdown,
- * best/worst frames, estimated-only measurements), video picks from the
- * existing knowledge-base videos only, and a 2D skeleton drawing
- * (flat view from the camera, never fake 3D) in the results.
+ * (speechSynthesis), off by default. The start/stop announcements are
+ * separate from voice coaching and always speak.
  */
 (function(){
 'use strict';
@@ -48,7 +51,11 @@ var AI = {
   squatPhase: 'up', squatDip: 0,
   movingSince: 0, setSince: 0,
   mode: 'idle', // idle | watching | coaching
-  lastFrontal: false, lastLandmarks1: null,
+  lastFrontal: false, lastLandmarks1: null, lastRawLm: null,
+  classicMode: 'block', facing: 'environment',
+  clipMode: false, clipUrl: null,
+  lastClassic: null, lastTripped: null, lastGuideIssue: '',
+  announcingUntil: 0,
   deep: { frames1: [], frames2: [], worst: null },
   deepReport: null, lastSession: null,
   gesture: { hands: null, handsFailed: false, lastCount: -1, holdKind: '', holdCount: 0, timer: null }
@@ -68,18 +75,51 @@ function getDual(){
   try{ return window.TrackDual ? window.TrackDual.getState() : null; }catch(e){ return null; }
 }
 function kbFor(activity){
-  var id = AI.focus !== 'auto' ? AI.focus : (ACTIVITY_KB[activity] || 'sprint-100');
+  if(AI.focus !== 'auto') return (window.TrackKB && window.TrackKB.byId(AI.focus)) || null;
+  var id = CLASSIC_MODE_KB[AI.classicMode] || ACTIVITY_KB[activity] || 'sprint-100';
   return (window.TrackKB && window.TrackKB.byId(id)) || null;
+}
+/* One "What to check" pick drives both engines: this coaching (via the
+ * knowledge-base entry below) and the rep check (via TrackClassic). */
+var CLASSIC_MODE_KB = {
+  block: 'block-starts', side: 'sprint-100', askip: 'sprint-100',
+  arms: 'sprint-100', sprint: 'sprint-100'
+};
+function setClassicMode(m){
+  if(!CLASSIC_MODE_KB[m]) return;
+  AI.classicMode = m;
+  document.querySelectorAll('.mode').forEach(function(b){ b.setAttribute('aria-pressed', b.dataset.mode === m ? 'true' : 'false'); });
+  var guide = $('aiSideGuide');
+  if(guide) guide.hidden = (m !== 'side');
+  if(window.TrackClassic) window.TrackClassic.setMode(m);
 }
 function speak(text){
   if(!AI.voice || !window.speechSynthesis) return;
   var now = Date.now();
+  if(now < AI.announcingUntil) return; // never talk over a start/stop announcement
   if(now - AI.lastSpeak < 6000) return; // throttle: never nag
   AI.lastSpeak = now;
   try{
     window.speechSynthesis.cancel();
     var u = new SpeechSynthesisUtterance(text);
     u.rate = 1.05;
+    window.speechSynthesis.speak(u);
+  }catch(e){}
+}
+/* Start/stop announcements: separate from voice coaching. They ALWAYS
+ * speak — even when the voice-coaching toggle is off — bypass the 6s
+ * coaching throttle, cancel any in-flight utterance so they speak at once,
+ * and are called exactly once per transition (from startAI's begin() and
+ * from stopAndAnalyze()), never once per frame. */
+function announce(text){
+  if(!window.speechSynthesis) return;
+  var now = Date.now();
+  AI.lastSpeak = now;
+  AI.announcingUntil = now + 2500;
+  try{
+    window.speechSynthesis.cancel();
+    var u = new SpeechSynthesisUtterance(text);
+    u.rate = 1.0;
     window.speechSynthesis.speak(u);
   }catch(e){}
 }
@@ -217,6 +257,41 @@ function totalReps(sess){
   Object.keys(sess.reps).forEach(function(k){ n += sess.reps[k]; });
   return n;
 }
+/* Rep-check issue -> skeleton check key (for the red joint on the live skeleton). */
+var CLASSIC_ISSUE_CHECK = {
+  projection: 'earlyRise', earlyRise: 'earlyRise', foldedHips: 'earlyRise',
+  armSplit: 'armSplit', rearPush: 'earlyRise', kneeForward: 'footRecovery',
+  tallPosture: 'tallPosture', footRecovery: 'footRecovery', elbowShape: 'elbowShape',
+  backDrive: 'armCross', straightTrack: 'armCross', sprintPosture: 'tallPosture',
+  frontSide: 'overstride', armRhythm: 'armCross', shinAngle: 'overstride',
+  underHip: 'overstride', frontKnee: 'squatDepth', rearKnee: 'squatDepth',
+  hipHeight: 'earlyRise', headLift: 'earlyRise', thighSeparation: 'thighSep'
+};
+function renderClassicMetrics(cr){
+  var box = $('aiClassicMetrics');
+  if(!box) return;
+  if(!cr){ box.innerHTML = ''; return; }
+  box.innerHTML = cr.metrics.map(function(v, i){
+    var name = cr.metricNames[i] || '';
+    var pct = v === null ? 0 : Math.round(v);
+    var label = v === null ? 'Side view needed' : pct + '%';
+    var color = v === null ? 'var(--line)' : (v >= 75 ? 'var(--good)' : v >= 50 ? 'var(--accent)' : 'var(--warn)');
+    return '<div class="ai-metric"><div class="ai-metric-row"><span>' + name + '</span><span>' + label + '</span></div>' +
+      '<div class="ai-metric-bar"><i style="width:' + pct + '%;background:' + color + '"></i></div></div>';
+  }).join('');
+}
+/* Keep the Guide tab's fix video in step with the live rep check. */
+function updateGuideVideo(cr){
+  if(!cr || cr.issue === AI.lastGuideIssue) return;
+  AI.lastGuideIssue = cr.issue;
+  var v = window.TrackClassic && window.TrackClassic.fixVideos && window.TrackClassic.fixVideos[cr.issue];
+  var idle = $('videoIdle'), loading = $('videoLoading'), list = $('videoList');
+  if(!v || !idle || !list) return;
+  idle.hidden = true;
+  if(loading) loading.hidden = true;
+  list.innerHTML = '<a class="video" href="' + v[2] + '" target="_blank" rel="noopener"><div class="thumb"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></div><div><strong>Watch: how to fix this</strong><span>' + v[0] + ' · ' + v[1] + '</span></div></a>';
+  list.hidden = false;
+}
 function onFrame(f, angle){
   if(angle !== 1) return; // state machine + reps run off angle 1 only
   var prev = AI.state;
@@ -249,6 +324,24 @@ function onFrame(f, angle){
   setText('aiCantSee', 'All key joints visible ✓');
   var scored = scoreFrame(activity, f);
   setText('aiScore', scored.score ? scored.score + '%' : '—');
+  if(scored.tripped) AI.lastTripped = scored.tripped;
+  /* Merged rep check: same landmarks, one extra pass. When it has a full
+   * rep window it feeds this live panel (score + one fix + metrics) and
+   * the Guide tab's fix video. Until then the panel keeps its own score. */
+  if(window.TrackClassic && AI.lastRawLm){
+    try{
+      var cr = window.TrackClassic.analyzeClassic(AI.lastRawLm);
+      if(cr){
+        AI.lastClassic = cr;
+        AI.lastTripped = CLASSIC_ISSUE_CHECK[cr.issue] || AI.lastTripped;
+        setText('aiScore', cr.score + '%');
+        setText('aiGood', cr.goodText);
+        setText('aiFix', cr.fix.cue + ' — ' + cr.fix.drill);
+        renderClassicMetrics(cr);
+        updateGuideVideo(cr);
+      }
+    }catch(e){}
+  }
   AI.deep.frames1.push({ t: Date.now(), activity: activity, score: scored.score, tripped: scored.tripped || null,
     f: { lean: f.lean, kneeL: f.kneeL, kneeR: f.kneeR, elbow: f.elbow, thighSep: f.thighSep, shinReach: f.shinReach } });
   if(AI.deep.frames1.length > 900) AI.deep.frames1.shift();
@@ -316,6 +409,29 @@ function maybeCaptureWorst(score, activity, lm){
   AI.deep.worst = { score: score, activity: activity, url: url, lm: lm || null };
 }
 
+/* Live skeleton rig: the same 2D drawing as the deep report, drawn on top
+ * of the camera preview every pose result. Main angle only — never 3D,
+ * never depth. Problem joint red/yellow, good joints green. */
+function drawLiveSkeleton(rawLm){
+  var canvas = $('aiSkelOverlay');
+  var v = $('aiVideo');
+  if(!canvas || !v) return;
+  var w = v.clientWidth || 320, h = v.clientHeight || 240;
+  if(canvas.width !== w) canvas.width = w;
+  if(canvas.height !== h) canvas.height = h;
+  var ctx = canvas.getContext('2d');
+  if(!ctx) return;
+  if(!rawLm){ ctx.clearRect(0, 0, canvas.width, canvas.height); return; }
+  var dict = simplifyLm(rawLm);
+  drawSkeleton(canvas, dict, skelFaultJoints(AI.lastTripped || ''));
+}
+function clearLiveSkeleton(){
+  var canvas = $('aiSkelOverlay');
+  if(!canvas) return;
+  var ctx = canvas.getContext('2d');
+  if(ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+}
+
 /* ================= Gesture control (1 finger = start, 2 = stop) ================= */
 function escHtml(t){
   return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -355,14 +471,14 @@ function setGestureStatus(kind){
   var el = $('gestureStatus');
   if(!el) return;
   var msgs = {
-    watching: '👁 Watching… look at the camera + hold up 1 finger to start',
-    coaching: 'Coaching — hold up 2 fingers to stop, or tap Stop.',
-    holdStart: '✋ 1 finger — starting… (keep holding)',
-    holdStop: '✌️ 2 fingers — stopping… (keep holding)',
-    unavailable: 'Gesture control unavailable — use the Start watching / Stop buttons.',
+    watching: '👁 Watching… look at the camera + hold up 1 finger to start recording',
+    coaching: '● Recording… hold up 2 fingers to stop, or tap Stop recording.',
+    holdStart: '✋ 1 finger — starting recording… (keep holding)',
+    holdStop: '✌️ 2 fingers — stopping recording… (keep holding)',
+    unavailable: 'Gesture control unavailable — use the Start recording / Stop recording buttons.',
     noperm: 'Camera needs permission — allow it, or use Two cameras below.',
     unsupported: 'Camera not supported on this device.',
-    off: 'Camera off — tap Start watching.'
+    off: 'Camera off — tap Start recording.'
   };
   el.textContent = msgs[kind] || msgs.off;
 }
@@ -436,7 +552,7 @@ function startWatching(){
   showEl($('aiLivePanel'), true);
   showEl($('aiSummary'), false);
   var startBtn = $('aiStartBtn');
-  if(startBtn){ startBtn.textContent = 'Start coaching'; showEl(startBtn, true); }
+  if(startBtn){ startBtn.textContent = 'Start recording'; showEl(startBtn, true); }
   showEl($('aiStopBtn'), false);
   showEl($('aiEndSessionBtn'), false);
   setGestureStatus('watching');
@@ -448,7 +564,8 @@ function startWatching(){
     try{
       AI.poseA = makePose(function(res){
         var lm = res && res.poseLandmarks;
-        if(lm){ AI.lastLandmarks1 = simplifyLm(lm); AI.lastFrontal = isFrontal(lm); }
+        if(lm){ AI.lastLandmarks1 = simplifyLm(lm); AI.lastFrontal = isFrontal(lm); AI.lastRawLm = lm; }
+        drawLiveSkeleton(lm || null);
       });
     }catch(e){
       setText('aiSeeing', 'Analyzer didn\u2019t start \u2014 reload and try again.');
@@ -469,7 +586,7 @@ function startWatching(){
   }
   if(useDual){ beginWatch(); return; }
   if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ setGestureStatus('unsupported'); AI.mode = 'idle'; return; }
-  navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } })
+  navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: AI.facing, width: { ideal: 1280 }, height: { ideal: 720 } } })
     .then(function(stream){
       AI.ownStream = stream;
       attachStream($('aiVideo'), stream);
@@ -482,7 +599,7 @@ function startWatching(){
 }
 function startCoachingFromWatch(){
   if(AI.mode !== 'watching') return;
-  startAI(true);
+  startAI(true, { announce: true });
 }
 
 /* ================= Deep analysis (full-clip review after Stop) ================= */
@@ -749,6 +866,7 @@ function runDeepAnalysis(){
 }
 function stopAndAnalyze(){
   if(!AI.running && AI.mode !== 'coaching') return;
+  announce('Recording has ended.');
   AI.lastSession = AI.session;
   stopAI();
   runDeepAnalysis().then(function(){
@@ -781,8 +899,13 @@ function renderSessionSummary(s){
     '<h4>Best frames</h4>' + framesHtml;
 }
 
-function startAI(reuseStream){
+function startAI(reuseStream, opts){
   if(AI.running) return;
+  opts = opts || {};
+  AI.clipMode = !!(opts && opts.clipUrl);
+  AI.clipUrl = (opts && opts.clipUrl) || null;
+  AI.lastClassic = null; AI.lastTripped = null; AI.lastGuideIssue = '';
+  renderClassicMetrics(null);
   AI.session = { startedAt: Date.now(), reps: {}, faultCounts: {}, fixes: [], bestFrames: [] };
   AI.deep = { frames1: [], frames2: [], worst: null };
   AI.deepReport = null;
@@ -805,12 +928,26 @@ function startAI(reuseStream){
   function begin(){
     AI.running = true;
     if(!window.Pose){ setText('aiSeeing', 'Analyzer didn’t start — reload and try again.'); return; }
+    if(opts.announce) announce('Recording has started.');
     AI.poseA = makePose(function(res){
       var lm = res && res.poseLandmarks;
-      if(lm){ AI.lastLandmarks1 = simplifyLm(lm); AI.lastFrontal = isFrontal(lm); }
+      if(lm){ AI.lastLandmarks1 = simplifyLm(lm); AI.lastFrontal = isFrontal(lm); AI.lastRawLm = lm; }
+      drawLiveSkeleton(lm || null);
       if(AI.running) onFrame(lm ? extractAI(lm) : { missing: ['full body'] }, 1);
     });
-    if(useDual && dual.remoteStream){
+    if(AI.clipMode){
+      var cv = $('aiVideo');
+      if(cv){
+        cv.srcObject = null;
+        cv.src = AI.clipUrl;
+        cv.muted = true;
+        cv.setAttribute('playsinline', '');
+        var cp = cv.play(); if(cp && cp.catch) cp.catch(function(){});
+        cv.onended = function(){ if(AI.running) stopAndAnalyze(); };
+      }
+      showEl($('aiPreview2Wrap'), false);
+      setText('aiAngleTag', 'Uploaded clip');
+    } else if(useDual && dual.remoteStream){
       AI.poseB = makePose(function(res){
         var lm = res && res.poseLandmarks;
         if(lm){
@@ -839,10 +976,11 @@ function startAI(reuseStream){
     }, 150);
     setText('aiSeeing', useDual ? 'Watching both cameras…' : 'Watching — move into frame.');
   }
+  if(AI.clipMode){ begin(); return; }
   if(useDual){ begin(); return; }
   if(reuseStream && AI.ownStream){ attachStream($('aiVideo'), AI.ownStream); begin(); return; }
   if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ setText('aiSeeing', 'Camera not supported on this device.'); return; }
-  navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } })
+  navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: AI.facing, width: { ideal: 1280 }, height: { ideal: 720 } } })
     .then(function(stream){
       AI.ownStream = stream;
       attachStream($('aiVideo'), stream);
@@ -857,10 +995,14 @@ function stopAI(){
   clearInterval(AI.timer); AI.timer = null;
   clearInterval(AI.gesture.timer); AI.gesture.timer = null;
   AI.gesture.holdKind = ''; AI.gesture.holdCount = 0; setHoldBar(0);
+  clearLiveSkeleton();
   if(AI.ownStream){ AI.ownStream.getTracks().forEach(function(t){ t.stop(); }); AI.ownStream = null; }
-  var v1 = $('aiVideo'); if(v1) v1.srcObject = null;
+  var v1 = $('aiVideo'); if(v1){ v1.srcObject = null; v1.onended = null; if(AI.clipMode) v1.removeAttribute('src'); }
   var v2 = $('aiVideo2'); if(v2) v2.srcObject = null;
-  var sb = $('aiStartBtn'); if(sb){ sb.textContent = 'Start watching'; showEl(sb, true); }
+  if(AI.clipUrl){ try{ URL.revokeObjectURL(AI.clipUrl); }catch(e){} AI.clipUrl = null; }
+  AI.clipMode = false;
+  var slowBtn = $('aiSlowReview'); if(slowBtn) slowBtn.setAttribute('aria-pressed', 'false');
+  var sb = $('aiStartBtn'); if(sb){ sb.textContent = 'Start recording'; showEl(sb, true); }
   showEl($('aiStopBtn'), false);
   showEl($('aiEndSessionBtn'), false);
   setGestureStatus('off');
@@ -910,7 +1052,7 @@ function initAI(){
   var startBtn = $('aiStartBtn');
   if(startBtn) startBtn.addEventListener('click', function(){
     if(AI.mode === 'watching') startCoachingFromWatch();
-    else if(AI.mode === 'idle') startWatching();
+    else if(AI.mode === 'idle') startAI(false, { announce: true });
   });
   var stopBtn = $('aiStopBtn'); if(stopBtn) stopBtn.addEventListener('click', stopAndAnalyze);
   var endBtn = $('aiEndSessionBtn'); if(endBtn) endBtn.addEventListener('click', endSession);
@@ -920,6 +1062,43 @@ function initAI(){
     voiceBtn.setAttribute('aria-pressed', AI.voice ? 'true' : 'false');
     voiceBtn.textContent = AI.voice ? 'Voice coaching: on' : 'Voice coaching: off';
     if(!AI.voice && window.speechSynthesis) try{ window.speechSynthesis.cancel(); }catch(e){}
+  });
+  /* One "What to check" picker drives both engines. */
+  document.querySelectorAll('.mode').forEach(function(btn){
+    btn.addEventListener('click', function(){ setClassicMode(btn.dataset.mode); });
+  });
+  /* One "Upload a clip" option inside the AI Analyzer: the clip feeds the
+   * same analysis as the live camera — no second camera card. */
+  var uploadBtn = $('aiUploadClip');
+  var clipInput = $('aiFileInput');
+  if(uploadBtn && clipInput) uploadBtn.addEventListener('click', function(){ clipInput.click(); });
+  if(clipInput) clipInput.addEventListener('change', function(){
+    var file = clipInput.files && clipInput.files[0];
+    clipInput.value = '';
+    if(!file) return;
+    if(AI.running || AI.mode === 'watching') stopAI();
+    var url = URL.createObjectURL(file);
+    showEl($('aiLivePanel'), true);
+    startAI(false, { clipUrl: url, announce: true });
+  });
+  var slowBtn = $('aiSlowReview');
+  if(slowBtn) slowBtn.addEventListener('click', function(){
+    var v = $('aiVideo');
+    if(!v || !AI.clipMode){ setText('aiSeeing', 'Upload a clip to use slow review.'); return; }
+    var slow = v.playbackRate === 1;
+    v.playbackRate = slow ? 0.35 : 1;
+    slowBtn.setAttribute('aria-pressed', slow ? 'true' : 'false');
+    setText('aiSeeing', slow ? 'Slow review — clip at a third of normal speed.' : 'Recording — clip at normal speed.');
+  });
+  var flipBtn = $('aiFlipBtn');
+  if(flipBtn) flipBtn.addEventListener('click', function(){
+    AI.facing = AI.facing === 'environment' ? 'user' : 'environment';
+    if(AI.ownStream && navigator.mediaDevices && navigator.mediaDevices.getUserMedia){
+      var wasRecording = AI.running;
+      stopAI();
+      if(wasRecording) startAI(false, { announce: true });
+      else startWatching();
+    }
   });
   var focusSel = $('aiFocus');
   if(focusSel) focusSel.addEventListener('change', function(){ AI.focus = focusSel.value; });
@@ -939,9 +1118,12 @@ function initAI(){
 }
 
 // Test hooks (smoke tests only — the app never calls these on its own).
+window.TrackAI = { setClassicMode: setClassicMode, getClassicMode: function(){ return AI.classicMode; },
+  getLastClassic: function(){ return AI.lastClassic; }, announce: announce };
+window.TrackAIAnnounce = { announce: announce, speakNow: announce };
 window.TrackAIGesture = { countFingers: countFingers, isFrontal: isFrontal };
 window.TrackAIDeep = { segmentReps: segmentReps, buildDeepReport: buildDeepReport, pickVideos: pickVideos, absorbFrame: absorbFrame };
-window.TrackAISkeleton = { drawSkeleton: drawSkeleton, skelFaultJoints: skelFaultJoints };
+window.TrackAISkeleton = { drawSkeleton: drawSkeleton, skelFaultJoints: skelFaultJoints, drawLiveSkeleton: drawLiveSkeleton };
 
 initAI();
 })();
