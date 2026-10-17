@@ -1,4 +1,28 @@
-/* Track Analyzer — smooth rig engine (v2.1.6)
+/* Track Analyzer — smooth rig engine (v2.1.7)
+ *
+ * v2.1.7 fixes (from Giel's 22s screen recording of v2.1.6 dual mode):
+ * - Visibility gating: only joints the model actually sees get drawn.
+ *   MediaPipe returns all 33 pose landmarks even for joints it cannot
+ *   see (back view, occluded, out of frame) with low visibility — drawing
+ *   them put a "head blob" in the middle of the back and tangled the rig
+ *   on close-ups. Fewer than 6 visible joints = no rig, not garbage.
+ * - Face = one small head marker from visible face joints, never a blob
+ *   of overlapping face dots. Hands = small dots + thin lines, and only
+ *   when the hand is confidently detected (handedness score >= 0.6).
+ * - The rig maps through the video's real displayed rect (object-fit
+ *   contain/cover aware). The old code mapped straight to canvas size
+ *   while the video was object-fit: cover (cropped) — the rig sat OFF
+ *   the person.
+ * - Status lines tell the truth: a rig that draws reports 'ok' (that
+ *   was never emitted before, so the line could never say "on"), and
+ *   poseFail only fires on sustained failure with NO rig drawing.
+ * - Hands run on a bigger frame (640px) — at 320px a hand at arm's
+ *   length is ~25px and palm detection fails most frames, which is why
+ *   the app said "No hand seen" while a hand was plainly up.
+ * - Gestures are smoothed: a new finger count needs 2 consecutive
+ *   inferences to count, and one dropped frame keeps the last count
+ *   for 500ms instead of resetting the hold timer.
+ * - Unseen joints get a 300ms grace before they disappear (no pop).
  *
  * One rig engine for every camera: the single camera (draw-only — the AI
  * Analyzer already runs pose there) and BOTH two-camera feeds (the engine
@@ -90,33 +114,46 @@ function isFrontalPose(lm){
 /* ---- Preallocated landmark stores: no per-frame allocations ---- */
 function poseStore(){
   return { x: new Float32Array(33), y: new Float32Array(33),
-    v: new Float32Array(33), has: new Uint8Array(33) };
+    v: new Float32Array(33), has: new Uint8Array(33),
+    /* Float64: grace timestamps are Date.now() values (~1.7e12) —
+     * float32 cannot hold those precisely and the grace math breaks. */
+    unseen: new Float64Array(33) };
 }
 function handStore(){
-  return { x: new Float32Array(21), y: new Float32Array(21), has: new Uint8Array(21) };
+  return { x: new Float32Array(21), y: new Float32Array(21), has: new Uint8Array(21), unseen: new Float64Array(21) };
 }
 /* Step a display store toward a target store, in place, no allocation.
- * Joints the target can't see disappear at once; seen joints glide. */
-function stepPoseStore(display, target, k){
+ * Joints the target can't see get a short grace window (default 300ms)
+ * before they disappear — one dropped frame no longer makes the rig
+ * pop or flicker. Seen joints glide. */
+function stepPoseStore(display, target, k, nowMs, graceMs){
+  if(nowMs === undefined) nowMs = Date.now();
+  if(graceMs === undefined) graceMs = 300;
   for(var i = 0; i < 33; i++){
     if(target.has[i]){
       display.has[i] = 1;
       display.x[i] = lerpStep(display.x[i], target.x[i], k);
       display.y[i] = lerpStep(display.y[i], target.y[i], k);
       display.v[i] = target.v[i];
-    } else {
-      display.has[i] = 0;
+      display.unseen[i] = 0;
+    } else if(display.has[i]){
+      if(!display.unseen[i]) display.unseen[i] = nowMs;
+      else if(nowMs - display.unseen[i] > graceMs){ display.has[i] = 0; display.unseen[i] = 0; }
     }
   }
 }
-function stepHandStore(display, target, k){
+function stepHandStore(display, target, k, nowMs, graceMs){
+  if(nowMs === undefined) nowMs = Date.now();
+  if(graceMs === undefined) graceMs = 300;
   for(var i = 0; i < 21; i++){
     if(target.has[i]){
       display.has[i] = 1;
       display.x[i] = lerpStep(display.x[i], target.x[i], k);
       display.y[i] = lerpStep(display.y[i], target.y[i], k);
-    } else {
-      display.has[i] = 0;
+      display.unseen[i] = 0;
+    } else if(display.has[i]){
+      if(!display.unseen[i]) display.unseen[i] = nowMs;
+      else if(nowMs - display.unseen[i] > graceMs){ display.has[i] = 0; display.unseen[i] = 0; }
     }
   }
 }
@@ -124,32 +161,71 @@ function clearPoseStore(s){ for(var i = 0; i < 33; i++) s.has[i] = 0; }
 function clearHandStore(s){ for(var i = 0; i < 21; i++) s.has[i] = 0; }
 /* Fill a pose store from a dict {idx: {x, y, v}} (single-camera path)
  * or from a raw 33-landmark array (dual inference path). */
+/* v2.1.7: visibility gating — a landmark only counts when the model
+ * actually sees it. MediaPipe Pose always returns all 33 landmarks, even
+ * for joints it cannot see (back view, occluded, out of frame); those come
+ * back with low visibility. Drawing them is what put the "head blob" in
+ * the middle of the back and tangled the rig on close-ups. */
+function landmarkOK(pt){
+  if(!pt || pt.x === undefined || pt.y === undefined) return false;
+  var v = (pt.v === undefined ? pt.visibility : pt.v);
+  if(v !== undefined && v !== null && v < 0.5) return false;
+  if(pt.x < -0.1 || pt.x > 1.1 || pt.y < -0.1 || pt.y > 1.1) return false;
+  return true;
+}
+/* Head marker: one small circle from the VISIBLE face joints only (nose,
+ * eyes, ears). Face dots are never drawn — they bunch into a blob when
+ * the face is close to the camera. Returns null when fewer than 2 face
+ * joints are visible, so a back view gets no head marker at all. */
+function headMarkerFromPoints(pts){
+  var vis = [];
+  for(var i = 0; i < pts.length; i++) if(pts[i]) vis.push(pts[i]);
+  if(vis.length < 2) return null;
+  var cx = 0, cy = 0;
+  for(var j = 0; j < vis.length; j++){ cx += vis[j].x; cy += vis[j].y; }
+  cx /= vis.length; cy /= vis.length;
+  var spread = 0;
+  for(var k = 0; k < vis.length; k++){
+    var d = Math.sqrt((vis[k].x - cx) * (vis[k].x - cx) + (vis[k].y - cy) * (vis[k].y - cy));
+    if(d > spread) spread = d;
+  }
+  return { x: cx, y: cy, r: Math.max(0.02, Math.min(0.09, spread * 1.6)) };
+}
 function fillPoseFromDict(store, dict){
   clearPoseStore(store);
   if(!dict) return false;
   var any = false;
+  var n = 0;
   for(var i = 0; i < 33; i++){
     var pt = dict[i];
-    if(pt && pt.x !== undefined && pt.y !== undefined){
+    if(pt && landmarkOK(pt)){
       store.x[i] = pt.x; store.y[i] = pt.y;
       store.v[i] = (pt.v === undefined ? (pt.visibility === undefined ? 1 : pt.visibility) : pt.v);
-      store.has[i] = 1; any = true;
+      store.has[i] = 1; any = true; n++;
     }
   }
+  /* Fewer than 6 visible joints is not a body — it is noise (a back
+   * view with only a few guessed points, a partial frame). Draw
+   * nothing rather than garbage. */
+  if(n < 6){ clearPoseStore(store); return false; }
   return any;
 }
 function fillPoseFromArray(store, lm){
   clearPoseStore(store);
   if(!lm) return false;
   var any = false;
+  var n = 0;
   for(var i = 0; i < 33 && i < lm.length; i++){
     var pt = lm[i];
-    if(pt && pt.x !== undefined && pt.y !== undefined){
+    if(pt && landmarkOK(pt)){
       store.x[i] = pt.x; store.y[i] = pt.y;
       store.v[i] = (pt.visibility === undefined ? 1 : pt.visibility);
-      store.has[i] = 1; any = true;
+      store.has[i] = 1; any = true; n++;
     }
   }
+  /* Fewer than 6 visible joints is not a body — it is noise. Draw
+   * nothing rather than garbage. */
+  if(n < 6){ clearPoseStore(store); return false; }
   return any;
 }
 function fillHandFromArray(store, lm){
@@ -158,7 +234,7 @@ function fillHandFromArray(store, lm){
   var any = false;
   for(var i = 0; i < 21 && i < lm.length; i++){
     var pt = lm[i];
-    if(pt && pt.x !== undefined && pt.y !== undefined){
+    if(pt && landmarkOK(pt)){
       store.x[i] = pt.x; store.y[i] = pt.y; store.has[i] = 1; any = true;
     }
   }
@@ -180,14 +256,21 @@ function Rig(opts){
   this.cleared = true;
   this.ctx = null;
   this.sizeCheckedAt = 0;
+  this.contentMap = null;
   this.lastTargetT = 0;
   this.lastStatus = '';
   this.gesture = { count: -1, frontal: false, handSeen: false, faceSeen: false };
+  /* v2.1.7 gesture smoothing: a new finger count must appear in 2
+   * consecutive inferences before it is accepted (kills flicker), and a
+   * dropped frame keeps the last count for 500ms instead of resetting. */
+  this.gesturePending = -1;
+  this.gesturePendingStreak = 0;
+  this.gestureMissingSince = 0;
 }
 Rig.prototype.setStatus = function(kind){
   if(kind === this.lastStatus) return;
   this.lastStatus = kind;
-  if(this.onStatus){ try{ this.onStatus(kind); }catch(e){} }
+  if(this.onStatus){ try{ this.onStatus(kind, this.key); }catch(e){} }
 };
 
 var rigs = [];
@@ -201,10 +284,26 @@ var quality = { interval: 140, inputWidth: 320, steppedDown: false };
 var inferEma = 0;
 var slowStreak = 0;
 var poseInst = null, handsInst = null, handsPromise = null;
-var poseFailed = false, handsFailed = false, poseGotResult = false;
+var poseFailCount = 0, handsFailed = false, poseGotResult = false;
 var poseWatchdog = null;
 var offscreen = null, offCtx = null;
+/* v2.1.7: hands run on a BIGGER frame (640px) than pose (320px). At 320px
+ * a hand at arm's length is ~25px and palm detection fails most frames —
+ * that is why the app said "No hand seen" while a hand was plainly up.
+ * A hand only counts when the model is confident (handedness >= 0.6). */
+var HANDS_INPUT_WIDTH = 640;
+var HANDS_MIN_SCORE = 0.6;
+var handsOffscreen = null, handsOffCtx = null;
 var poseWaiters = [], handsWaiters = [];
+
+/* True when any rig drew from a fresh inference recently — the status
+ * line may only say "couldn't load" when NO rig is drawing. */
+function anyFreshTarget(){
+  for(var i = 0; i < rigs.length; i++){
+    if((Date.now() - rigs[i].lastTargetT) < 2000) return true;
+  }
+  return false;
+}
 
 function findRigByCanvas(canvas){
   for(var i = 0; i < rigs.length; i++) if(rigs[i].canvas === canvas) return rigs[i];
@@ -234,9 +333,36 @@ function setTargetOnRig(rig, poseDict, hands, faultJoints){
  * access), so the smoke test can call it directly. */
 function advanceRig(rig, k){
   if(!rig.hasTarget) return;
-  stepPoseStore(rig.poseDisplay, rig.poseTarget, k);
-  stepHandStore(rig.handDisplay[0], rig.handTarget[0], k);
-  stepHandStore(rig.handDisplay[1], rig.handTarget[1], k);
+  var n = Date.now();
+  stepPoseStore(rig.poseDisplay, rig.poseTarget, k, n);
+  stepHandStore(rig.handDisplay[0], rig.handTarget[0], k, n);
+  stepHandStore(rig.handDisplay[1], rig.handTarget[1], k, n);
+}
+/* Where the video frame actually sits inside the canvas.
+ * The video uses object-fit: contain (full frame visible, letterboxed),
+ * but the canvas covers the whole card — so a landmark at normalized
+ * (x, y) must be mapped through the letterboxed content rect, NOT the
+ * raw canvas size. The old code mapped straight to canvas size while
+ * the video was object-fit: cover (cropped) — that is why the rig sat
+ * OFF the person. Cover is handled too, so the mapping stays right
+ * whatever the CSS says. Returns an affine map {mx, bx, my, by}. */
+function contentMapFor(rig){
+  var canvas = rig.canvas, video = rig.video;
+  var cw = canvas.width, ch = canvas.height;
+  var vw = (video && video.videoWidth) || 0, vh = (video && video.videoHeight) || 0;
+  if(!vw || !vh) return { mx: cw, bx: 0, my: ch, by: 0 };
+  var fit = 'contain';
+  try{
+    if(typeof getComputedStyle !== 'undefined' && video) fit = getComputedStyle(video).objectFit || 'contain';
+  }catch(e){}
+  if(fit === 'cover'){
+    var s = Math.max(cw / vw, ch / vh);
+    return { mx: vw * s, bx: -(vw - cw / s) / 2 * s, my: vh * s, by: -(vh - ch / s) / 2 * s };
+  }
+  if(fit === 'fill' || fit === 'none') return { mx: cw, bx: 0, my: ch, by: 0 };
+  var sc = Math.min(cw / vw, ch / vh);
+  var w = vw * sc, h = vh * sc;
+  return { mx: w, bx: (cw - w) / 2, my: h, by: (ch - h) / 2 };
 }
 function paintRig(rig){
   var canvas = rig.canvas;
@@ -253,7 +379,9 @@ function paintRig(rig){
     if(w > 0 && (canvas.width !== w || canvas.height !== h)){
       canvas.width = w; canvas.height = h; rig.cleared = true;
     }
+    rig.contentMap = contentMapFor(rig);
   }
+  if(!rig.contentMap) rig.contentMap = contentMapFor(rig);
   if(!rig.ctx){ rig.ctx = canvas.getContext('2d'); if(!rig.ctx) return; }
   var ctx = rig.ctx;
   if(!rig.hasTarget){
@@ -263,22 +391,27 @@ function paintRig(rig){
   rig.cleared = false;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   var cw = canvas.width, ch = canvas.height;
+  var map = rig.contentMap;
+  function MX(x){ return x * map.mx + map.bx; }
+  function MY(y){ return y * map.my + map.by; }
   var i, a, b, x1, y1, x2, y2;
-  // Pose bones.
+  // Pose bones (face bones skipped — the face is one head marker, below).
   ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
   for(i = 0; i < POSE_BONES.length; i++){
     a = POSE_BONES[i][0]; b = POSE_BONES[i][1];
+    if(a < 11 && b < 11) continue;
     if(rig.poseDisplay.has[a] && rig.poseDisplay.has[b]){
       ctx.beginPath();
-      ctx.moveTo(rig.poseDisplay.x[a] * cw, rig.poseDisplay.y[a] * ch);
-      ctx.lineTo(rig.poseDisplay.x[b] * cw, rig.poseDisplay.y[b] * ch);
+      ctx.moveTo(MX(rig.poseDisplay.x[a]), MY(rig.poseDisplay.y[a]));
+      ctx.lineTo(MX(rig.poseDisplay.x[b]), MY(rig.poseDisplay.y[b]));
       ctx.stroke();
     }
   }
   // Pose joints: red = joint to fix, green = looked good.
-  for(i = 0; i < 33; i++){
+  // Face joints (0-10) get NO dots — they bunch into a blob.
+  for(i = 11; i < 33; i++){
     if(!rig.poseDisplay.has[i]) continue;
-    x1 = rig.poseDisplay.x[i] * cw; y1 = rig.poseDisplay.y[i] * ch;
+    x1 = MX(rig.poseDisplay.x[i]); y1 = MY(rig.poseDisplay.y[i]);
     var isFault = rig.faultJoints.indexOf(i) !== -1;
     ctx.beginPath();
     ctx.arc(x1, y1, isFault ? 9 : 5, 0, Math.PI * 2);
@@ -286,16 +419,30 @@ function paintRig(rig){
     ctx.fill();
     if(isFault){ ctx.strokeStyle = '#ffd23d'; ctx.lineWidth = 2; ctx.stroke(); }
   }
-  // Hands: cyan bones, amber finger joints — every finger joint drawn.
+  // One small head marker from the visible face joints (nose, eyes,
+  // ears). No marker at all when the face is not seen (back view).
+  var facePts = [];
+  [0, 2, 5, 7, 8].forEach(function(fi){
+    if(rig.poseDisplay.has[fi]) facePts.push({ x: rig.poseDisplay.x[fi], y: rig.poseDisplay.y[fi] });
+  });
+  var marker = headMarkerFromPoints(facePts);
+  if(marker){
+    var hr = Math.max(6, Math.min(24, marker.r * Math.min(map.mx, map.my)));
+    ctx.beginPath();
+    ctx.arc(MX(marker.x), MY(marker.y), hr, 0, Math.PI * 2);
+    ctx.strokeStyle = '#3ddc97'; ctx.lineWidth = 2; ctx.stroke();
+  }
+  // Hands: small dots + thin lines (they are small features — body-size
+  // dots made 21 joints cram into clumps and spiderwebs).
   for(var h = 0; h < 2; h++){
     var hd = rig.handDisplay[h];
-    ctx.strokeStyle = 'rgba(53,208,255,0.9)'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(53,208,255,0.9)'; ctx.lineWidth = 1.25; ctx.lineCap = 'round';
     for(i = 0; i < HAND_BONES.length; i++){
       a = HAND_BONES[i][0]; b = HAND_BONES[i][1];
       if(hd.has[a] && hd.has[b]){
         ctx.beginPath();
-        ctx.moveTo(hd.x[a] * cw, hd.y[a] * ch);
-        ctx.lineTo(hd.x[b] * cw, hd.y[b] * ch);
+        ctx.moveTo(MX(hd.x[a]), MY(hd.y[a]));
+        ctx.lineTo(MX(hd.x[b]), MY(hd.y[b]));
         ctx.stroke();
       }
     }
@@ -303,7 +450,7 @@ function paintRig(rig){
     for(i = 0; i < 21; i++){
       if(!hd.has[i]) continue;
       ctx.beginPath();
-      ctx.arc(hd.x[i] * cw, hd.y[i] * ch, 3.5, 0, Math.PI * 2);
+      ctx.arc(MX(hd.x[i]), MY(hd.y[i]), 2, 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -350,7 +497,10 @@ function bootHands(){
   h.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
   h.onResults(function(res){
     var w = handsWaiters.shift();
-    if(w) w.resolve(res && res.multiHandLandmarks);
+    /* v2.1.7: pass handedness scores through — a hand only counts when
+     * the model is confident it is a hand (score >= 0.6). Without this,
+     * phantom "hands" (a shirt fold, an arm) drew spiderweb skeletons. */
+    if(w) w.resolve({ landmarks: res && res.multiHandLandmarks, handedness: res && res.multiHandedness });
   });
   handsInst = h;
   return h;
@@ -438,6 +588,26 @@ function sendHands(image){
     }
   });
 }
+/* v2.1.7 gesture smoothing: a new finger count must appear in 2
+ * consecutive inferences before it counts (kills flicker), and one
+ * dropped frame keeps the last count for 500ms instead of resetting. */
+function smoothGestureCount(rig, rawCount, rawSeen){
+  if(rawSeen){
+    rig.gestureMissingSince = 0;
+    if(rawCount === rig.gesture.count){ rig.gesturePending = -1; rig.gesturePendingStreak = 0; }
+    else if(rawCount === rig.gesturePending){
+      rig.gesturePendingStreak++;
+      if(rig.gesturePendingStreak >= 1){ rig.gesture.count = rawCount; rig.gesturePending = -1; rig.gesturePendingStreak = 0; }
+    } else { rig.gesturePending = rawCount; rig.gesturePendingStreak = 0; }
+    rig.gesture.handSeen = true;
+  } else {
+    if(!rig.gestureMissingSince) rig.gestureMissingSince = Date.now();
+    if(Date.now() - rig.gestureMissingSince > 500){
+      rig.gesture.count = -1; rig.gesture.handSeen = false;
+      rig.gesturePending = -1; rig.gesturePendingStreak = 0;
+    }
+  }
+}
 function runInference(rig){
   if(inferBusy) return Promise.resolve();
   if(!rig.video || rig.video.readyState < 2) return Promise.resolve();
@@ -449,10 +619,10 @@ function runInference(rig){
     if(!pose) throw new Error('Pose not available');
     if(!poseWatchdog){
       poseWatchdog = setTimeout(function(){
-        if(!poseGotResult && !poseFailed){
-          poseFailed = true;
-          notifyAll('poseFail');
-        }
+        /* v2.1.7: the watchdog only reports failure when NO rig is
+         * drawing. The old code latched poseFail forever after one
+         * transient error, so the line lied while rigs drew fine. */
+        if(!poseGotResult && !anyFreshTarget()) notifyAll('poseFail');
       }, 6000);
     }
     if(!offscreen){
@@ -471,27 +641,62 @@ function runInference(rig){
     if(poseLm) poseGotResult = true;
     if(!poseLm) return null;
     return ensureHands().then(function(){
-      return sendHands(offscreen).then(function(handsLm){
-        return { poseLm: poseLm, handsLm: handsLm || [] };
+      /* Hands on a bigger frame (640px) — see HANDS_INPUT_WIDTH. */
+      if(!handsOffscreen){
+        handsOffscreen = document.createElement('canvas');
+        handsOffCtx = handsOffscreen.getContext('2d');
+      }
+      var vw2 = rig.video.videoWidth || rig.video.clientWidth || 320;
+      var vh2 = rig.video.videoHeight || rig.video.clientHeight || 240;
+      var hw = HANDS_INPUT_WIDTH;
+      var hh = Math.max(1, Math.round(hw * vh2 / Math.max(1, vw2)));
+      if(handsOffscreen.width !== hw) handsOffscreen.width = hw;
+      if(handsOffscreen.height !== hh) handsOffscreen.height = hh;
+      if(handsOffCtx) handsOffCtx.drawImage(rig.video, 0, 0, hw, hh);
+      return sendHands(handsOffscreen).then(function(handsOut){
+        return { poseLm: poseLm, handsOut: handsOut || null };
       });
     });
   }).then(function(out){
     if(out){
       var poseAny = fillPoseFromArray(rig.poseTarget, out.poseLm);
+      /* Keep only confident hands: handedness score >= 0.6 and wrist
+       * in frame. Phantom hands draw nothing — no spiderwebs. */
+      var keptHands = [];
+      var rawHands = (out.handsOut && out.handsOut.landmarks) ? out.handsOut.landmarks : (Array.isArray(out.handsOut) ? out.handsOut : []);
+      var scores = (out.handsOut && out.handsOut.handedness) ? out.handsOut.handedness : null;
+      for(var i = 0; i < rawHands.length; i++){
+        var hand = rawHands[i];
+        if(!hand || !hand[0] || !landmarkOK(hand[0])) continue;
+        var score = (scores && scores[i] && scores[i].score !== undefined) ? scores[i].score : 1;
+        if(score < HANDS_MIN_SCORE) continue;
+        keptHands.push(hand);
+      }
       var handAny = false;
       for(var h = 0; h < 2; h++){
-        if(fillHandFromArray(rig.handTarget[h], out.handsLm[h])) handAny = true;
+        if(fillHandFromArray(rig.handTarget[h], keptHands[h])) handAny = true;
       }
       rig.hasTarget = poseAny || handAny;
       if(rig.hasTarget) rig.lastTargetT = Date.now();
-      var faceSeen = false, frontal = false;
-      if(out.poseLm){
-        var nose = out.poseLm[0];
-        faceSeen = !!(nose && (nose.visibility === undefined || nose.visibility > 0.5));
-        frontal = isFrontalPose(out.poseLm);
+      var faceSeen = rig.poseTarget.has[0] === 1;
+      var frontal = isFrontalPose(out.poseLm);
+      /* v2.1.7 gesture smoothing: a new finger count must appear in 2
+       * consecutive inferences before it counts (kills flicker), and
+       * one dropped frame keeps the last count for 500ms instead of
+       * resetting the hold timer. */
+      var rawCount = bestHandCount(keptHands);
+      var rawSeen = keptHands.length > 0;
+      smoothGestureCount(rig, rawCount, rawSeen);
+      rig.gesture.frontal = frontal;
+      rig.gesture.faceSeen = faceSeen;
+      /* v2.1.7: the status line follows reality — a rig that draws
+       * from fresh inference reports 'ok', which clears any earlier
+       * failure message. 'ok' was never emitted before, so the line
+       * could never say the skeleton was on. */
+      if(rig.hasTarget){
+        poseFailCount = 0;
+        rig.setStatus(quality.steppedDown ? 'smooth' : 'ok');
       }
-      rig.gesture = { count: bestHandCount(out.handsLm), frontal: frontal,
-        handSeen: out.handsLm.length > 0, faceSeen: faceSeen };
     }
     var ms = now() - t0;
     inferEma = inferEma ? (inferEma * 0.7 + ms * 0.3) : ms;
@@ -507,7 +712,11 @@ function runInference(rig){
       slowStreak = 0;
     }
   }).catch(function(){
-    if(!poseFailed){ poseFailed = true; notifyAll('poseFail'); }
+    /* v2.1.7: failures are recoverable and only reported when sustained
+     * AND no rig is drawing. One transient error no longer latches
+     * "couldn't load" forever. */
+    poseFailCount++;
+    if(poseFailCount >= 3 && !anyFreshTarget()) notifyAll('poseFail');
   }).then(function(){
     inferBusy = false;
   });
@@ -563,7 +772,7 @@ window.TrackRig = {
     rigByKey[key] = rig;
     ensureDrawLoop();
     if(!inferTimer) scheduleInfer();
-    if(!poseFailed) rig.setStatus('starting');
+    rig.setStatus('starting');
     return rig;
   },
   unregisterFeed: function(key){
@@ -630,6 +839,12 @@ window.TrackRig = {
     stepHandStore: stepHandStore,
     advanceRig: advanceRig,
     paintRig: paintRig,
+    headMarkerFromPoints: headMarkerFromPoints,
+    landmarkOK: landmarkOK,
+    contentMapFor: contentMapFor,
+    smoothGestureCount: smoothGestureCount,
+    handsInputWidth: HANDS_INPUT_WIDTH,
+    handsMinScore: HANDS_MIN_SCORE,
     registeredKeys: function(){ var ks = []; for(var k in rigByKey) ks.push(k); return ks; },
     getRigByKey: function(key){ return rigByKey[key] || null; },
     getQuality: function(){ return { interval: quality.interval, inputWidth: quality.inputWidth, steppedDown: quality.steppedDown }; }
