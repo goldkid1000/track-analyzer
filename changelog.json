@@ -1,5 +1,18 @@
 [
   {
+    "version": "2.1.3",
+    "date": "2026-10-17",
+    "notes": [
+      "Three tabs now: AI Analyzer, AI Photo, Guide. The Side View tab is gone — its side-view tip (phone square to the lane, 10–15 ft away, full body in frame) lives in the AI Analyzer.",
+      "When an analysis finishes, AI Photo and Guide get a red “New” badge, and the AI Analyzer shows “Analysis done — see your AI Photo report and your new fix in Guide.” Opening a tab clears its badge.",
+      "Guide now shows “Your latest fix” from the run you just finished, at the top.",
+      "AI Photo is connected to the AI Analyzer: it shows your latest run (reps, top fixes, best/worst frames), and every photo gets pointing markers — green checks where form looks good, a red mark where to work — plus “What looks good” and “Work on” lists in plain words. If a joint is out of frame, it says which one instead of guessing.",
+      "Your form vs Pro form — watch the run: a 2D animated demo on a runway in AI Photo. Your character runs with your measured angles, the pro runs with ideal angles, and the callout shows your actual top fix. 2D drawing from measured angles — not real 3D, not your real video. Play / Pause / Replay included.",
+      "Knowledge base grown from 26 to 40 entries: finish & lean, sprint hurdles, 400m hurdles, 4×100m, 4×400m, pole vault basics, safe jump landings, shot put glide + rotation, hammer basics, javelin approach, 800m, 1500m / mile, 5000m."
+    ],
+    "notify": true
+  },
+  {
     "version": "2.1.2",
     "date": "2026-10-17",
     "notes": [
