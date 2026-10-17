@@ -1,4 +1,4 @@
-/* Track Analyzer — AI Analyzer (v2.1.0)
+/* Track Analyzer — AI Analyzer (v2.1.1)
  *
  * On-device coaching: the camera watches the athlete, names what it sees,
  * and gives one fix at a time from the embedded knowledge base
@@ -8,10 +8,17 @@
  * of frame it says what it can't see instead of guessing. Activity labels
  * are pattern matches ("looks like a squat"), not certainties.
  *
- * Works with the single camera, or with the Dual-Angle setup when connected
- * (borrows the live dual streams via window.TrackDual — it never stops the
- * dual session). Voice coaching uses the device's built-in speech
+ * Works with the single camera, or with the two-camera setup when connected
+ * (borrows the live two-camera streams via window.TrackDual — it never stops
+ * the two-camera setup). Voice coaching uses the device's built-in speech
  * (speechSynthesis), off by default.
+ *
+ * v2.1.1: gesture control (1 finger = start, 2 fingers = stop, ~1s hold,
+ * face must face the camera, MediaPipe Hands; buttons always work),
+ * post-rep deep analysis (full-clip review with progress, per-rep breakdown,
+ * best/worst frames, estimated-only measurements), video picks from the
+ * existing knowledge-base videos only, and a 2D skeleton drawing
+ * (flat view from the camera, never fake 3D) in the results.
  */
 (function(){
 'use strict';
@@ -39,7 +46,12 @@ var AI = {
   session: null, // {startedAt, reps:{}, faultCounts:{}, fixes:[], bestFrames:[]}
   lastFixKey: '', lastSpeak: 0, cueIdx: 0,
   squatPhase: 'up', squatDip: 0,
-  movingSince: 0, setSince: 0
+  movingSince: 0, setSince: 0,
+  mode: 'idle', // idle | watching | coaching
+  lastFrontal: false, lastLandmarks1: null,
+  deep: { frames1: [], frames2: [], worst: null },
+  deepReport: null, lastSession: null,
+  gesture: { hands: null, handsFailed: false, lastCount: -1, holdKind: '', holdCount: 0, timer: null }
 };
 var ACTIVITY_LABEL = {
   none: 'No athlete in frame', rest: 'Resting', set: 'Set position',
@@ -198,9 +210,11 @@ function countRep(activity){
   AI.session.reps[activity] = (AI.session.reps[activity] || 0) + 1;
   setText('aiRepCount', String(totalReps()));
 }
-function totalReps(){
+function totalReps(sess){
+  sess = sess || AI.session;
+  if(!sess) return 0;
   var n = 0;
-  Object.keys(AI.session.reps).forEach(function(k){ n += AI.session.reps[k]; });
+  Object.keys(sess.reps).forEach(function(k){ n += sess.reps[k]; });
   return n;
 }
 function onFrame(f, angle){
@@ -227,12 +241,17 @@ function onFrame(f, angle){
   }
   if(f && f.missing && f.missing.length){
     setText('aiCantSee', 'Can’t see: ' + f.missing.join(', ') + ' — step back so your full body fits.');
+    AI.deep.frames1.push({ t: Date.now(), activity: 'none', score: 0, tripped: null, f: null });
+    if(AI.deep.frames1.length > 900) AI.deep.frames1.shift();
     return;
   }
   if(!f) return;
   setText('aiCantSee', 'All key joints visible ✓');
   var scored = scoreFrame(activity, f);
   setText('aiScore', scored.score ? scored.score + '%' : '—');
+  AI.deep.frames1.push({ t: Date.now(), activity: activity, score: scored.score, tripped: scored.tripped || null,
+    f: { lean: f.lean, kneeL: f.kneeL, kneeR: f.kneeR, elbow: f.elbow, thighSep: f.thighSep, shinReach: f.shinReach } });
+  if(AI.deep.frames1.length > 900) AI.deep.frames1.shift();
   // Live callout every ~5s while moving: praise + one fix.
   if((activity === 'sprint' || activity === 'block-start' || activity === 'squat' || activity === 'hinge' || activity === 'drill' || activity === 'bench') && now - AI.lastCallout > 5000){
     AI.lastCallout = now;
@@ -264,29 +283,513 @@ function onFrame(f, angle){
   }
   // Best frames: top-3 snapshots by score during reps.
   if(scored.score >= 70 && (activity === 'sprint' || activity === 'block-start' || activity === 'squat')){
-    maybeCaptureBest(scored.score, activity);
+    maybeCaptureBest(scored.score, activity, AI.lastLandmarks1);
+  }
+  if(scored.score <= 55 && (activity === 'sprint' || activity === 'block-start' || activity === 'squat' || activity === 'drill' || activity === 'hinge' || activity === 'bench')){
+    maybeCaptureWorst(scored.score, activity, AI.lastLandmarks1);
   }
 }
-function maybeCaptureBest(score, activity){
+function snapshotVideo(){
   var v = $('aiVideo');
-  if(!v || v.readyState < 2) return;
-  var frames = AI.session.bestFrames;
-  if(frames.length >= 3 && score <= frames[frames.length - 1].score) return;
+  if(!v || v.readyState < 2) return null;
   try{
     var c = document.createElement('canvas');
     var w = 320, h = Math.round(320 * v.videoHeight / Math.max(1, v.videoWidth));
     c.width = w; c.height = h;
     c.getContext('2d').drawImage(v, 0, 0, w, h);
-    frames.push({ score: score, activity: activity, url: c.toDataURL('image/jpeg', 0.7) });
-    frames.sort(function(a, b){ return b.score - a.score; });
-    AI.session.bestFrames = frames.slice(0, 3);
-  }catch(e){}
+    return c.toDataURL('image/jpeg', 0.7);
+  }catch(e){ return null; }
 }
-function startAI(){
+function maybeCaptureBest(score, activity, lm){
+  var frames = AI.session.bestFrames;
+  if(frames.length >= 3 && score <= frames[frames.length - 1].score) return;
+  var url = snapshotVideo();
+  if(!url) return;
+  frames.push({ score: score, activity: activity, url: url, lm: lm || null });
+  frames.sort(function(a, b){ return b.score - a.score; });
+  AI.session.bestFrames = frames.slice(0, 3);
+}
+function maybeCaptureWorst(score, activity, lm){
+  if(AI.deep.worst && score >= AI.deep.worst.score) return;
+  var url = snapshotVideo();
+  if(!url) return;
+  AI.deep.worst = { score: score, activity: activity, url: url, lm: lm || null };
+}
+
+/* ================= Gesture control (1 finger = start, 2 = stop) ================= */
+function escHtml(t){
+  return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function simplifyLm(lm){
+  var out = {}, keep = [0, 2, 5, 7, 8, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
+  keep.forEach(function(i){
+    var pt = lm[i];
+    if(pt) out[i] = { x: pt.x, y: pt.y, v: pt.visibility === undefined ? 1 : pt.visibility };
+  });
+  return out;
+}
+function isFrontal(lm){
+  // Face visible + roughly facing the camera: nose + both eyes visible,
+  // nose near the midpoint between the eyes (not profile, not looking away).
+  var nose = lm[0], le = lm[2], re = lm[5];
+  function vis(pt){ return !!pt && (pt.visibility === undefined || pt.visibility > 0.5); }
+  if(!vis(nose) || !vis(le) || !vis(re)) return false;
+  var eyeDist = Math.abs(le.x - re.x);
+  if(eyeDist < 0.02) return false;
+  var mid = (le.x + re.x) / 2;
+  return Math.abs(nose.x - mid) < 0.35 * eyeDist;
+}
+function countFingers(lm){
+  // Count extended fingers on one hand: a finger counts when its tip sits
+  // clearly farther from the wrist than its middle joint. No hand => -1.
+  if(!lm || lm.length < 21 || !lm[0]) return -1;
+  function d(a, b){ return Math.hypot(a.x - b.x, a.y - b.y); }
+  var wrist = lm[0], count = 0;
+  var fingers = [[4, 3], [8, 6], [12, 10], [16, 14], [20, 18]]; // [tip, pip]
+  fingers.forEach(function(pair){
+    if(lm[pair[0]] && lm[pair[1]] && d(wrist, lm[pair[0]]) > d(wrist, lm[pair[1]]) * 1.12) count++;
+  });
+  return count;
+}
+function setGestureStatus(kind){
+  var el = $('gestureStatus');
+  if(!el) return;
+  var msgs = {
+    watching: '👁 Watching… look at the camera + hold up 1 finger to start',
+    coaching: 'Coaching — hold up 2 fingers to stop, or tap Stop.',
+    holdStart: '✋ 1 finger — starting… (keep holding)',
+    holdStop: '✌️ 2 fingers — stopping… (keep holding)',
+    unavailable: 'Gesture control unavailable — use the Start watching / Stop buttons.',
+    noperm: 'Camera needs permission — allow it, or use Two cameras below.',
+    unsupported: 'Camera not supported on this device.',
+    off: 'Camera off — tap Start watching.'
+  };
+  el.textContent = msgs[kind] || msgs.off;
+}
+function setHoldBar(frac){
+  var bar = $('gestureHoldBar');
+  if(bar) bar.style.width = Math.round(clamp(frac, 0, 1) * 100) + '%';
+}
+function loadHands(){
+  var g = AI.gesture;
+  if(g.hands || g.handsFailed) return;
+  function fail(){
+    g.handsFailed = true;
+    if(AI.mode === 'watching') setGestureStatus('unavailable');
+  }
+  function boot(){
+    try{
+      if(!window.Hands){ fail(); return; }
+      var h = new Hands({ locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/hands/' + f; } });
+      h.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+      h.onResults(function(res){
+        var lm = res && res.multiHandLandmarks && res.multiHandLandmarks[0];
+        g.lastCount = lm ? countFingers(lm) : -1;
+      });
+      g.hands = h;
+    }catch(e){ fail(); }
+  }
+  if(window.Hands){ boot(); return; }
+  var urls = ['https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js', 'https://unpkg.com/@mediapipe/hands/hands.js'];
+  (function next(i){
+    if(i >= urls.length){ fail(); return; }
+    var sc = document.createElement('script');
+    sc.src = urls[i]; sc.async = true;
+    sc.onload = boot;
+    sc.onerror = function(){ next(i + 1); };
+    document.head.appendChild(sc);
+  })(0);
+}
+function gestureTick(){
+  var v = $('aiVideo');
+  var g = AI.gesture;
+  if(AI.mode === 'watching' && AI.poseA && v && v.readyState >= 2){
+    AI.poseA.send({ image: v }).catch(function(){});
+  }
+  if(g.hands && v && v.readyState >= 2){
+    g.hands.send({ image: v }).catch(function(){});
+  }
+  var want = '';
+  if(AI.lastFrontal && g.lastCount === 1 && AI.mode === 'watching') want = 'start';
+  else if(AI.lastFrontal && g.lastCount === 2 && AI.mode === 'coaching') want = 'stop';
+  if(want && want === g.holdKind) g.holdCount++;
+  else { g.holdKind = want; g.holdCount = want ? 1 : 0; }
+  setHoldBar(g.holdCount / 10);
+  if(want === 'start'){
+    setGestureStatus('holdStart');
+    if(g.holdCount >= 10){ g.holdKind = ''; g.holdCount = 0; setHoldBar(0); startCoachingFromWatch(); }
+  } else if(want === 'stop'){
+    setGestureStatus('holdStop');
+    if(g.holdCount >= 10){ g.holdKind = ''; g.holdCount = 0; setHoldBar(0); stopAndAnalyze(); }
+  } else if(AI.mode === 'watching') setGestureStatus('watching');
+  else if(AI.mode === 'coaching') setGestureStatus('coaching');
+}
+function startGestureLoop(){
+  clearInterval(AI.gesture.timer);
+  loadHands();
+  AI.gesture.timer = setInterval(gestureTick, 120);
+}
+function startWatching(){
+  if(AI.mode !== 'idle') return;
+  AI.mode = 'watching';
+  AI.lastFrontal = false; AI.gesture.lastCount = -1;
+  showEl($('aiLivePanel'), true);
+  showEl($('aiSummary'), false);
+  var startBtn = $('aiStartBtn');
+  if(startBtn){ startBtn.textContent = 'Start coaching'; showEl(startBtn, true); }
+  showEl($('aiStopBtn'), false);
+  showEl($('aiEndSessionBtn'), false);
+  setGestureStatus('watching');
+  setText('aiSeeing', 'Starting camera…');
+  var dual = getDual();
+  var useDual = !!(dual && dual.connected && dual.localStream);
+  AI.usingDual = useDual;
+  function beginWatch(){
+    try{
+      AI.poseA = makePose(function(res){
+        var lm = res && res.poseLandmarks;
+        if(lm){ AI.lastLandmarks1 = simplifyLm(lm); AI.lastFrontal = isFrontal(lm); }
+      });
+    }catch(e){
+      setText('aiSeeing', 'Analyzer didn\u2019t start \u2014 reload and try again.');
+      AI.mode = 'idle';
+      return;
+    }
+    if(useDual){
+      attachStream($('aiVideo'), dual.localStream);
+      if(dual.remoteStream){ attachStream($('aiVideo2'), dual.remoteStream); showEl($('aiPreview2Wrap'), true); }
+      setText('aiAngleTag', dual.localLabel + ' view');
+      setText('aiAngle2Tag', dual.remoteLabel + ' view');
+    } else {
+      showEl($('aiPreview2Wrap'), false);
+      setText('aiAngleTag', 'Camera');
+    }
+    startGestureLoop();
+    setText('aiSeeing', useDual ? 'Watching both cameras…' : 'Watching — move into frame.');
+  }
+  if(useDual){ beginWatch(); return; }
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ setGestureStatus('unsupported'); AI.mode = 'idle'; return; }
+  navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } })
+    .then(function(stream){
+      AI.ownStream = stream;
+      attachStream($('aiVideo'), stream);
+      beginWatch();
+    }).catch(function(){
+      setGestureStatus('noperm');
+      AI.mode = 'idle';
+      setText('aiSeeing', 'Camera needs permission — allow it, or use Two cameras below.');
+    });
+}
+function startCoachingFromWatch(){
+  if(AI.mode !== 'watching') return;
+  startAI(true);
+}
+
+/* ================= Deep analysis (full-clip review after Stop) ================= */
+var REP_ACTIVITIES = ['block-start', 'sprint', 'drill', 'squat', 'hinge', 'bench', 'moving'];
+function absorbFrame(state, fr){
+  if(REP_ACTIVITIES.indexOf(fr.activity) === -1){ state.cur = null; return; }
+  var cur = state.cur;
+  if(!cur || cur.activity !== fr.activity){
+    cur = { activity: fr.activity, startT: fr.t, endT: fr.t, frames: 0, best: -1, worst: 101, tripCounts: {}, samples: [] };
+    state.cur = cur; state.reps.push(cur);
+  }
+  cur.endT = fr.t; cur.frames++;
+  if(fr.score > cur.best) cur.best = fr.score;
+  if(fr.score < cur.worst) cur.worst = fr.score;
+  if(fr.tripped) cur.tripCounts[fr.tripped] = (cur.tripCounts[fr.tripped] || 0) + 1;
+  if(fr.f) cur.samples.push(fr.f);
+}
+function segmentReps(frames){
+  var state = { reps: [], cur: null };
+  frames.forEach(function(fr){ absorbFrame(state, fr); });
+  return state.reps;
+}
+var CHECK_LABEL = {
+  overstride: 'Overstriding', earlyRise: 'Popping up too early', armCross: 'Arms crossing',
+  elbowShape: 'Elbow shape', tallPosture: 'Posture', footRecovery: 'Foot recovery',
+  thighSep: 'Thigh separation', squatDepth: 'Squat depth', hingeBack: 'Hinge back',
+  squatKnee: 'Knee tracking', armSplit: 'Hand separation'
+};
+function findFault(check){
+  if(window.TrackKB){
+    for(var i = 0; i < window.TrackKB.all.length; i++){
+      var e = window.TrackKB.all[i];
+      for(var j = 0; j < e.faults.length; j++){
+        if(e.faults[j].check === check) return e.faults[j];
+      }
+    }
+  }
+  return null;
+}
+function pickVideos(input){
+  // ONLY videos the app already ships in the knowledge base — never invented.
+  var out = [], seen = {};
+  function push(video, title, reason, cue, drill){
+    if(!video || seen[video] || out.length >= 2) return;
+    seen[video] = true;
+    out.push({ video: video, title: title, reason: reason, cue: cue || '', drill: drill || '' });
+  }
+  (input.faults || []).forEach(function(fl){
+    if(out.length >= 2) return;
+    var kb = findFault(fl.check);
+    if(kb && kb.video) push(kb.video, kb.fault + ' — ' + kb.drill, 'Because your top fix was “' + kb.cue + '”', kb.cue, kb.drill);
+  });
+  if(out.length < 2){
+    var acts = input.activities && input.activities.length ? input.activities : ['sprint'];
+    for(var a = 0; a < acts.length && out.length < 2; a++){
+      var kbEntry = kbFor(acts[a]);
+      if(!kbEntry) continue;
+      var general = null;
+      for(var i = 0; i < kbEntry.faults.length; i++) if(kbEntry.faults[i].check === 'general'){ general = kbEntry.faults[i]; break; }
+      var f0 = general || kbEntry.faults[0];
+      if(f0 && f0.video) push(f0.video, f0.fault + ' — ' + f0.drill, 'A solid next watch for ' + (ACTIVITY_LABEL[acts[a]] || acts[a]) + '.', f0.cue, f0.drill);
+    }
+  }
+  return out;
+}
+function buildDeepReport(reps, frames2count, opts){
+  opts = opts || {};
+  var faultCounts = {}, activities = [];
+  reps.forEach(function(r){
+    if(activities.indexOf(r.activity) === -1) activities.push(r.activity);
+    Object.keys(r.tripCounts).forEach(function(k){ faultCounts[k] = (faultCounts[k] || 0) + r.tripCounts[k]; });
+  });
+  var faultList = Object.keys(faultCounts).sort(function(a, b){ return faultCounts[b] - faultCounts[a]; }).map(function(check){
+    var kb = findFault(check);
+    return { check: check, count: faultCounts[check],
+      fault: kb ? kb.fault : (CHECK_LABEL[check] || check),
+      cue: kb ? kb.cue : 'Work on this one rep at a time.',
+      drill: kb ? kb.drill : 'See the Coaching guide for drills.',
+      video: kb ? (kb.video || '') : '' };
+  });
+  var strengths = reps.filter(function(r){ return r.best >= 80; }).map(function(r, i){
+    return 'Rep ' + (i + 1) + ' (' + (ACTIVITY_LABEL[r.activity] || r.activity) + '): held strong shape — best frame ~' + r.best + '%.';
+  });
+  if(!strengths.length) strengths = ['No rep scored 80% or higher — the fixes below are where the gains are.'];
+  function medOf(samples, key){
+    var vals = samples.map(function(f){ return f[key]; }).filter(function(v){ return typeof v === 'number'; });
+    return vals.length ? Math.round(median(vals)) : null;
+  }
+  var measurements = reps.map(function(r, i){
+    var lean = medOf(r.samples, 'lean'), knee = medOf(r.samples, 'kneeL');
+    var line = 'Rep ' + (i + 1) + ' (' + (ACTIVITY_LABEL[r.activity] || r.activity) + '): ~' +
+      Math.max(0, Math.round((r.endT - r.startT) / 1000)) + 's · best ~' + (r.best < 0 ? '—' : r.best + '%') +
+      ' · worst ~' + (r.worst > 100 ? '—' : r.worst + '%');
+    if(lean !== null) line += ' · trunk lean ~' + lean + '° (estimated)';
+    if(knee !== null) line += ' · front knee ~' + knee + '° (estimated)';
+    return line;
+  });
+  var span = reps.length ? Math.max(0, Math.round((reps[reps.length - 1].endT - reps[0].startT) / 1000)) : 0;
+  return {
+    reps: reps, faultList: faultList, strengths: strengths, measurements: measurements,
+    totalReps: reps.length, spanSecs: span, ref: opts.ref || '',
+    frames2count: frames2count || 0,
+    best: opts.best || [], worst: opts.worst || null,
+    videos: pickVideos({ faults: faultList, activities: activities }),
+    refNote: opts.ref
+      ? 'You gave this reference: "' + opts.ref + '" — times use it as context. Speeds are still approximate.'
+      : 'No distance/time reference given — so no speed is reported. Add one above next time for calibrated measurements.',
+    dualNote: (frames2count || 0) > 0
+      ? 'Second camera: ' + frames2count + ' frames reviewed. Its replay lives in Two cameras.'
+      : 'One camera only — add a second camera for the other side.'
+  };
+}
+function skelFaultJoints(check){
+  var map = {
+    overstride: [27, 28], earlyRise: [23, 24], armCross: [15, 16], elbowShape: [13, 14],
+    tallPosture: [23, 24], footRecovery: [25, 26], thighSep: [25, 26], squatDepth: [25, 26],
+    hingeBack: [23, 24], squatKnee: [25, 26], armSplit: [15, 16]
+  };
+  return map[check] || [];
+}
+var SKEL_BONES = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24],
+  [23, 25], [25, 27], [24, 26], [26, 28], [0, 11], [0, 12]];
+function drawSkeleton(canvas, lm, faultJoints){
+  // 2D skeleton: a flat drawing from the camera's 2D landmarks — never 3D.
+  if(!canvas || !lm) return [];
+  var ctx = canvas.getContext('2d');
+  if(!ctx) return [];
+  var w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  var pts = {};
+  Object.keys(lm).forEach(function(k){
+    var pt = lm[k];
+    if(pt && (pt.v === undefined || pt.v > 0.3)) pts[k] = { x: pt.x * w, y: pt.y * h };
+  });
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  SKEL_BONES.forEach(function(b){
+    if(pts[b[0]] && pts[b[1]]){
+      ctx.beginPath(); ctx.moveTo(pts[b[0]].x, pts[b[0]].y); ctx.lineTo(pts[b[1]].x, pts[b[1]].y); ctx.stroke();
+    }
+  });
+  var joints = [];
+  Object.keys(pts).forEach(function(k){
+    var idx = parseInt(k, 10);
+    var isFault = (faultJoints || []).indexOf(idx) !== -1;
+    ctx.beginPath();
+    ctx.arc(pts[k].x, pts[k].y, isFault ? 9 : 5, 0, Math.PI * 2);
+    ctx.fillStyle = isFault ? '#ff5c5c' : '#3ddc97';
+    ctx.fill();
+    if(isFault){ ctx.strokeStyle = '#ffd23d'; ctx.lineWidth = 2; ctx.stroke(); }
+    joints.push({ idx: idx, x: pts[k].x, y: pts[k].y, fault: isFault });
+  });
+  canvas._skelJoints = joints;
+  return joints;
+}
+function bindSkelClick(canvas, faultInfo){
+  if(!canvas) return;
+  canvas.addEventListener('click', function(e){
+    var rect = canvas.getBoundingClientRect();
+    var cx = (e.clientX - rect.left) * canvas.width / Math.max(1, rect.width);
+    var cy = (e.clientY - rect.top) * canvas.height / Math.max(1, rect.height);
+    var joints = canvas._skelJoints || [], best = null, bestD = 1e9;
+    joints.forEach(function(j){
+      var d = Math.hypot(j.x - cx, j.y - cy);
+      if(d < bestD){ bestD = d; best = j; }
+    });
+    var detail = $('aiSkelDetail');
+    if(!detail) return;
+    if(best && bestD < 30 && best.fault && faultInfo){
+      detail.textContent = 'That joint: ' + faultInfo.fault + ' — Cue: ' + faultInfo.cue + ' Drill: ' + faultInfo.drill + '.';
+    } else if(best && bestD < 30){
+      detail.textContent = 'That joint looked good in this frame.';
+    } else {
+      detail.textContent = 'Tap a red joint to see its fix.';
+    }
+  });
+}
+function renderDeepReport(report){
+  var box = $('aiDeepReport');
+  if(!box) return;
+  var html = '<h4>Deep check — full clip</h4>';
+  if(!report.reps.length){
+    html += '<p>No full reps in this clip — the camera still watched. Do a full rep (move, then rest) and it will show up here.</p>';
+  } else {
+    html += '<p>' + report.totalReps + ' rep' + (report.totalReps === 1 ? '' : 's') + ' reviewed · ~' + report.spanSecs + 's of rep time.</p>';
+    html += '<h5>Per-rep breakdown</h5><ul>' + report.measurements.map(function(m){ return '<li>' + escHtml(m) + '</li>'; }).join('') + '</ul>';
+  }
+  html += '<h5>What looked good</h5><ul>' + report.strengths.map(function(x){ return '<li>' + escHtml(x) + '</li>'; }).join('') + '</ul>';
+  if(report.faultList.length){
+    html += '<h5>Fixes, with cue + drill</h5><ul>' + report.faultList.map(function(f){
+      return '<li><strong>' + escHtml(f.fault) + '</strong> (×' + f.count + ') — Cue: “' + escHtml(f.cue) + '” Drill: ' + escHtml(f.drill) + '.</li>';
+    }).join('') + '</ul>';
+  } else {
+    html += '<h5>Fixes</h5><p>No repeated fault stood out in this clip.</p>';
+  }
+  html += '<p class="ai-note">' + escHtml(report.refNote) + '</p>';
+  html += '<p class="ai-note">' + escHtml(report.dualNote) + '</p>';
+  if(report.best.length){
+    var b = report.best[0];
+    html += '<h5>Best frame</h5><div class="ai-frame-skel"><figure><img src="' + b.url + '" alt="Best frame"><figcaption>' +
+      escHtml(ACTIVITY_LABEL[b.activity] || b.activity) + ' · ~' + b.score + '%</figcaption></figure>' +
+      '<canvas id="deepSkelBest" width="320" height="240"></canvas></div>';
+  }
+  if(report.worst){
+    html += '<h5>Worst frame</h5><div class="ai-frame-skel"><figure><img src="' + report.worst.url + '" alt="Worst frame"><figcaption>' +
+      escHtml(ACTIVITY_LABEL[report.worst.activity] || report.worst.activity) + ' · ~' + report.worst.score + '%</figcaption></figure>' +
+      '<canvas id="deepSkelWorst" width="320" height="240"></canvas></div>';
+  }
+  if(report.faultList.length){
+    var top = report.faultList.slice(0, 2);
+    html += '<h5>Skeleton — where the fix is</h5>';
+    top.forEach(function(f, i){
+      html += '<p><strong>' + escHtml(f.fault) + '</strong> — red joint, tap it for the fix.</p>' +
+        '<canvas id="deepSkelFault' + i + '" width="320" height="240"></canvas>';
+    });
+  }
+  html += '<p class="ai-note">2D skeleton — a flat drawing from the camera, not 3D. Red = joint to fix, green = joint that looked good.</p>';
+  html += '<p id="aiSkelDetail" class="ai-note">Tap a red joint to see its fix.</p>';
+  if(report.videos.length){
+    html += '<h5>Videos to watch</h5><ul>' + report.videos.map(function(v){
+      return '<li><a href="' + escHtml(v.video) + '" target="_blank" rel="noopener">' + escHtml(v.title) + '</a><br>' +
+        escHtml(v.reason) + '</li>';
+    }).join('') + '</ul>';
+  }
+  box.innerHTML = html;
+  var topFault = report.faultList[0] || null;
+  var topJoints = topFault ? skelFaultJoints(topFault.check) : [];
+  var bestLm = report.best.length ? report.best[0].lm : null;
+  var worstLm = report.worst ? report.worst.lm : null;
+  drawSkeleton($('deepSkelBest'), bestLm, topJoints);
+  bindSkelClick($('deepSkelBest'), topFault);
+  drawSkeleton($('deepSkelWorst'), worstLm, topJoints);
+  bindSkelClick($('deepSkelWorst'), topFault);
+  (report.faultList.slice(0, 2)).forEach(function(f, i){
+    drawSkeleton($('deepSkelFault' + i), worstLm || bestLm, skelFaultJoints(f.check));
+    bindSkelClick($('deepSkelFault' + i), f);
+  });
+}
+function runDeepAnalysis(){
+  showEl($('aiAnalyzing'), true);
+  var frames1 = AI.deep.frames1.slice();
+  var frames2count = AI.deep.frames2.length;
+  var ref = ($('aiReference') && $('aiReference').value || '').trim();
+  var state = { reps: [], cur: null };
+  var idx = 0;
+  return new Promise(function(resolve){
+    function step(){
+      var end = Math.min(frames1.length, idx + 60);
+      for(; idx < end; idx++) absorbFrame(state, frames1[idx]);
+      setText('aiAnalyzeStatus', 'Reviewing frame ' + Math.min(idx, frames1.length) + ' of ' + frames1.length + '…');
+      setText('aiAnalyzeDetail', 'Reps found so far: ' + state.reps.length + '. Second camera frames: ' + frames2count + '.');
+      if(idx < frames1.length){ setTimeout(step, 0); return; }
+      var report = buildDeepReport(state.reps, frames2count, {
+        ref: ref,
+        best: AI.lastSession ? AI.lastSession.bestFrames : [],
+        worst: AI.deep.worst
+      });
+      AI.deepReport = report;
+      renderDeepReport(report);
+      showEl($('aiAnalyzing'), false);
+      resolve(report);
+    }
+    step();
+  });
+}
+function stopAndAnalyze(){
+  if(!AI.running && AI.mode !== 'coaching') return;
+  AI.lastSession = AI.session;
+  stopAI();
+  runDeepAnalysis().then(function(){
+    renderSessionSummary(AI.lastSession);
+    showEl($('aiSummary'), true);
+    var s = $('aiSummary');
+    if(s) s.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
+function renderSessionSummary(s){
+  if(!s) return;
+  var secs = Math.round((Date.now() - s.startedAt) / 1000);
+  var repsHtml = Object.keys(s.reps).length
+    ? Object.keys(s.reps).map(function(k){ return '<div class="ai-sum-row"><span>' + (ACTIVITY_LABEL[k] || k) + '</span><span>' + s.reps[k] + '</span></div>'; }).join('')
+    : '<p>No full reps yet — do a rep and it will show up here.</p>';
+  var faults = Object.keys(s.faultCounts).sort(function(a, b){ return s.faultCounts[b] - s.faultCounts[a]; });
+  var faultsHtml = faults.length
+    ? faults.map(function(k){ return '<div class="ai-sum-row"><span>' + k + '</span><span>×' + s.faultCounts[k] + '</span></div>'; }).join('')
+    : '<p>No repeated faults — nice.</p>';
+  var fixesHtml = s.fixes.length ? '<ul>' + s.fixes.map(function(f){ return '<li>' + f + '</li>'; }).join('') + '</ul>' : '<p>No fixes yet.</p>';
+  var framesHtml = s.bestFrames.length
+    ? '<div class="ai-best-frames">' + s.bestFrames.map(function(fr){ return '<figure><img src="' + fr.url + '" alt="Best frame"><figcaption>' + (ACTIVITY_LABEL[fr.activity] || fr.activity) + ' · ' + fr.score + '%</figcaption></figure>'; }).join('') + '</div>'
+    : '<p>No best frames yet — finish a rep and they will show up here.</p>';
+  var body = $('aiSummaryBody');
+  if(body) body.innerHTML =
+    '<p>Time: ' + Math.floor(secs / 60) + 'm ' + (secs % 60) + 's · Total reps: ' + totalReps(s) + '</p>' +
+    '<h4>Reps</h4>' + repsHtml +
+    '<h4>Top faults</h4>' + faultsHtml +
+    '<h4>Fixes given</h4>' + fixesHtml +
+    '<h4>Best frames</h4>' + framesHtml;
+}
+
+function startAI(reuseStream){
   if(AI.running) return;
   AI.session = { startedAt: Date.now(), reps: {}, faultCounts: {}, fixes: [], bestFrames: [] };
+  AI.deep = { frames1: [], frames2: [], worst: null };
+  AI.deepReport = null;
+  var dr = $('aiDeepReport'); if(dr) dr.innerHTML = '';
   AI.hist = []; AI.state = 'none'; AI.lastCallout = 0; AI.lastFixKey = '';
   AI.squatPhase = 'up'; AI.squatDip = 0;
+  AI.mode = 'coaching';
   setText('aiRepCount', '0');
   var box = $('aiCallouts'); if(box) box.innerHTML = '';
   showEl($('aiLivePanel'), true);
@@ -294,16 +797,31 @@ function startAI(){
   showEl($('aiStartBtn'), false);
   showEl($('aiStopBtn'), true);
   showEl($('aiEndSessionBtn'), true);
+  setGestureStatus('coaching');
   setText('aiSeeing', 'Starting camera…');
   var dual = getDual();
   var useDual = !!(dual && dual.connected && dual.localStream);
   AI.usingDual = useDual;
   function begin(){
     AI.running = true;
-    if(!window.Pose){ setText('aiSeeing', 'Pose model unavailable — reload and try again.'); return; }
-    AI.poseA = makePose(function(res){ if(AI.running) onFrame(res && res.poseLandmarks ? extractAI(res.poseLandmarks) : { missing: ['full body'] }, 1); });
+    if(!window.Pose){ setText('aiSeeing', 'Analyzer didn’t start — reload and try again.'); return; }
+    AI.poseA = makePose(function(res){
+      var lm = res && res.poseLandmarks;
+      if(lm){ AI.lastLandmarks1 = simplifyLm(lm); AI.lastFrontal = isFrontal(lm); }
+      if(AI.running) onFrame(lm ? extractAI(lm) : { missing: ['full body'] }, 1);
+    });
     if(useDual && dual.remoteStream){
-      AI.poseB = makePose(function(res){ /* angle 2 watched for the combined label; state runs off angle 1 */ });
+      AI.poseB = makePose(function(res){
+        var lm = res && res.poseLandmarks;
+        if(lm){
+          var ef = extractAI(lm);
+          if(ef && (!ef.missing || !ef.missing.length)){
+            AI.deep.frames2.push({ t: Date.now(), activity: 'camera2', score: 0, tripped: null,
+              f: { lean: ef.lean, kneeL: ef.kneeL, kneeR: ef.kneeR, elbow: ef.elbow, thighSep: ef.thighSep, shinReach: ef.shinReach } });
+            if(AI.deep.frames2.length > 900) AI.deep.frames2.shift();
+          }
+        }
+      });
       attachStream($('aiVideo'), dual.localStream);
       attachStream($('aiVideo2'), dual.remoteStream);
       showEl($('aiPreview2Wrap'), true);
@@ -319,54 +837,46 @@ function startAI(){
       if(v1 && v1.readyState >= 2 && AI.poseA) AI.poseA.send({ image: v1 }).catch(function(){});
       if(useDual && v2 && v2.readyState >= 2 && AI.poseB) AI.poseB.send({ image: v2 }).catch(function(){});
     }, 150);
-    setText('aiSeeing', useDual ? 'Watching both angles…' : 'Watching — move into frame.');
+    setText('aiSeeing', useDual ? 'Watching both cameras…' : 'Watching — move into frame.');
   }
   if(useDual){ begin(); return; }
-  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ setText('aiSeeing', 'Camera not supported here.'); return; }
+  if(reuseStream && AI.ownStream){ attachStream($('aiVideo'), AI.ownStream); begin(); return; }
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ setText('aiSeeing', 'Camera not supported on this device.'); return; }
   navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } })
     .then(function(stream){
       AI.ownStream = stream;
       attachStream($('aiVideo'), stream);
       begin();
     }).catch(function(){
-      setText('aiSeeing', 'Camera needs permission — allow it, or use the Dual-Angle tab.');
+      setText('aiSeeing', 'Camera needs permission — allow it, or use Two cameras below.');
     });
 }
+
 function stopAI(){
-  AI.running = false;
+  AI.running = false; AI.mode = 'idle';
   clearInterval(AI.timer); AI.timer = null;
+  clearInterval(AI.gesture.timer); AI.gesture.timer = null;
+  AI.gesture.holdKind = ''; AI.gesture.holdCount = 0; setHoldBar(0);
   if(AI.ownStream){ AI.ownStream.getTracks().forEach(function(t){ t.stop(); }); AI.ownStream = null; }
   var v1 = $('aiVideo'); if(v1) v1.srcObject = null;
   var v2 = $('aiVideo2'); if(v2) v2.srcObject = null;
-  showEl($('aiStartBtn'), true);
+  var sb = $('aiStartBtn'); if(sb){ sb.textContent = 'Start watching'; showEl(sb, true); }
   showEl($('aiStopBtn'), false);
-}
-function endSession(){
-  stopAI();
   showEl($('aiEndSessionBtn'), false);
-  var s = AI.session;
-  if(!s) return;
-  var secs = Math.round((Date.now() - s.startedAt) / 1000);
-  var repsHtml = Object.keys(s.reps).length
-    ? Object.keys(s.reps).map(function(k){ return '<div class="ai-sum-row"><span>' + (ACTIVITY_LABEL[k] || k) + '</span><span>' + s.reps[k] + '</span></div>'; }).join('')
-    : '<p>No full reps detected — the AI still coached what it saw.</p>';
-  var faults = Object.keys(s.faultCounts).sort(function(a, b){ return s.faultCounts[b] - s.faultCounts[a]; });
-  var faultsHtml = faults.length
-    ? faults.map(function(k){ return '<div class="ai-sum-row"><span>' + k + '</span><span>×' + s.faultCounts[k] + '</span></div>'; }).join('')
-    : '<p>No repeated faults flagged.</p>';
-  var fixesHtml = s.fixes.length ? '<ul>' + s.fixes.map(function(f){ return '<li>' + f + '</li>'; }).join('') + '</ul>' : '<p>No fixes given.</p>';
-  var framesHtml = s.bestFrames.length
-    ? '<div class="ai-best-frames">' + s.bestFrames.map(function(fr){ return '<figure><img src="' + fr.url + '" alt="Best frame"><figcaption>' + (ACTIVITY_LABEL[fr.activity] || fr.activity) + ' · ' + fr.score + '%</figcaption></figure>'; }).join('') + '</div>'
-    : '<p>No best frames captured.</p>';
-  var body = $('aiSummaryBody');
-  if(body) body.innerHTML =
-    '<p>Session length: ' + Math.floor(secs / 60) + 'm ' + (secs % 60) + 's · Total reps: ' + totalReps() + '</p>' +
-    '<h4>Reps seen</h4>' + repsHtml +
-    '<h4>Top faults</h4>' + faultsHtml +
-    '<h4>Fixes given</h4>' + fixesHtml +
-    '<h4>Best frames</h4>' + framesHtml;
-  showEl($('aiSummary'), true);
+  setGestureStatus('off');
 }
+
+function endSession(){
+  if(AI.running){ stopAndAnalyze(); return; }
+  if(AI.lastSession){
+    renderSessionSummary(AI.lastSession);
+    if(AI.deepReport) renderDeepReport(AI.deepReport);
+    showEl($('aiSummary'), true);
+    var sEl = $('aiSummary');
+    if(sEl) sEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+
 function renderKB(){
   var filter = $('aiKbFilter');
   var list = $('aiKbList');
@@ -381,34 +891,34 @@ function renderKB(){
   list.innerHTML = entries.map(function(e){
     var points = e.points.map(function(p){ return '<li>' + p + '</li>'; }).join('');
     var faults = e.faults.map(function(f){
-      var v = f.video ? ' <a href="' + f.video + '" target="_blank" rel="noopener">Watch / search</a>' : '';
+      var v = f.video ? ' <a href="' + f.video + '" target="_blank" rel="noopener">Watch video</a>' : '';
       return '<li><strong>' + f.fault + '</strong><br>Cue: “' + f.cue + '” · Drill: ' + f.drill + '.' + v + '</li>';
     }).join('');
     return '<article class="ai-kb-card"><h4>' + e.name + ' <span>' + e.category + '</span></h4><ul>' + points + '</ul><h5>Common faults</h5><ul>' + faults + '</ul></article>';
   }).join('');
 }
 function showAI(){
-  document.body.dataset.activeView = 'ai';
-  setText('screenTitle', 'AI Analyzer');
-  setText('screenSubtitle', 'On-device coaching — it only coaches what the camera can see');
-  document.querySelectorAll('.nav-item,.tab-item').forEach(function(item){
-    item.setAttribute('aria-current', item.dataset.view === 'ai' ? 'page' : 'false');
-  });
-  document.querySelector('.page').scrollTop = 0;
   renderKB();
+  if(AI.mode === 'idle') startWatching();
 }
+
 function aiTeardown(){
-  if(AI.running) stopAI();
+  if(AI.running || AI.mode === 'watching') stopAI();
 }
+
 function initAI(){
-  var startBtn = $('aiStartBtn'); if(startBtn) startBtn.addEventListener('click', function(){ showAI(); startAI(); });
-  var stopBtn = $('aiStopBtn'); if(stopBtn) stopBtn.addEventListener('click', stopAI);
+  var startBtn = $('aiStartBtn');
+  if(startBtn) startBtn.addEventListener('click', function(){
+    if(AI.mode === 'watching') startCoachingFromWatch();
+    else if(AI.mode === 'idle') startWatching();
+  });
+  var stopBtn = $('aiStopBtn'); if(stopBtn) stopBtn.addEventListener('click', stopAndAnalyze);
   var endBtn = $('aiEndSessionBtn'); if(endBtn) endBtn.addEventListener('click', endSession);
   var voiceBtn = $('aiVoiceBtn');
   if(voiceBtn) voiceBtn.addEventListener('click', function(){
     AI.voice = !AI.voice;
     voiceBtn.setAttribute('aria-pressed', AI.voice ? 'true' : 'false');
-    voiceBtn.textContent = AI.voice ? '🔊 Voice: on' : '🔊 Voice: off';
+    voiceBtn.textContent = AI.voice ? 'Voice coaching: on' : 'Voice coaching: off';
     if(!AI.voice && window.speechSynthesis) try{ window.speechSynthesis.cancel(); }catch(e){}
   });
   var focusSel = $('aiFocus');
@@ -421,12 +931,17 @@ function initAI(){
       else aiTeardown();
     });
   });
-  // Focus options come from the knowledge base.
   var focus = $('aiFocus');
   if(focus && window.TrackKB && !focus.options.length){
-    focus.appendChild(new Option('Auto-detect', 'auto'));
+    focus.appendChild(new Option('Everything (auto)', 'auto'));
     window.TrackKB.all.forEach(function(e){ focus.appendChild(new Option(e.name, e.id)); });
   }
 }
+
+// Test hooks (smoke tests only — the app never calls these on its own).
+window.TrackAIGesture = { countFingers: countFingers, isFrontal: isFrontal };
+window.TrackAIDeep = { segmentReps: segmentReps, buildDeepReport: buildDeepReport, pickVideos: pickVideos, absorbFrame: absorbFrame };
+window.TrackAISkeleton = { drawSkeleton: drawSkeleton, skelFaultJoints: skelFaultJoints };
+
 initAI();
 })();
