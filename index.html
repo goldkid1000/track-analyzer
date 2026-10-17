@@ -22,6 +22,8 @@
         <button class="nav-item" data-view="analyze" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M3 12h3m12 0h3M12 3v3m0 12v3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg><span>Analyze</span></button>
         <button class="nav-item" data-view="photos" aria-current="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="m21 15-5-5L5 19"/></svg><span>Photos</span></button>
         <button class="nav-item" data-view="side" aria-current="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 19V5m0 7h16M15 7l5 5-5 5"/></svg><span>Side View</span></button>
+        <button class="nav-item" data-view="dual" aria-current="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="5" width="8" height="14" rx="2"/><rect x="13" y="5" width="8" height="14" rx="2"/><circle cx="7" cy="12" r="2"/><circle cx="17" cy="12" r="2"/></svg><span>Dual Cam</span></button>
+        <button class="nav-item" data-view="ai" aria-current="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><circle cx="12" cy="10" r="1.5"/></svg><span>AI Analyzer</span></button>
         <button class="nav-item" data-view="guide" aria-current="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5zM20 5.5A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5z"/></svg><span>Guide</span></button>
       </nav>
     </aside>
@@ -127,6 +129,164 @@
     </section>
     </section>
 
+    <section class="view-section view-ai" aria-label="AI Analyzer screen">
+      <div class="ai-wrap">
+        <div class="panel ai-intro">
+          <h2>🤖 AI Analyzer</h2>
+          <p>On-device coaching — <strong>no cloud model, no API key, no video leaves your device.</strong> The camera watches your rep, names what it sees, and gives one fix at a time from the built-in track &amp; field knowledge base.</p>
+          <p class="ai-note">It only coaches what the camera can see. If a body part is out of frame, it says so instead of guessing. Activity labels are pattern matches (“looks like a squat”), not certainties.</p>
+          <div class="ai-controls">
+            <button class="primary" id="aiStartBtn" type="button">▶ Start AI watch</button>
+            <button class="ghost-control" id="aiStopBtn" type="button" hidden>⏹ Stop</button>
+            <button class="ghost-control" id="aiEndSessionBtn" type="button" hidden>🏁 End session</button>
+            <button class="ghost-control" id="aiVoiceBtn" type="button" aria-pressed="false">🔊 Voice: off</button>
+            <label class="ai-focus-label">Focus
+              <select id="aiFocus" aria-label="Focus on one activity"></select>
+            </label>
+          </div>
+        </div>
+        <div class="panel ai-live" id="aiLivePanel" hidden>
+          <div class="ai-previews">
+            <div class="ai-preview-card">
+              <video id="aiVideo" playsinline muted autoplay></video>
+              <span class="ai-angle-tag" id="aiAngleTag">Camera</span>
+            </div>
+            <div class="ai-preview-card" id="aiPreview2Wrap" hidden>
+              <video id="aiVideo2" playsinline muted autoplay></video>
+              <span class="ai-angle-tag" id="aiAngle2Tag">Angle 2</span>
+            </div>
+          </div>
+          <div class="ai-state">
+            <div><strong>Seeing:</strong> <span id="aiSeeing">—</span></div>
+            <div><strong>Good:</strong> <span id="aiGood">—</span></div>
+            <div><strong>One fix:</strong> <span id="aiFix">—</span></div>
+            <div><strong>Can’t see:</strong> <span id="aiCantSee">—</span></div>
+            <div><strong>Reps:</strong> <span id="aiRepCount">0</span> · <strong>Form score:</strong> <span id="aiScore">—</span></div>
+          </div>
+          <div class="ai-callouts" id="aiCallouts"></div>
+        </div>
+        <div class="panel ai-kb">
+          <h3>📚 Knowledge base</h3>
+          <p class="ai-note">Everything the AI coaches from — read it, or let the camera coach you live.</p>
+          <label class="ai-focus-label">Topic
+            <select id="aiKbFilter" aria-label="Filter knowledge base by topic"></select>
+          </label>
+          <div id="aiKbList"></div>
+        </div>
+        <div class="panel ai-summary" id="aiSummary" hidden>
+          <h3>🏁 Session summary</h3>
+          <div id="aiSummaryBody"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="view-section view-dual" aria-label="Dual camera screen">
+      <div class="dual-wrap">
+        <div class="panel dual-intro">
+          <h2>Dual-Angle</h2>
+          <p class="dual-sub">Two cameras, two views, one rep. Put the iPhone on one side and the iPad on the other, connect with a code, and get coaching from both angles at once.</p>
+          <p class="dual-note">Two 2D views combined — not true 3D. Two phone cameras can’t measure depth without calibration, so this app never fakes 3D numbers.</p>
+          <div class="dual-role-row">
+            <button class="primary" id="dualHostBtn" type="button">Connect second camera</button>
+            <button class="ghost-control" id="dualJoinBtn" type="button">Join as second camera</button>
+          </div>
+          <p class="dual-status" id="dualStatus" aria-live="polite"></p>
+        </div>
+
+        <div class="panel dual-panel" id="dualHostPanel" hidden>
+          <h3>Main phone — host</h3>
+          <p>Share this code with the iPad:</p>
+          <div class="dual-code" id="dualCode">······</div>
+          <p class="dual-wait">Waiting for the second camera…</p>
+          <div class="dual-previews">
+            <div class="dual-preview-card">
+              <div class="dual-preview-head"><span id="dualLocalLabelWrap">This phone · <select id="dualLocalLabel" aria-label="This camera's angle"><option value="Side" selected>Side</option><option value="Front">Front</option></select></span><button class="ghost-control small" id="dualCalibrate" type="button">Calibrate frame</button></div>
+              <video id="dualLocalVideo" playsinline muted autoplay></video>
+              <p class="dual-calib-state" id="dualCalibState"></p>
+            </div>
+            <div class="dual-preview-card">
+              <div class="dual-preview-head"><span id="dualRemoteLabel">Second camera view</span></div>
+              <video id="dualRemoteVideo" playsinline muted autoplay></video>
+            </div>
+          </div>
+          <div class="dual-record-row" id="dualRecordRow" hidden>
+            <label>Rep length <select id="dualDuration"><option value="5">5s</option><option value="10" selected>10s</option><option value="15">15s</option><option value="30">30s</option></select></label>
+            <button class="primary" id="dualRecordBtn" type="button">● Record both</button>
+            <button class="ghost-control" id="dualStopBtn" type="button" hidden>Stop</button>
+            <button class="ghost-control" id="dualReplayOwnBtn" type="button">Replay my angle only</button>
+            <p class="dual-rec-state" id="dualRecState"></p>
+            <p class="dual-transfer" id="dualTransfer"></p>
+          </div>
+          <div class="dual-manual">
+            <button class="ghost-control small" id="dualManualHostBtn" type="button">Having trouble? Manual connect</button>
+            <div id="dualManualHost" hidden>
+              <p>Copy this offer code to the iPad, then paste the iPad’s answer code below.</p>
+              <label>Offer code <textarea id="dualOfferOut" rows="3" readonly></textarea></label>
+              <button class="ghost-control small" id="dualCopyOffer" type="button">Copy offer</button>
+              <label>Answer code <textarea id="dualAnswerIn" rows="3" placeholder="Paste the iPad’s answer code here"></textarea></label>
+              <button class="ghost-control small" id="dualManualHostGo" type="button">Connect with answer</button>
+            </div>
+          </div>
+          <button class="ghost-control small" id="dualDisconnect" type="button">Disconnect</button>
+        </div>
+
+        <div class="panel dual-panel" id="dualJoinPanel" hidden>
+          <h3>iPad — second camera</h3>
+          <p>Type the 6-character code shown on the main phone:</p>
+          <div class="dual-join-row">
+            <input id="dualJoinCode" type="text" inputmode="text" autocomplete="off" maxlength="6" placeholder="K7Q2P9" aria-label="Connection code" />
+            <button class="primary" id="dualJoinGo" type="button">Join</button>
+          </div>
+          <p class="dual-status" id="dualJoinStatus" aria-live="polite"></p>
+          <div class="dual-previews">
+            <div class="dual-preview-card">
+              <div class="dual-preview-head"><span>This iPad · <select id="dualJoinLocalLabel" aria-label="This camera's angle"><option value="Side">Side</option><option value="Front" selected>Front</option></select></span><button class="ghost-control small" id="dualJoinCalibrate" type="button">Calibrate frame</button></div>
+              <video id="dualJoinLocalVideo" playsinline muted autoplay></video>
+              <p class="dual-calib-state" id="dualJoinCalibState"></p>
+            </div>
+            <div class="dual-preview-card">
+              <div class="dual-preview-head"><span id="dualJoinRemoteLabel">Main phone view</span></div>
+              <video id="dualJoinRemoteVideo" playsinline muted autoplay></video>
+            </div>
+          </div>
+          <p class="dual-join-note" id="dualJoinRecordNote" hidden>The main phone starts and stops recording for both cameras. Hold this iPad steady on your angle.</p>
+          <div class="dual-manual">
+            <button class="ghost-control small" id="dualManualJoinBtn" type="button">Having trouble? Manual connect</button>
+            <div id="dualManualJoin" hidden>
+              <p>Paste the main phone’s offer code, then copy your answer code back to it.</p>
+              <label>Offer code <textarea id="dualJoinOfferIn" rows="3" placeholder="Paste the main phone’s offer code here"></textarea></label>
+              <button class="ghost-control small" id="dualManualJoinGo" type="button">Create answer</button>
+              <label>Answer code <textarea id="dualJoinAnswerOut" rows="3" readonly></textarea></label>
+              <button class="ghost-control small" id="dualJoinCopyAnswer" type="button">Copy answer</button>
+            </div>
+          </div>
+          <button class="ghost-control small" id="dualJoinDisconnect" type="button">Disconnect</button>
+        </div>
+
+        <div class="panel dual-panel" id="dualReplay" hidden>
+          <h3>Synced replay</h3>
+          <p>One scrub bar drives both angles. Frame-step moves both clips together.</p>
+          <div class="dual-replay-grid">
+            <div class="dual-replay-slot"><video id="dualReplayA" playsinline controls></video><span class="dual-replay-tag">Angle 1</span></div>
+            <div class="dual-replay-slot"><video id="dualReplayB" playsinline controls></video><span class="dual-replay-tag">Angle 2</span></div>
+          </div>
+          <input id="dualScrub" type="range" min="0" max="1000" value="0" aria-label="Scrub both clips" />
+          <div class="dual-replay-controls">
+            <button class="ghost-control" id="dualStepBack" type="button">⏮ −1 frame</button>
+            <button class="primary" id="dualPlayBtn" type="button">▶ Play both</button>
+            <button class="ghost-control" id="dualStepFwd" type="button">+1 frame ⏭</button>
+          </div>
+        </div>
+
+        <div class="panel dual-panel" id="dualVerdictBox" hidden>
+          <h3>Dual-Angle verdict</h3>
+          <p id="dualVerdict" aria-live="polite"></p>
+          <div class="dual-verdict-cards" id="dualVerdictCards"></div>
+          <p id="dualVerdictCombined"></p>
+        </div>
+      </div>
+    </section>
+
     <section class="view-section view-guide" aria-label="Coaching guide screen">
     <section class="lower">
       <div class="panel">
@@ -149,6 +309,16 @@
         <div><h2 id="photoTitle">Two-photo form check</h2></div>
         <p>Capture the same athlete from the side—try set position and block clearance, or best rep and worst rep. Each photo is processed on this device with its own skeleton, angles, one clear fix, and one drill.</p>
       </div>
+      <div class="photo-access-row" id="photoAccessRow">
+        <span id="photoAccessState">Photo access: not set yet — tap a photo slot when ready.</span>
+        <span class="photo-source-toggle" id="photoSourceToggle" role="group" aria-label="Photo source">
+          <button type="button" data-source="camera" aria-pressed="true">Camera</button>
+          <button type="button" data-source="library" aria-pressed="false">Photo library</button>
+        </span>
+        <button class="ghost-control small" id="photoChangeAccess" type="button">Change photo access</button>
+        <button class="ghost-control small" id="photoRetryAccess" type="button" hidden>Photo access is off — tap here to retry</button>
+      </div>
+      <p class="photo-access-note">Note: iOS Safari shows its own system prompt once per site. This app never asks again on its own — the picker only opens when you tap a photo slot.</p>
       <div class="photo-grid">
         <article class="photo-slot" data-photo-slot="0">
           <div class="photo-slot-head"><h3>Photo A</h3><label class="photo-pick">Take or choose<input class="photo-input" type="file" accept="image/*" capture="environment" data-slot="0"></label></div>
@@ -163,6 +333,12 @@
       </div>
     </section>
     </section>
+      <footer class="app-footer">
+        <span>Track Analyzer <span id="appVersion">v2.1.0</span></span>
+        <button id="whatsNewBtn" type="button">What&rsquo;s New</button>
+        <button id="checkUpdatesBtn" type="button">Check for updates</button>
+        <span id="updateCheckStatus" aria-live="polite"></span>
+      </footer>
       </main>
     </div>
   </div>
@@ -171,6 +347,8 @@
     <button class="tab-item" data-view="analyze" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M3 12h3m12 0h3M12 3v3m0 12v3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg><span>Analyze</span></button>
     <button class="tab-item" data-view="photos" aria-current="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="m21 15-5-5L5 19"/></svg><span>Photos</span></button>
     <button class="tab-item" data-view="side" aria-current="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 19V5m0 7h16M15 7l5 5-5 5"/></svg><span>Side View</span></button>
+    <button class="tab-item" data-view="dual" aria-current="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="5" width="8" height="14" rx="2"/><rect x="13" y="5" width="8" height="14" rx="2"/><circle cx="7" cy="12" r="2"/><circle cx="17" cy="12" r="2"/></svg><span>Dual Cam</span></button>
+    <button class="tab-item" data-view="ai" aria-current="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><circle cx="12" cy="10" r="1.5"/></svg><span>AI Analyzer</span></button>
     <button class="tab-item" data-view="guide" aria-current="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5zM20 5.5A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5z"/></svg><span>Guide</span></button>
   </nav>
 
@@ -186,8 +364,27 @@
     </div>
   </dialog>
 
+  <div class="update-banner" id="updateBanner" hidden>
+    <span id="updateBannerText">Update available.</span>
+    <button class="primary" id="updateNowBtn" type="button">Update now</button>
+    <button class="ghost-control" id="updateLaterBtn" type="button">Later</button>
+  </div>
+
+  <dialog class="review-dialog whats-new-dialog" id="whatsNewDialog" aria-labelledby="whatsNewTitle">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="review-dialog-inner">
+      <div class="review-dialog-head"><h2 id="whatsNewTitle">What&rsquo;s New</h2><button class="sheet-close" id="closeWhatsNew" type="button" aria-label="Close What&rsquo;s New">×</button></div>
+      <p id="whatsNewCurrent">You are running v2.1.0</p>
+      <div id="whatsNewList"></div>
+    </div>
+  </dialog>
+
   <script src="js/mediapipe-pose.js"></script>
   <script src="js/mediapipe-draw.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/dualcam.js"></script>
+  <script src="js/update.js"></script>
+  <script src="js/ai-knowledge.js"></script>
+  <script src="js/ai-analyzer.js"></script>
 </body>
 </html>
