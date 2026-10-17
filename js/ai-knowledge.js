@@ -1,4 +1,4 @@
-/* Track Analyzer — embedded knowledge base (v2.1.0)
+/* Track Analyzer — embedded knowledge base (v2.1.3)
  *
  * Coaching content lives IN THE APP: no API key, no cloud model, no network
  * calls. The AI Analyzer matches what the camera sees against these entries
@@ -379,6 +379,203 @@ var KB = [
   faults: [
     { fault: 'Stopping cold after the last rep', cue: 'Easy jog 5 minutes, then stretch.', drill: 'Cool-down jog + stretch routine', video: yt('cool down routine sprinters'), check: 'general' },
     { fault: 'Skipping the flush strides', cue: '2 easy strides clear heavy legs fast.', drill: '3 × 100 m easy strides', video: yt('cool down strides flush'), check: 'general' }
+  ]},
+{ id: 'sprint-finish', name: 'Finish & Lean', category: 'Sprints', events: ['100m', '200m', '400m'],
+  points: [
+    'Run THROUGH the line: the race ends 5–10m past the finish, not at it.',
+    'Lean only at the very last step: dip the chest forward while the legs keep driving — never dive, never jump.',
+    'Arms keep pumping through the line. The moment the arms stop, the legs stop.',
+    'Head stays neutral through the lean — dropping the head early shortens the stride.',
+    'In the 200m/400m, hold form into the lean: tall hips first, then one controlled dip.',
+    'Practice the lean with run-throughs at 95% — never rehearse a dive onto a mat at full speed.'
+  ],
+  faults: [
+    { fault: 'Leaning too early / diving', cue: 'Run through first — lean only on the last step.', drill: '3 × 60 m run-throughs, lean on the cone', video: '', check: 'earlyRise' },
+    { fault: 'Arms stopping before the line', cue: 'Pump the arms past the line.', drill: '2 × 80 m finish runs with an arm cue', video: '', check: 'general' },
+    { fault: 'Decelerating into the line', cue: 'Attack the line — the race ends past it.', drill: 'Run-throughs with a finish 10m past the line', video: '', check: 'general' }
+  ]},
+{ id: 'hurdles-sprint', name: 'Sprint Hurdles (100H / 110H)', category: 'Hurdles', events: ['100H', '110H'],
+  points: [
+    '8 strides to hurdle 1 (100H) or 7–8 (110H), then 3 steps between every hurdle — the rhythm is the event.',
+    'Lead leg: attacks with a flexed foot, snaps DOWN fast, lands under the hips ready for the next 3 steps.',
+    'Trail leg: knee drives wide and high around the side, foot stays flexed, trail leg never drags behind.',
+    'Clearance: hips stay tall and level. Snap over the hurdle — never jump it, never float over it.',
+    'Arms: the arm opposite the lead leg drives forward; the other arm stays tight and low.',
+    'The hurdle is a fast step over a barrier, not a jump: ground time between hurdles is where the race is won.'
+  ],
+  faults: [
+    { fault: 'Floating over the hurdle', cue: 'Snap the lead leg down — hips stay level.', drill: '5 × 3 hurdles at low height, fast rhythm', video: '', check: 'general' },
+    { fault: 'Trail leg swinging low and wide', cue: 'Trail knee high and around — foot flexed.', drill: 'Trail-leg wall drills, 2 × 10 each side', video: '', check: 'general' },
+    { fault: 'Landing past the hurdle with a reach', cue: 'Land under the hips and go.', drill: 'Hurdle spacing rhythm runs', video: '', check: 'overstride' },
+    { fault: 'Losing the 3-step rhythm', cue: 'Count the rhythm — 1-2-3, over.', drill: 'Hurdles with a metronome / clap rhythm', video: '', check: 'general' }
+  ]},
+{ id: 'hurdles-400', name: '400m Hurdles', category: 'Hurdles', events: ['400H'],
+  points: [
+    'Stride pattern is planned before the race (commonly 13–15 steps between hurdles) and adjusted as fatigue builds.',
+    'Lead-leg alternation: train both legs to lead so either can take any hurdle when the pattern shifts.',
+    'Hurdle 6–10 decide the race: form must hold when the legs are heavy — tall hips, snap down, no floating.',
+    'Pacing: controlled fast early — going out at 100% effort empties the tank before hurdle 7.',
+    'Between hurdles: sprint mechanics — tall, relaxed, quick feet. The hurdles are interruptions, not the race.',
+    'Finish: drive the last hurdle like the first, then run through the line.'
+  ],
+  faults: [
+    { fault: 'Pattern breaking down late', cue: 'Hold the count — chop or stretch early, never at the hurdle.', drill: 'Pattern runs over hurdles 6–10 at 90%', video: '', check: 'general' },
+    { fault: 'Floating the late hurdles', cue: 'Snap down — hips stay level even when tired.', drill: 'Low-height hurdle reps under fatigue', video: '', check: 'general' },
+    { fault: 'Chopping steps before a hurdle', cue: 'Trust the pattern — run through the hurdle.', drill: 'Hurdle approach runs with marks', video: '', check: 'overstride' }
+  ]},
+{ id: 'relay-4x100', name: '4×100m Relay', category: 'Relays', events: ['4x100m'],
+  points: [
+    'Exchanges happen in a 30m zone. The outgoing runner accelerates on the mark; the incoming runner never slows down.',
+    'Blind exchange: outgoing runner’s hand is steady, thumb down, palm up — the incoming runner places the baton UP into the hand (upsweep).',
+    'Checkmarks: the outgoing runner leaves when the incoming runner hits the mark, so the exchange happens at full speed, mid-zone.',
+    'Verbal cue: outgoing runner calls “hand” / “stick” when the incoming runner is 2–3 steps out.',
+    'Leg order: fastest starter on leg 1, best curve runners on legs 2–3, best finisher on leg 4 — adjust to your team.',
+    'Never look back in a blind exchange — trust the mark and the call.'
+  ],
+  faults: [
+    { fault: 'Outgoing runner leaves too early / late', cue: 'Trust the checkmark — go on the mark, not on panic.', drill: 'Exchange reps at 80% with marks', video: '', check: 'general' },
+    { fault: 'Hand moving / grabbing for the baton', cue: 'Steady hand, palm up — let the baton come to you.', drill: 'Standing exchanges, 20 reps', video: '', check: 'general' },
+    { fault: 'Incoming runner slowing into the zone', cue: 'Run THROUGH the zone — never coast to the exchange.', drill: 'Full-speed zone runs with exchange', video: '', check: 'general' }
+  ]},
+{ id: 'relay-4x400', name: '4×400m Relay', category: 'Relays', events: ['4x400m'],
+  points: [
+    'Visual exchange: the outgoing runner watches the incoming runner and takes the baton in hand — no blind grab.',
+    'The outgoing runner leaves on the call, takes the baton at speed, and runs the first 100m hard.',
+    'Break line: after the first turn, runners cut in — the exchange should put the team in position for the break.',
+    'Leg order: a strong starter sets the tone, your best 400m runner often anchors; put a fighter on leg 2–3.',
+    'Baton carry: hold it through the whole leg, exchange cleanly — a dropped baton ends the race.',
+    'Each leg is a 400m: controlled fast early, float the backstretch, fight the home straight.'
+  ],
+  faults: [
+    { fault: 'Standing still to receive', cue: 'Take it at speed — roll out on the call.', drill: 'Rolling exchanges at 80%', video: '', check: 'general' },
+    { fault: 'Baton fumble on the exchange', cue: 'Firm hand-off — receiver’s hand steady and open.', drill: 'Walk-through exchanges, then build speed', video: '', check: 'general' },
+    { fault: 'First 100m too easy after receiving', cue: 'Go — the first 100m after the exchange is free speed.', drill: 'Exchange + 100m hard reps', video: '', check: 'general' }
+  ]},
+{ id: 'pole-vault', name: 'Pole Vault (Basics)', category: 'Jumps', events: ['Pole Vault'],
+  points: [
+    'Grip: hands shoulder-width apart, top hand high, pole carried with the tip up and slightly forward.',
+    'Approach: a fast, rhythmic sprint (12–18 strides) with the pole carried tall — speed at takeoff is the jump.',
+    'Plant: the pole plants in the box as the takeoff foot strikes — the plant and the takeoff happen together.',
+    'Takeoff: drive the chest forward and the trail leg long — the pole bends, the vaulter swings.',
+    'Swing and turn: legs swing up, hips rise, the body inverts, then turns to face the bar.',
+    'Safety first: always vault into a proper landing mat with a coach present — never vault alone or onto thin mats.'
+  ],
+  faults: [
+    { fault: 'Planting late / under the pole', cue: 'Plant on time — pole and takeoff foot together.', drill: 'Plant drills with a stiff pole, walk-through', video: '', check: 'general' },
+    { fault: 'Pulling with the arms instead of swinging', cue: 'Swing long — let the pole do the work.', drill: 'Swing drills on a high bar', video: '', check: 'general' },
+    { fault: 'Bailing out / letting go early', cue: 'Stay with the pole — ride it to the top.', drill: 'Short-grip vaults into the mat', video: '', check: 'general' }
+  ]},
+{ id: 'jump-landing', name: 'Safe Jump Landings', category: 'Jumps', events: ['Long Jump', 'Triple Jump', 'High Jump'],
+  points: [
+    'Long/triple jump: feet together, heels first, hips drive forward over the feet — never fall backward into the sand.',
+    'Arms reach forward at landing to pull the hips through — the landing is an active move, not a crash.',
+    'Knees bend on landing to absorb the impact — never land stiff-legged.',
+    'High jump: land on the upper back and shoulders on the mat — never on the neck or head.',
+    'Sand landings: keep the hands away from the sand behind the body — falling backward costs distance.',
+    'Practice landings from low heights first (low box, short approach) before full-speed jumps.'
+  ],
+  faults: [
+    { fault: 'Falling backward in the sand', cue: 'Hips forward over the feet — reach past your toes.', drill: 'Landing drills from a low box', video: '', check: 'general' },
+    { fault: 'Stiff-legged landing', cue: 'Bend the knees — land soft and quiet.', drill: 'Low-box landings with a soft cue', video: '', check: 'general' },
+    { fault: 'Landing on the neck (high jump)', cue: 'Upper back and shoulders on the mat — chin tucked.', drill: 'Back-over drills on a mat, no bar', video: '', check: 'general' }
+  ]},
+{ id: 'shot-put-glide', name: 'Shot Put: Glide', category: 'Throws', events: ['Shot Put'],
+  points: [
+    'Start: low at the back of the circle, shot glued to the neck, eyes on the horizon.',
+    'Glide: low, fast, and backwards — the driving leg kicks back low while the body stays low.',
+    'The driving leg lands under the body, not out in front — the power position is compact.',
+    'The blocking leg plants wide and stops hard — the block is what lets the upper body whip through.',
+    'Shot stays behind the hip until the legs and hips have fired — the arm is last.',
+    'Finish tall, blocked, and in the circle — no falling out after release.'
+  ],
+  faults: [
+    { fault: 'Gliding too high / jumping up', cue: 'Stay low — glide, don’t hop.', drill: 'Low glide reps with a pause in the power position', video: '', check: 'general' },
+    { fault: 'Driving leg landing out front', cue: 'Leg lands under you — compact power position.', drill: 'Glide-to-stop drills, no throw', video: '', check: 'general' },
+    { fault: 'Shot dropping during the glide', cue: 'Shot glued to the neck until release.', drill: 'Glide reps holding the shot high', video: '', check: 'general' }
+  ]},
+{ id: 'shot-put-spin', name: 'Shot Put: Rotation', category: 'Throws', events: ['Shot Put'],
+  points: [
+    'Start: facing away from the sector, shot glued to the neck, weight over the driving leg.',
+    'First turn: a fast, low sprint across the circle — the feet stay under the body, the shot stays back.',
+    'Power position: same as the glide — wide base, shot behind the hip, elbow high.',
+    'Delivery: legs → hips → chest → arm. The arm is LAST in the rotation too.',
+    'The spin generates speed, but the throw still comes from the legs and the block — never from spinning the arm.',
+    'Finish: block hard, stand tall, stay in the circle.'
+  ],
+  faults: [
+    { fault: 'Spinning too fast / out of control', cue: 'Controlled speed — fast feet, quiet upper body.', drill: 'Slow-motion spins with a pause in the power position', video: '', check: 'general' },
+    { fault: 'Arm-first throw after the spin', cue: 'Legs, hips, chest, THEN arm.', drill: 'Standing throws, legs-only focus', video: '', check: 'general' },
+    { fault: 'Falling out of the circle', cue: 'Block hard and stand tall — finish in the circle.', drill: 'Power-position throws with a block', video: '', check: 'general' }
+  ]},
+{ id: 'hammer', name: 'Hammer (Basics)', category: 'Throws', events: ['Hammer'],
+  points: [
+    'Grip: left hand inside the handle, right hand over it (right-handers) — the hammer hangs from the hands, not gripped tight.',
+    'Winds: 2–3 controlled winds build rhythm — the hammer orbits the body while the feet stay planted.',
+    'Turns: 3–4 turns, each faster than the last — the hammer leads, the body follows, the feet stay quick and low.',
+    'Release: the hammer flies on its own line — the thrower stays balanced and in the circle after release.',
+    'Safety: never throw without a clear sector, a cage, and a coach watching. Never chase a hammer that is still moving.',
+    'The throw is about rhythm and radius, not muscle — a smooth fast hammer beats a muscled slow one.'
+  ],
+  faults: [
+    { fault: 'Muscling the hammer / tight arms', cue: 'Loose arms — let the hammer orbit.', drill: 'Wind-only reps, no throw', video: '', check: 'general' },
+    { fault: 'Feet getting slow / flat', cue: 'Quick, low feet — stay under the hammer.', drill: 'Turn drills without release', video: '', check: 'general' },
+    { fault: 'Release too early / too late', cue: 'Release on the line — eyes on the sector.', drill: 'Release-timing reps with a light hammer', video: '', check: 'general' }
+  ]},
+{ id: 'javelin-approach', name: 'Javelin Approach & Crossover', category: 'Throws', events: ['Javelin'],
+  points: [
+    'Approach: a fast, rhythmic run — the javelin is carried high above the shoulder, tip slightly down.',
+    'Withdrawal: the throwing arm pulls back and long while the legs keep running — the javelin stays behind the shoulder.',
+    'Crossover steps (last 5–7 strides): the legs cross over while the arm stays back and the chest stays open.',
+    'Block: the left leg plants and stops HARD — the body whips over it like a bow.',
+    'Release: throw THROUGH the point, up and out at ~30–35°, elbow high, wrist snaps through the javelin.',
+    'Follow-through: the arm finishes across the body; the thrower must not cross the foul line.'
+  ],
+  faults: [
+    { fault: 'Javelin drops during the crossover', cue: 'Javelin stays high and back until the block.', drill: 'Crossover walk-throughs with the javelin back', video: '', check: 'general' },
+    { fault: 'No block leg', cue: 'Plant and stop — let the body whip over the block.', drill: 'Block-leg throws from a short approach', video: '', check: 'general' },
+    { fault: 'Throwing across the body / low elbow', cue: 'Elbow high, throw through the point.', drill: 'Standing throws, elbow focus', video: '', check: 'general' }
+  ]},
+{ id: 'distance-800', name: '800m', category: 'Distance', events: ['800m'],
+  points: [
+    'The 800m is a long sprint, not a short distance race: fast start, controlled middle, vicious finish.',
+    'First 200m: get out hard and find position — the break line rewards a good start.',
+    'Middle 400m: relax into rhythm, run the tangents, stay out of trouble — this is where the race is set up.',
+    'Last 200m: re-accelerate and fight. The 800m is won by whoever slows down least.',
+    'Tactics: position matters — boxed in on the rail with 200m to go is a lost race.',
+    'Training: speed (200–400m reps) + endurance (tempo + 1000m reps) — the 800m needs both.'
+  ],
+  faults: [
+    { fault: 'Going out too hard and dying at 600m', cue: 'Fast but controlled — save the finish for the last 200.', drill: 'Negative-split 800s in training', video: '', check: 'general' },
+    { fault: 'Getting boxed in on the rail', cue: 'Stay on the outside shoulder — keep an escape route.', drill: 'Tactical reps with traffic', video: '', check: 'general' },
+    { fault: 'No kick left at 200m', cue: 'Sit, then GO — practice the last-200m switch.', drill: '600m + 200m kick reps', video: '', check: 'general' }
+  ]},
+{ id: 'distance-1500', name: '1500m / Mile', category: 'Distance', events: ['1500m', 'Mile'],
+  points: [
+    'Pacing: even splits win — the 1500m punishes both a too-fast start and a too-slow middle.',
+    'Position: stay in the top half of the pack, on the outside shoulder, out of trouble.',
+    'Middle laps: relaxed, rhythmic, on the tangents — save energy for the last 400m.',
+    'Last 400m: move to the front of the pack before the final turn — the kick starts at 400m, not 100m.',
+    'Kick: tall, fast arms, quick feet — the same sprint mechanics, just tired.',
+    'Training: threshold runs + 400–800m intervals + a weekly long run — the base carries the kick.'
+  ],
+  faults: [
+    { fault: 'Uneven pacing (fast-slow-fast)', cue: 'Even splits — check the clock every lap.', drill: 'Even-pace interval sets', video: '', check: 'general' },
+    { fault: 'Sitting at the back of the pack', cue: 'Top half, outside shoulder — never last into the bell.', drill: 'Pack-running reps', video: '', check: 'general' },
+    { fault: 'Kicking too late', cue: 'The kick starts at 400m to go, not 100m.', drill: '400m kick reps off a fast 1100m', video: '', check: 'general' }
+  ]},
+{ id: 'distance-5000', name: '5000m', category: 'Distance', events: ['5000m'],
+  points: [
+    'The 5000m is a 12.5-lap chess game: patience, position, and a brutal last kilometre.',
+    'Early laps: settle into rhythm, run the tangents, stay relaxed — never chase an early break.',
+    'Middle: even effort, even splits — the pack does the work; let it.',
+    'Last 1000m: move up, cover moves, and get into striking position before the bell.',
+    'Last lap: it becomes a sprint — tall, fast arms, quick feet, everything left.',
+    'Training: high mileage base + threshold work + 1000m intervals — the 5000m is built in the winter.'
+  ],
+  faults: [
+    { fault: 'Chasing every early move', cue: 'Let the pack work — your race starts at 1000m to go.', drill: 'Patience reps: sit, then move', video: '', check: 'general' },
+    { fault: 'Running wide on the turns', cue: 'Run the tangents — every wide step costs metres.', drill: 'Tangent-running reps', video: '', check: 'general' },
+    { fault: 'No kick after 4000m', cue: 'Save the kick — the last lap is a sprint.', drill: '1000m repeats finishing with a 400m kick', video: '', check: 'general' }
   ]}
 ];
 function kbById(id){ for(var i = 0; i < KB.length; i++) if(KB[i].id === id) return KB[i]; return null; }
