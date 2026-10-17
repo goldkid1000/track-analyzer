@@ -1,4 +1,4 @@
-/* Track Analyzer — update system (v2.1.5)
+/* Track Analyzer — update system (v2.1.6)
  *
  * Tenno Vault-style: visible version, What's New panel, Check for updates,
  * and an update banner. The banner fires ONLY when version.json reports a
@@ -16,16 +16,23 @@
  * the full history anytime — it never re-triggers the auto-notice and
  * never un-sees a version.
  *
- * v2.1.5 — camera works on PC too; two-camera views labeled Camera 1 /
- * Camera 2 with the skeleton rig on the Camera 2 video; every camera can
- * switch and can be turned off and back on; Your form vs Pro form is a
- * 3D-style comparison with a view toggle (AI picks / You vs Pro / Just me).
+ * v2.1.6 — skeleton rig on BOTH two-camera feeds with full body +
+ * every finger joint; hand signs read from either camera; smooth
+ * interpolated rig drawing; status lines that say what the camera sees
+ * (no more silent failures); start/stop announcements in two-camera mode.
  */
 (function(){
 'use strict';
-var VERSION = '2.1.5';
+var VERSION = '2.1.6';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: '2.1.6', date: '2026-10-17', notes: [
+    'Two cameras: the skeleton rig now draws on BOTH cameras — Camera 1 AND Camera 2 — live whenever the camera is on. The rig now shows your full body plus every finger joint on both hands.',
+    'Hand signs now work in two-camera mode: hold up 1 finger to start or 2 fingers to stop on EITHER camera — whichever camera sees your hand.',
+    'The skeleton rig is now smooth, not jumpy: it glides between camera frames, and if your device gets slow it drops to a lighter mode on its own instead of lagging the preview.',
+    'No more silent failures: a status line under the two-camera views says what the camera actually sees — no hand, face not visible, I see your hand — and if the skeleton cannot load it says so and tells you to check your connection and reload.',
+    'In two-camera mode, starting and stopping now speak “Recording has started.” and “Recording has ended.” on both devices, even with voice coaching off.'
+  ]},
   { version: '2.1.5', date: '2026-10-17', notes: [
     'Camera works on PC too — if there is no back camera, the app just uses whatever camera is there. If the camera does not start, it tells you exactly why (in use, permission off, no camera, or needs the secure link).',
     'Two cameras: the live views are now plainly labeled Camera 1 and Camera 2. You can see skeleton lines on you in the Camera 2 video.',
