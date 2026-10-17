@@ -41,14 +41,11 @@
           <p class="ai-note">Voice will say “Recording has started” and “Recording has ended.”</p>
           <p class="ai-note">Side-view tip: phone square to the lane, 10–15 ft away, full body in frame.</p>
           <div class="ai-toast" id="aiNotifyToast" hidden><span>Analysis done — see your AI Photo report and your new fix in Guide.</span><button class="ghost-control small" id="aiNotifyClose" type="button">Got it</button></div>
-          <nav class="mode-picker" aria-label="What to check">
-            <button class="mode" data-mode="block" aria-pressed="true">Block start</button>
-            <button class="mode" data-mode="side" aria-pressed="false">Side-angle sprint</button>
-            <button class="mode" data-mode="askip" aria-pressed="false">A-skip</button>
-            <button class="mode" data-mode="arms" aria-pressed="false">Arm action</button>
-            <button class="mode" data-mode="sprint" aria-pressed="false">Sprint form</button>
-          </nav>
-          <p class="ai-note">What to check: one pick sets both the live coaching and the rep check, so there is one movement to choose, not two.</p>
+          <div class="block-toggle-row">
+            <button class="ghost-control" id="blockStartsToggle" type="button" aria-pressed="false">Block starts: off</button>
+            <p class="ai-note" id="blockStartsState">Block starts: off &mdash; auto-detecting.</p>
+          </div>
+          <p class="ai-note">The AI auto-detects what you are doing &mdash; sprint, drill, squat, and more. Turn Block starts on only when you are doing block starts.</p>
           <label class="ai-ref-label">Known reference (optional)
             <input id="aiReference" type="text" placeholder="e.g. hurdle height 42in, 10m split marker" aria-label="Known reference, for example hurdle height or a measured split marker" />
           </label>
@@ -62,9 +59,6 @@
             <button class="ghost-control" id="aiSlowReview" type="button" aria-pressed="false">Slow review</button>
             <button class="ghost-control" id="aiFlipBtn" type="button">Switch camera</button>
             <button class="ghost-control" id="aiVoiceBtn" type="button" aria-pressed="false">Voice coaching: off</button>
-            <label class="ai-focus-label">Watch for
-              <select id="aiFocus" aria-label="Watch for one activity"></select>
-            </label>
           </div>
         </div>
 <div class="panel ai-analyzing" id="aiAnalyzing" hidden>
@@ -293,7 +287,7 @@
     </section>
     </section>
       <footer class="app-footer">
-        <span>Track Analyzer <span id="appVersion">v2.1.3</span></span>
+        <span>Track Analyzer <span id="appVersion">v2.1.4</span></span>
         <button id="whatsNewBtn" type="button">What&rsquo;s New</button>
         <button id="checkUpdatesBtn" type="button">Check for updates</button>
         <span id="updateCheckStatus" aria-live="polite"></span>
@@ -322,15 +316,17 @@
 
   <div class="update-banner" id="updateBanner" hidden>
     <span id="updateBannerText">Update available.</span>
+    <ul class="update-banner-notes" id="updateBannerNotes"></ul>
     <button class="primary" id="updateNowBtn" type="button">Update now</button>
     <button class="ghost-control" id="updateLaterBtn" type="button">Later</button>
+    <button class="ghost-control small" id="updateBannerClose" type="button" aria-label="Dismiss update notice">✕</button>
   </div>
 
   <dialog class="review-dialog whats-new-dialog" id="whatsNewDialog" aria-labelledby="whatsNewTitle">
     <div class="sheet-grabber" aria-hidden="true"></div>
     <div class="review-dialog-inner">
       <div class="review-dialog-head"><h2 id="whatsNewTitle">What&rsquo;s New</h2><button class="sheet-close" id="closeWhatsNew" type="button" aria-label="Close What&rsquo;s New">×</button></div>
-      <p id="whatsNewCurrent">You are running v2.1.3</p>
+      <p id="whatsNewCurrent">You are running v2.1.4</p>
       <div id="whatsNewList"></div>
     </div>
   </dialog>
