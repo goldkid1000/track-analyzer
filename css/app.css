@@ -91,8 +91,8 @@ html,body{height:100%;overflow:hidden}
 .page.view-entering{animation:pageEnter .3s var(--ease-out)}
 @keyframes pageEnter{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 .view-section{display:none}
-body[data-active-view="analyze"] .view-analyze,
-body[data-active-view="side"] .view-analyze,
+body[data-active-view="ai"] .view-ai,
+body[data-active-view="side"] .view-ai,
 body[data-active-view="photos"] .view-photos,
 body[data-active-view="guide"] .view-guide{display:block;animation:sectionIn .35s var(--ease-out)}
 @keyframes sectionIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
@@ -407,10 +407,8 @@ body[data-active-view="side"] .mode-picker{display:none}
   .review-dialog-inner{padding:16px}
 }
 
-/* ============ Dual-Angle camera (v2.1.0) ============ */
-body[data-active-view="dual"] .view-dual{display:block;animation:sectionIn .35s var(--ease-out)}
-body[data-active-view="ai"] .view-ai{display:block;animation:sectionIn .35s var(--ease-out)}
-.app-tabbar{grid-template-columns:repeat(6,1fr)}
+/* ============ Two cameras (v2.1.1 — lives inside AI Analyzer) ============ */
+.app-tabbar{grid-template-columns:repeat(4,1fr)}
 .ghost-control.small{min-height:40px;padding:0 14px;font-size:13px}
 .dual-wrap{max-width:1200px;margin:0 auto;display:grid;gap:18px}
 .dual-intro h2{font-family:"Barlow Condensed",sans-serif;font-size:30px;text-transform:uppercase;margin:0 0 8px}
@@ -498,7 +496,24 @@ body[data-active-view="ai"] .view-ai{display:block;animation:sectionIn .35s var(
 }
 
 /* ===== AI Analyzer ===== */
-.ai-wrap{display:flex;flex-direction:column;gap:16px}
+.ai-wrap{display:flex;flex-direction:column;gap:24px}
+.ai-section{display:flex;flex-direction:column;gap:16px;padding-top:8px;border-top:1px solid var(--hairline)}
+.ai-section-title{font-family:"Barlow Condensed",sans-serif;font-size:26px;text-transform:uppercase;margin:16px 0 0;letter-spacing:-.01em;line-height:1}
+.ai-section-sub{color:var(--muted);font-size:14px;line-height:1.5;margin:0}
+.ai-gesture{background:var(--surface-raised);border:1px solid var(--hairline);border-radius:14px;padding:12px 14px;margin-bottom:12px}
+.ai-gesture-status{font-size:15px;font-weight:700;line-height:1.4}
+.ai-hold-track{height:8px;margin-top:10px;background:rgba(255,255,255,.08);overflow:hidden;border-radius:99px}
+.ai-hold-track i{display:block;width:0;height:100%;background:var(--volt);border-radius:99px;transition:width .12s linear}
+.ai-ref-label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--muted);font-weight:600;margin-top:12px}
+.ai-ref-label input{padding:11px 12px;border-radius:10px;border:1px solid var(--hairline);background:var(--surface-raised);color:var(--ink);font-size:15px;width:100%}
+.ai-analyzing h3{margin:0 0 8px}
+.ai-frame-skel{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start;margin:10px 0}
+.ai-frame-skel figure{margin:0}
+.ai-frame-skel img{width:100%;border-radius:10px;display:block}
+.ai-frame-skel figcaption{font-size:12px;color:var(--muted);text-align:center;margin-top:4px}
+.ai-frame-skel canvas,.ai-analyzing + * canvas,canvas[id^="deepSkel"]{width:100%;height:auto;background:#0a0c0b;border:1px solid var(--hairline);border-radius:10px}
+#aiSkelDetail{font-weight:600;color:var(--ink)}
+@media (max-width:640px){ .ai-frame-skel{grid-template-columns:1fr} }
 .ai-intro h2{margin:0 0 8px}
 .ai-note{color:var(--muted);font-size:13px;line-height:1.55;margin:8px 0}
 .ai-controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px}
