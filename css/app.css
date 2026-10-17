@@ -576,3 +576,9 @@ body[data-active-view="guide"] .view-guide{display:block;animation:sectionIn .35
   .ai-best-frames{grid-template-columns:1fr}
   .tab-item span{font-size:10px}
 }
+
+.block-toggle-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:12px 0 4px}
+.block-toggle-row .ai-note{margin:0}
+#blockStartsToggle[aria-pressed="true"]{background:var(--volt);border-color:var(--volt);color:#0c0e0c;font-weight:800}
+.update-banner-notes{margin:0;padding-left:20px;color:var(--muted);font-size:13px;line-height:1.5;flex-basis:100%}
+.update-banner-notes li{margin:2px 0}
