@@ -11,7 +11,7 @@
  *    Sprint form) + their cue lists for the Guide tab
  *  - the rep analysis: windowed pose features -> score, metrics, one fix
  *    (cue + drill), fix video, asymmetry check
- *  - the two-photo form check (Photos tab)
+ *  - the two-photo form check (AI Photo tab)
  *  - tab switching + the full-rep-review dialog
  *
  * It never touches a camera. The AI Analyzer (js/ai-analyzer.js) owns the
@@ -292,6 +292,38 @@ function analyze(lm){
         return {metrics:metrics,score:available.reduce(function(sum,v){return sum+v},0)/available.length,headline:headline,copy:copy,issue:issue,asym:asym};
       }
 
+/* Pointing markers for AI Photo: green checks where form looks good,
+ * red marks where to work — drawn on the photo with a short label. */
+var PHOTO_FIX_JOINT = {
+  projection: 23, frontKnee: 25, rearKnee: 26, hipHeight: 23,
+  thighSeparation: 25, underHip: 27, elbowShape: 13, sprintPosture: 23
+};
+function photoMissingJoints(lm){
+  var groups = [['shoulders', [11, 12]], ['hips', [23, 24]], ['knees', [25, 26]], ['ankles', [27, 28]]];
+  var missing = [];
+  groups.forEach(function(g){
+    if(g[1].some(function(i){ var p = lm[i]; return !p || (p.visibility !== undefined && p.visibility <= 0.58); })) missing.push(g[0]);
+  });
+  return missing;
+}
+function drawPhotoMarker(pctx, x, y, color, glyph, label, scale){
+  var r = 13 * scale;
+  pctx.beginPath(); pctx.arc(x, y, r, 0, Math.PI * 2);
+  pctx.fillStyle = color; pctx.fill();
+  pctx.strokeStyle = '#ffffff'; pctx.lineWidth = 2 * scale; pctx.stroke();
+  pctx.fillStyle = '#ffffff'; pctx.font = 'bold ' + Math.round(15 * scale) + 'px Barlow, sans-serif';
+  pctx.textAlign = 'center'; pctx.textBaseline = 'middle';
+  pctx.fillText(glyph, x, y + 1);
+  if(label){
+    pctx.font = Math.round(14 * scale) + 'px Barlow, sans-serif';
+    var w = pctx.measureText(label).width + 16 * scale;
+    var lx = Math.min(Math.max(x + r + 4, 4), Math.max(4, pctx.canvas.width - w - 4));
+    pctx.fillStyle = 'rgba(5,8,7,0.85)'; pctx.fillRect(lx, y - 11 * scale, w, 22 * scale);
+    pctx.fillStyle = '#ffffff'; pctx.textAlign = 'left';
+    pctx.fillText(label, lx + 8 * scale, y + 1);
+  }
+  pctx.textAlign = 'left'; pctx.textBaseline = 'alphabetic';
+}
 function handlePhotoResults(results,request){
         var card=request.card,img=request.img,pcanvas=card.querySelector('canvas'),pctx=pcanvas.getContext('2d'),readout=card.querySelector('.photo-readout');
         pcanvas.width=img.naturalWidth||1280;pcanvas.height=img.naturalHeight||960;pctx.clearRect(0,0,pcanvas.width,pcanvas.height);pctx.drawImage(img,0,0,pcanvas.width,pcanvas.height);
@@ -299,7 +331,12 @@ function handlePhotoResults(results,request){
         if(window.drawConnectors&&window.POSE_CONNECTIONS)drawConnectors(pctx,results.poseLandmarks,POSE_CONNECTIONS,{color:'#5ed5aa',lineWidth:Math.max(3,pcanvas.width/260)});
         if(window.drawLandmarks)drawLandmarks(pctx,results.poseLandmarks,{color:'#ff7040',fillColor:'#ffffff',lineWidth:2,radius:Math.max(3,pcanvas.width/320)});
         var lm=results.poseLandmarks,f=extractFeatures(lm);
-        if(!f){hidePoseNote();readout.innerHTML='<strong>Couldn\u2019t see enough of your body.</strong> Retake with shoulders, hips, knees, and ankles all in frame.';return;}
+        if(!f){
+          hidePoseNote();
+          var miss=photoMissingJoints(lm);
+          readout.innerHTML='<strong>Can’t see: ' + (miss.length ? miss.join(', ') : 'your full body') + '.</strong> Retake with full body in frame — shoulders, hips, knees, and ankles all visible.';
+          return;
+        }
         var knees=[Math.round(f.kneeL),Math.round(f.kneeR)].sort(function(a,b){return a-b}),trunk=Math.round(f.lean),armL=Math.round(f.elbowL),armR=Math.round(f.elbowR);
         var shinL=Math.round(Math.atan2(Math.abs(lm[27].x-lm[25].x),Math.abs(lm[27].y-lm[25].y))*180/Math.PI);
         var shinR=Math.round(Math.atan2(Math.abs(lm[28].x-lm[26].x),Math.abs(lm[28].y-lm[26].y))*180/Math.PI);
@@ -338,7 +375,36 @@ function handlePhotoResults(results,request){
         function callout(y,color,label,text){pctx.font=font;var shown=text.length>58?text.slice(0,56)+'…':text,w=Math.min(pcanvas.width-pad*2,pctx.measureText(label+'  '+shown).width+pad*2);pctx.fillStyle=color;pctx.fillRect(pad,y,w,lineH+pad);pctx.fillStyle='#07100c';pctx.fillText(label+'  '+shown,pad*2,y+lineH);}
         callout(pad,'#5ed5aa','GOOD',good[0]);
         callout(pcanvas.height-lineH-pad*3,'#ff7040','FIX',fix.cue);
-        readout.innerHTML='<strong class="good">GOOD:</strong> '+good.slice(0,2).join('; ')+'.<br><strong class="fix">ONE FIX:</strong> '+fix.fix+' <strong>Cue:</strong> “'+fix.cue+'” <strong>Drill:</strong> '+fix.drill+'.<div class="angle-list"><span>Trunk '+trunk+'°</span><span>Knees '+knees[0]+'° / '+knees[1]+'°</span><span>Shins '+shinL+'° / '+shinR+'°</span><span>Arms '+armL+'° / '+armR+'°</span></div><a class="watch-fix" href="'+v[2]+'" target="_blank" rel="noopener">Watch: how to fix this</a>';
+        /* Pointing markers: green checks on what looks good, one red mark on
+         * the joint to fix — each with a short label. Markers sit on the
+         * skeleton the AI actually measured. */
+        var goodMarkers=[];
+        good.forEach(function(g){
+          if(/trunk/.test(g)) goodMarkers.push({ joint: 23, label: 'Good: trunk ' + trunk + '°' });
+          else if(/front-knee/.test(g)) goodMarkers.push({ joint: 25, label: 'Good: front knee ~' + knees[0] + '°' });
+          else if(/rear-knee/.test(g)) goodMarkers.push({ joint: 26, label: 'Good: rear knee ~' + knees[1] + '°' });
+          else if(/arms/.test(g)) goodMarkers.push({ joint: 13, label: 'Good: arms loose' });
+        });
+        goodMarkers.slice(0, 3).forEach(function(mk){
+          var pt=lm[mk.joint];
+          if(pt) drawPhotoMarker(pctx, pt.x * pcanvas.width, pt.y * pcanvas.height, '#3ddc97', '✓', mk.label, scale);
+        });
+        var fixJoint=PHOTO_FIX_JOINT[issue] || 23;
+        var fixPt=lm[fixJoint];
+        if(fixPt) drawPhotoMarker(pctx, fixPt.x * pcanvas.width, fixPt.y * pcanvas.height, '#ff5c5c', '!', 'Work on: ' + fix.cue, scale);
+        /* Plain-language lists: what the AI saw that looks good, and what
+         * to work on — with the fault, cue, and drill for each. */
+        var goodHtml=good.map(function(g){
+          var seen='';
+          if(/trunk/.test(g)) seen=' — trunk lean measured at ' + trunk + '° in this photo.';
+          else if(/front-knee/.test(g)) seen=' — front knee measured near ' + knees[0] + '° in this photo.';
+          else if(/rear-knee/.test(g)) seen=' — rear knee measured near ' + knees[1] + '° in this photo.';
+          else if(/arms/.test(g)) seen=' — elbows measured at ' + armL + '° / ' + armR + '° in this photo.';
+          return '<li>' + g + seen + '</li>';
+        }).join('');
+        readout.innerHTML='<strong>What looks good:</strong><ul>' + goodHtml + '</ul>' +
+          '<strong>Work on:</strong><ul><li>' + fix.fix + ' <strong>Cue:</strong> “' + fix.cue + '” <strong>Drill:</strong> ' + fix.drill + '.</li></ul>' +
+          '<div class="angle-list"><span>Trunk '+trunk+'°</span><span>Knees '+knees[0]+'° / '+knees[1]+'°</span><span>Shins '+shinL+'° / '+shinR+'°</span><span>Arms '+armL+'° / '+armR+'°</span></div><a class="watch-fix" href="'+v[2]+'" target="_blank" rel="noopener">Watch: how to fix this</a>';
       }
 
 
@@ -388,7 +454,7 @@ function renderGuide(){
 }
 
 /* One movement selection drives both engines. Called by the AI Analyzer's
- * "What to check" picker (and by the Side View tab). */
+ * "What to check" picker. */
 function setMode(m){
   if(!content[m]) return;
   mode = m; featureWindow = []; latestClassic = null;
@@ -397,7 +463,7 @@ function setMode(m){
   renderGuide();
 }
 
-/* ---- Two-photo form check (Photos tab) ---- */
+/* ---- Two-photo form check (AI Photo tab) ---- */
 function ensurePhotoPose(){
   if(photoPose) return true;
   if(!window.Pose) return false;
@@ -439,8 +505,7 @@ function bindPhotos(){
 /* ---- Tab switching + full-rep-review dialog ---- */
 var screenCopy = {
   ai: ['AI Analyzer', 'Live coaching, two cameras, photo check, and your results — one screen'],
-  photos: ['Photos', 'Compare two positions with skeletons and angle checks'],
-  side: ['Side View', 'Side-on tracking for starts and sprint form'],
+  'ai-photo': ['AI Photo', 'Photo reports from the AI Analyzer, plus your form vs pro form'],
   guide: ['Guide', 'Technique cues, drills, and the video for each fix']
 };
 var viewSwitching = false, pendingView = null;
@@ -472,10 +537,10 @@ function activateView(view){
   document.getElementById('screenTitle').textContent = screenCopy[view][0];
   document.getElementById('screenSubtitle').textContent = screenCopy[view][1];
   document.querySelectorAll('[data-view]').forEach(function(item){ item.setAttribute('aria-current', item.dataset.view === view ? 'page' : 'false'); });
-  if(view === 'side'){
-    setMode('side');
-    if(window.TrackAI && window.TrackAI.setClassicMode) window.TrackAI.setClassicMode('side');
-  }
+  /* Opening a tab clears its notification badge — badges only come back
+   * when the next analysis finishes. */
+  if(view === 'ai-photo' && window.TrackNotify) window.TrackNotify.clear('photo');
+  if(view === 'guide' && window.TrackNotify) window.TrackNotify.clear('guide');
   document.querySelector('.page').scrollTop = 0;
 }
 function bindChrome(){
@@ -515,6 +580,7 @@ function bindChrome(){
   });
 }
 
+window.TrackPhoto = { handlePhotoResults: handlePhotoResults, photoMissingJoints: photoMissingJoints, drawPhotoMarker: drawPhotoMarker };
 window.TrackClassic = {
   setMode: setMode,
   getMode: function(){ return mode; },
