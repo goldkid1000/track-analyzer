@@ -1,4 +1,4 @@
-/* Track Analyzer — update system (v2.1.1)
+/* Track Analyzer — update system (v2.1.4)
  *
  * Tenno Vault-style: visible version, What's New panel, Check for updates,
  * and an update banner. The banner fires ONLY when version.json reports a
@@ -6,12 +6,26 @@
  * version.json + changelog.json live next to the app files on the host.
  * If they can't be fetched (offline, file://, host missing the files), the
  * check fails quietly on auto-check and shows a one-line note on manual check.
+ *
+ * v2.1.4 — update notice shows ONCE per version: when a new update
+ * launches, the banner shows WHAT changed (the full changelog notes for
+ * that version). Once the user taps Update now / Later / dismiss, that
+ * version is recorded as SEEN in localStorage (survives tab close, reload,
+ * revisits) and its auto-notice never shows again. It shows again only
+ * when ANOTHER (newer) update launches. The What's New button still opens
+ * the full history anytime — it never re-triggers the auto-notice and
+ * never un-sees a version.
  */
 (function(){
 'use strict';
-var VERSION = '2.1.3';
+var VERSION = '2.1.4';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: '2.1.4', date: '2026-10-17', notes: [
+    'Update notice shows once per update (what changed), then never again until the next update — works on PC and phone.',
+    'Removed activity pickers — the AI auto-detects what you are doing (sprint, drill, squat, and more). One Block Starts toggle: turn it on for block starts, off for everything else.',
+    'Works on PC and phone: same tabs, same controls, same one-time update notice on both.'
+  ]},
   { version: '2.1.3', date: '2026-10-17', notes: [
     'Three tabs now: AI Analyzer, AI Photo, Guide. The Side View tab is gone — its side-view tip lives in the AI Analyzer.',
     'When an analysis finishes, AI Photo and Guide get a red “New” badge, and the AI Analyzer shows an “Analysis done” note. Opening a tab clears its badge.',
@@ -21,7 +35,7 @@ var FALLBACK_HISTORY = [
     'Knowledge base grown from 26 to 40 entries: finish & lean, sprint hurdles, 400m hurdles, 4×100m, 4×400m, pole vault basics, safe jump landings, shot put glide + rotation, hammer basics, javelin approach, 800m, 1500m / mile, 5000m.'
   ]},
   { version: '2.1.2', date: '2026-10-17', notes: [
-    'Rep check merged into AI Analyzer: the separate block is gone. One “What to check” pick sets both the live coaching and the rep check. One camera, one Start / Stop flow, one score + one fix.',
+    'Rep check merged into AI Analyzer: the separate block is gone. One pick sets both the live coaching and the rep check. One camera, one Start / Stop flow, one score + one fix.',
     'Live skeleton on the camera: a flat 2D drawing on top of the preview while you record — problem joint in red, good joints in green. Never fake 3D.',
     'Recording, plainly named: “Start recording”, “Recording…”, 1 finger starts recording + analyzing, 2 fingers stop it. Buttons do exactly what the hand signs do.',
     'Voice says “Recording has started” and “Recording has ended” when recording starts and stops — with the hand signs or the buttons — even when voice coaching is off.',
@@ -58,6 +72,35 @@ function cmpVersion(a, b){
 function esc(s){
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
+/* ---- Seen state: localStorage, keyed by version. Survives tab close,
+ * reloads, and revisits. Migrates the old sessionStorage dismissed key
+ * (v2.1.3 and earlier) once, so anyone who dismissed an update before
+ * is not re-prompted for it. ---- */
+function seenKey(v){ return 'trackAnalyzer.update.seen.v' + v; }
+function isSeen(v){
+  try{
+    if(localStorage.getItem(seenKey(v)) === '1') return true;
+    var old = sessionStorage.getItem('trackAnalyzer.update.dismissed.v' + v);
+    if(old){
+      try{ localStorage.setItem(seenKey(v), '1'); }catch(e){}
+      try{ sessionStorage.removeItem('trackAnalyzer.update.dismissed.v' + v); }catch(e){}
+      return true;
+    }
+  }catch(e){}
+  return false;
+}
+function markSeen(v){
+  if(!v) return;
+  try{ localStorage.setItem(seenKey(v), '1'); }catch(e){}
+}
+function notesFor(history, version){
+  if(!Array.isArray(history)) return null;
+  for(var i = 0; i < history.length; i++){
+    if(String(history[i].version) === String(version)) return history[i].notes || null;
+  }
+  return null;
+}
+var pendingUpdateVersion = null;
 function renderWhatsNew(history, current){
   var list = $('whatsNewList');
   var cur = $('whatsNewCurrent');
@@ -68,20 +111,31 @@ function renderWhatsNew(history, current){
     return '<div class="whats-new-entry"><h4>v' + esc(entry.version) + ' <span>' + esc(entry.date || '') + '</span></h4><ul>' + notes + '</ul></div>';
   }).join('') || '<p>No history available.</p>';
 }
-function showBanner(remote){
+/* Show the banner ONCE for this version: only when the remote version is
+ * newer than the running build AND not already seen. The banner lists
+ * WHAT changed (the changelog notes for that version). Returns true if
+ * the banner was shown. */
+function showBanner(remote, history){
   var banner = $('updateBanner');
-  if(!banner) return;
-  var dismissed = null;
-  try{ dismissed = sessionStorage.getItem('trackAnalyzer.update.dismissed.v' + remote.version); }catch(e){}
-  if(dismissed) return;
+  if(!banner || !remote || !remote.version) return false;
+  if(cmpVersion(remote.version, VERSION) <= 0) return false;
+  if(isSeen(remote.version)) return false;
   var text = $('updateBannerText');
-  if(text) text.textContent = 'Update available: v' + remote.version + (remote.notes ? ' — ' + remote.notes : '') + '. You are on v' + VERSION + '.';
+  if(text) text.textContent = 'Update available: v' + remote.version + '. You are on v' + VERSION + '. Here is what changed:';
+  var notesEl = $('updateBannerNotes');
+  var notes = notesFor(history, remote.version) || (remote.notes ? [remote.notes] : null);
+  if(notesEl){
+    notesEl.innerHTML = notes ? notes.map(function(n){ return '<li>' + esc(n) + '</li>'; }).join('') : '';
+  }
+  pendingUpdateVersion = remote.version;
   showEl(banner, true);
+  return true;
 }
 function hideBanner(){
   showEl($('updateBanner'), false);
 }
-function checkForUpdates(manual){
+function checkForUpdates(manual, opts){
+  opts = opts || {};
   var status = $('updateCheckStatus');
   function note(msg){ if(status) status.textContent = msg; }
   var bust = '?t=' + Date.now();
@@ -93,8 +147,16 @@ function checkForUpdates(manual){
     var cmp = cmpVersion(remote.version, VERSION);
     if(cmp > 0){
       // Real version bump only — this is the one and only trigger.
-      showBanner(remote);
-      if(manual) note('Update available: v' + remote.version + '. See the banner below.');
+      if(opts.suppressBanner){
+        // What's New button refresh: history only, never a banner.
+        if(manual) note('Update available: v' + remote.version + '. See What\u2019s New for what changed.');
+      } else if(isSeen(remote.version)){
+        // Already saw this update's notice — never banner it again.
+        if(manual) note('Update v' + remote.version + ' is out — you already saw what changed. Open What\u2019s New anytime to read it again.');
+      } else {
+        showBanner(remote, history);
+        if(manual) note('Update available: v' + remote.version + '. See the banner below.');
+      }
     } else {
       hideBanner();
       if(manual) note('You are on the latest version (v' + VERSION + ').');
@@ -113,7 +175,8 @@ function initUpdates(){
   var whatsBtn = $('whatsNewBtn');
   var dialog = $('whatsNewDialog');
   if(whatsBtn && dialog) whatsBtn.addEventListener('click', function(){
-    checkForUpdates(false); // refresh history in the background; never banners from this
+    // Manual What's New: refresh history only. Never banners, never un-sees.
+    checkForUpdates(false, { suppressBanner: true });
     if(dialog.showModal) dialog.showModal(); else dialog.setAttribute('open', '');
   });
   var closeBtn = $('closeWhatsNew');
@@ -121,6 +184,8 @@ function initUpdates(){
   if(dialog) dialog.addEventListener('click', function(e){ if(e.target === dialog){ if(dialog.close) dialog.close(); else dialog.removeAttribute('open'); } });
   var updateBtn = $('updateNowBtn');
   if(updateBtn) updateBtn.addEventListener('click', function(){
+    // Marking seen first: after the reload, this version's notice stays gone.
+    markSeen(pendingUpdateVersion);
     // Hard reload past the cache: bump the ?v= query so the new build loads.
     try{
       var u = new URL(location.href);
@@ -130,14 +195,22 @@ function initUpdates(){
   });
   var laterBtn = $('updateLaterBtn');
   if(laterBtn) laterBtn.addEventListener('click', function(){
-    var text = ($('updateBannerText') || {}).textContent || '';
-    var m = text.match(/v(\d+\.\d+\.\d+)/);
-    try{ if(m) sessionStorage.setItem('trackAnalyzer.update.dismissed.v' + m[1], '1'); }catch(e){}
+    markSeen(pendingUpdateVersion);
+    hideBanner();
+  });
+  var closeBannerBtn = $('updateBannerClose');
+  if(closeBannerBtn) closeBannerBtn.addEventListener('click', function(){
+    markSeen(pendingUpdateVersion);
     hideBanner();
   });
   // One quiet auto-check per visit. Silent unless a newer version exists.
   checkForUpdates(false);
 }
+/* Test hooks (smoke tests only). */
+window.TrackUpdate = { isSeen: isSeen, markSeen: markSeen, seenKey: seenKey,
+  cmpVersion: cmpVersion, showBanner: showBanner, hideBanner: hideBanner,
+  getPendingVersion: function(){ return pendingUpdateVersion; },
+  notesFor: notesFor, getVersion: function(){ return VERSION; } };
 if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initUpdates);
 else initUpdates();
 })();
