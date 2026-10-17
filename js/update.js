@@ -1,4 +1,4 @@
-/* Track Analyzer — update system (v2.1.6)
+/* Track Analyzer — update system (v2.1.7)
  *
  * Tenno Vault-style: visible version, What's New panel, Check for updates,
  * and an update banner. The banner fires ONLY when version.json reports a
@@ -17,15 +17,26 @@
  * never un-sees a version.
  *
  * v2.1.6 — skeleton rig on BOTH two-camera feeds with full body +
- * every finger joint; hand signs read from either camera; smooth
- * interpolated rig drawing; status lines that say what the camera sees
- * (no more silent failures); start/stop announcements in two-camera mode.
+ * v2.1.7 — rig only draws joints the camera actually sees (no head blob
+ * on the back, no tangled close-ups); face = one small head marker, hands
+ * = small clean dots/lines, only when confidently detected; truthful
+ * status lines (Skeleton on only when drawing, names the camera); hand
+ * signs really work from BOTH cameras with hold grace; hands read on a
+ * bigger frame; rig maps to the video's real on-screen shape.
  */
 (function(){
 'use strict';
-var VERSION = '2.1.6';
+var VERSION = '2.1.7';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: '2.1.7', date: '2026-10-17', notes: [
+    'The rig only draws joints the camera actually sees. A joint that is hidden, behind you, or out of frame gets no dot and no line — no more head blob on your back, no more tangled knot on close-ups. If too few joints are visible, that feed draws nothing instead of garbage.',
+    'Face is now one small head marker instead of a blob of face dots. Hands are small dots with thin lines, and the finger skeleton only shows when a hand is confidently detected — no more spiderwebs.',
+    'Status lines now tell the truth: “Skeleton on” shows only when the rig is really drawing on that camera, and it names the camera (“Skeleton on — rig follows you on Camera 1.”). “Skeleton couldn’t load” only shows when no rig is drawing. Hand signs name the camera that sees them (“Camera 1: I see your hand…”).',
+    'Hand signs really work from BOTH cameras now — whichever camera sees your hand drives start/stop. A new finger count must hold for 2 frames before it counts, and one dropped frame no longer resets your ~1 second hold.',
+    'Hands are read on a bigger picture (640px instead of 320px), so a hand at arm\'s length is actually seen — that was why the app said “No hand seen” while a hand was plainly up.',
+    'The rig sits ON you now: it maps through the video\'s real on-screen shape instead of guessing, and the full camera frame is shown (no more cropping the body off). Unseen joints get a short grace before they disappear, so the rig stays steady instead of popping.'
+  ]},
   { version: '2.1.6', date: '2026-10-17', notes: [
     'Two cameras: the skeleton rig now draws on BOTH cameras — Camera 1 AND Camera 2 — live whenever the camera is on. The rig now shows your full body plus every finger joint on both hands.',
     'Hand signs now work in two-camera mode: hold up 1 finger to start or 2 fingers to stop on EITHER camera — whichever camera sees your hand.',
