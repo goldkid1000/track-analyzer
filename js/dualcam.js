@@ -1,4 +1,4 @@
-/* Track Analyzer — Two-camera + one-time photo access (v2.1.5)
+/* Track Analyzer — Two-camera + one-time photo access (v2.1.6)
  *
  * Two features in one file, kept separate from app.js so the existing
  * analyzer keeps working untouched:
@@ -24,9 +24,20 @@
  *    result. The two live views are plainly labeled Camera 1 and Camera 2.
  *    Labelled "two camera views, not 3D" everywhere: two uncalibrated
  *    cameras cannot measure depth, and this app never fakes 3D numbers.
- *    The skeleton rig runs off the Camera 2 feed and is drawn ON the
- *    person in the Camera 2 video. Each camera can switch (front / back /
- *    any webcam) and can be turned off and back on.
+ *
+ *    v2.1.6 — the skeleton rig runs on BOTH feeds (Camera 1 AND Camera 2)
+ *    through the shared smooth rig engine (js/rig.js): full pose + both
+ *    hands with every finger joint, drawn ON the person in each video.
+ *    Hand signs are read from BOTH feeds too — whichever camera sees the
+ *    hand drives start/stop. Why v2.1.5's rig never showed: it only ever
+ *    ran on the Camera 2 feed, started only when the remote stream
+ *    arrived, and failed SILENTLY (pose model still downloading from
+ *    the CDN, or a slow connection) with no status line at all — and on
+ *    a cached v2.1.4 build there was no dual rig in the code at all.
+ *    v2.1.6 fixes all of that: rigs on both feeds, status lines that say
+ *    what is actually happening, and no silent failure.
+ *    Each camera can switch (front / back / any webcam) and can be
+ *    turned off and back on.
  */
 (function(){
 'use strict';
@@ -129,7 +140,8 @@ var D = {
   localStream: null, remoteStream: null,
   localLabel: 'Camera 1', remoteLabel: 'Camera 2',
   camOff: false, camDeviceId: null, remoteCamOff: false,
-  skelPose: null, skelTimer: null,
+  rigStarted: false,
+  gestureTimer: null, gestureHoldKind: '', gestureHoldCount: 0,
   recorder: null, chunks: [], localBlob: null, remoteBlob: null,
   recording: false, recStartedAt: 0, recTimer: null,
   duration: 10,
@@ -140,6 +152,13 @@ var D = {
   cameraReady: null
 };
 function dualStatus(msg){ setText('dualStatus', msg); setText('dualJoinStatus', msg); }
+/* Start/stop announcements in two-camera mode: the same exact words as
+ * the single camera — "Recording has started." / "Recording has ended."
+ * — spoken once per transition on EACH device, even with voice coaching
+ * off, via the AI Analyzer's announce path (bypasses the voice toggle). */
+function announceDual(text){
+  try{ if(window.TrackAIAnnounce) window.TrackAIAnnounce.announce(text); }catch(e){}
+}
 function sendMsg(obj){
   try{
     if(D.conn && D.conn.open) D.conn.send(obj);
@@ -278,16 +297,15 @@ function setDualCamera(on){
   if(lv) lv.style.visibility = on ? '' : 'hidden';
   if(!on){
     if(D.recording) stopRecording('a camera was turned off');
-    // The skeleton runs on the Camera 2 feed: only the joiner (Camera 2
-    // itself) stops it when turning its own camera off. The host's own
-    // camera going off leaves the Camera 2 rig alone.
-    if(D.role === 'join') stopDualSkeleton();
+    // Turning this device's own camera off stops only ITS rig feed —
+    // the other camera's rig keeps drawing.
+    unregisterDualFeed(dualOwnKey());
     stopLocalCamera();
     sendMsg({ type: 'cam-off', role: D.role });
   } else {
     startLocalCamera().then(function(){
       replaceLocalTracks();
-      if(D.role === 'join') startDualSkeleton();
+      registerDualFeed(dualOwnKey());
       sendMsg({ type: 'cam-on', role: D.role });
     }).catch(function(err){ dualStatus(dualCamErrorText(err)); });
   }
@@ -307,7 +325,7 @@ function onRemoteStream(stream){
   dualStatus('Camera 2 connected ✓ — both cameras are live.');
   showEl($('dualRecordRow'), true);
   showEl($('dualJoinRecordNote'), true);
-  if(D.role === 'host') startDualSkeleton();
+  startDualRig(); startDualGestures(); // remote feed just arrived — its rig starts now (either role)
 }
 function loadPeerJS(){
   return new Promise(function(resolve, reject){
@@ -352,18 +370,25 @@ function onMessage(msg){
   else if(msg.type === 'cam-off'){
     D.remoteCamOff = true;
     showRemoteCamOff(true);
-    if(D.role === 'host') stopDualSkeleton(); // Camera 2's feed is gone
+    // The other camera's feed is gone — stop only ITS rig feed.
+    unregisterDualFeed(dualRemoteKey());
     if(D.recording && D.role === 'host') stopRecording('Camera 2 was turned off');
     dualStatus('Camera 2 is off — recording waits until it is back on.');
   }
   else if(msg.type === 'cam-on'){
     D.remoteCamOff = false;
     showRemoteCamOff(false);
-    if(D.role === 'host') startDualSkeleton();
+    registerDualFeed(dualRemoteKey());
     dualStatus('Camera 2 is back on.');
   }
   else if(msg.type === 'start'){ startRecording(msg.duration || 10); }
   else if(msg.type === 'stop'){ stopRecording('the other camera stopped'); }
+  // Hand sign seen on the OTHER device: it asks the host (Camera 1) to
+  // start/stop, because the host drives recording for both cameras.
+  // The host's hostRecord/stopRecording then fans the real
+  // start/stop out to both sides — so the other device records too.
+  else if(msg.type === 'want-start'){ if(D.role === 'host') hostRecord(); }
+  else if(msg.type === 'want-stop'){ if(D.role === 'host') stopRecording('hand sign'); }
   else if(msg.type === 'analysis'){ D.remoteAnalysis = msg.summary; maybeRenderVerdict(); }
   else if(msg.type === 'clip-meta'){ D.clipExpected = msg.chunks || 0; D.clipGot = 0; D.clipParts = {}; setText('dualTransfer', 'Receiving Camera 2 clip\u2026 0%'); }
   else if(msg.type === 'clip-chunk'){ D.clipParts[msg.index] = msg.data; D.clipGot++; if(D.clipExpected) setText('dualTransfer', 'Receiving Camera 2 clip\u2026 ' + Math.round(D.clipGot / D.clipExpected * 100) + '%'); }
@@ -379,6 +404,10 @@ function hostStart(){
   setText('dualCode', D.code);
   dualStatus('Starting your camera…');
   startLocalCamera().then(function(){
+    // Own Camera 1 rig starts now (while waiting for Camera 2); the
+    // Camera 2 feed registers too and the engine picks it up the
+    // moment its stream arrives.
+    startDualRig(); startDualGestures();
     dualStatus('Share code ' + D.code + ' with Camera 2, then wait…');
     return loadPeerJS();
   }).then(function(){
@@ -408,7 +437,7 @@ function joinStart(){
   showEl($('dualJoinPanel'), true);
   dualStatus('Starting your camera…');
   startLocalCamera().then(function(){
-    startDualSkeleton(); // this device IS Camera 2 — skeleton runs on its own feed
+    startDualRig(); startDualGestures(); // this device IS Camera 2 — its rig runs on its own feed
     dualStatus('Connecting to Camera 1…');
     return loadPeerJS();
   }).then(function(){
@@ -451,6 +480,7 @@ function manualHostStart(){
   D.role = 'host'; D.mode = 'manual'; D.localLabel = 'Camera 1';
   dualStatus('Connecting by hand: starting camera\u2026');
   startLocalCamera().then(function(){
+    startDualRig(); startDualGestures(); // own Camera 1 rig starts now
     D.pc = makePC();
     D.localStream.getTracks().forEach(function(t){ D.pc.addTrack(t, D.localStream); });
     var dc = D.pc.createDataChannel('control');
@@ -476,7 +506,7 @@ function manualJoinAccept(){
   catch(e){ dualStatus('That offer code did not parse — copy it exactly.'); return; }
   dualStatus('Connecting by hand: starting camera\u2026');
   startLocalCamera().then(function(){
-    startDualSkeleton(); // this device IS Camera 2 — skeleton runs on its own feed
+    startDualRig(); startDualGestures(); // this device IS Camera 2 — its rig runs on its own feed
     D.pc = makePC();
     D.localStream.getTracks().forEach(function(t){ D.pc.addTrack(t, D.localStream); });
     D.pc.ondatachannel = function(e){ setupManualDC(e.channel); };
@@ -519,13 +549,15 @@ function startRecording(duration){
   clearTimeout(D.recTimer);
   D.recTimer = setTimeout(function(){ stopRecording('time is up'); }, D.duration * 1000);
   startPoseWatch();
+  announceDual('Recording has started.');
   setText('dualRecState', 'Recording\u2026 ' + D.duration + 's max \u2014 stops on its own when the rep ends.');
   showEl($('dualStopBtn'), true);
   var rb = $('dualRecordBtn'); if(rb) rb.disabled = true;
 }
-function stopRecording(reason){
+function stopRecording(reason, silent){
   if(!D.recording) return;
   D.recording = false;
+  if(!silent) announceDual('Recording has ended.');
   clearTimeout(D.recTimer); stopPoseWatch();
   try{ if(D.recorder && D.recorder.state !== 'inactive') D.recorder.stop(); }catch(e){}
   setText('dualRecState', 'Stopped (' + (reason || 'done') + ') — processing clip…');
@@ -555,88 +587,180 @@ function startPoseWatch(){
       D.watchPose = new Pose({ locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/' + f; } });
       D.watchPose.setOptions({ modelComplexity: 0, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
       D.watchPose.onResults(function(res){
-        var seen = !!(res && res.poseLandmarks);
-        var now = Date.now();
-        if(D.calibPending && seen){
-          var lm = res.poseLandmarks;
-          var sh = { x: (lm[11].x + lm[12].x) / 2, y: (lm[11].y + lm[12].y) / 2 };
-          var hip = { x: (lm[23].x + lm[24].x) / 2, y: (lm[23].y + lm[24].y) / 2 };
-          D.calib = { torso: Math.hypot(sh.x - hip.x, sh.y - hip.y), at: now };
-          D.calibPending = false;
-          setText('dualCalibState', 'Lined up ✓ \u2014 frame locked.');
-        }
-        if(seen){ D.poseSeen = true; D.poseMissingSince = 0; }
-        else if(D.poseSeen && !D.poseMissingSince){ D.poseMissingSince = now; }
-        else if(D.poseSeen && D.poseMissingSince && now - D.poseMissingSince > 1500 && now - D.recStartedAt > 2000){
-          stopRecording('you left the frame');
-        }
+        handlePresencePose(res && res.poseLandmarks);
       });
     }
   }catch(e){ return; }
   clearInterval(D.watchTimer);
   D.watchTimer = setInterval(function(){
     if(!D.recording && !D.calibPending) return;
+    // Prefer the rig's already-running pose — one inference feeds the
+    // rig, the gestures, AND the presence watch (no second pipeline).
+    var rigLm = window.TrackRig ? window.TrackRig.getPoseLandmarks(dualOwnKey()) : null;
+    if(rigLm){ handlePresencePose(rigLm); return; }
     var v = D.role === 'host' ? $('dualLocalVideo') : $('dualJoinLocalVideo');
     if(v && v.readyState >= 2 && D.watchPose){ D.watchPose.send({ image: v }).catch(function(){}); }
   }, 150);
 }
+/* Presence handler shared by the pose watch and the rig feed: a person
+ * counts as seen when a visible landmark is present (rig landmarks
+ * carry visibility; raw MediaPipe landmarks always count). */
+function handlePresencePose(lm){
+  var now = Date.now();
+  function vis(i){ var pt = lm && lm[i]; if(!pt) return 0; return pt.visibility === undefined ? 1 : pt.visibility; }
+  var seen = !!(lm && (vis(0) > 0.5 || vis(11) > 0.5 || vis(12) > 0.5));
+  if(D.calibPending && seen){
+    var sh = { x: (lm[11].x + lm[12].x) / 2, y: (lm[11].y + lm[12].y) / 2 };
+    var hip = { x: (lm[23].x + lm[24].x) / 2, y: (lm[23].y + lm[24].y) / 2 };
+    D.calib = { torso: Math.hypot(sh.x - hip.x, sh.y - hip.y), at: now };
+    D.calibPending = false;
+    setText('dualCalibState', 'Lined up ✓ — frame locked.');
+  }
+  if(seen){ D.poseSeen = true; D.poseMissingSince = 0; }
+  else if(D.poseSeen && !D.poseMissingSince){ D.poseMissingSince = now; }
+  else if(D.poseSeen && D.poseMissingSince && now - D.poseMissingSince > 1500 && now - D.recStartedAt > 2000){
+    stopRecording('you left the frame');
+  }
+}
 function stopPoseWatch(){ clearInterval(D.watchTimer); D.watchTimer = null; }
 
-/* ---------- Skeleton rig on the Camera 2 video ----------
- * Pose analysis runs off the Camera 2 feed and the skeleton lines are
- * drawn ON the person in the Camera 2 video — never a separate drawing.
- * On the host, Camera 2 is the remote video; on the joiner, Camera 2 is
- * its own local video. All joints green: this is the live rig, the fix
- * coloring comes from the analysis after recording. */
-function dualSimplifyLm(lm){
-  var out = {}, keep = [0, 2, 5, 7, 8, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
-  keep.forEach(function(i){
-    var pt = lm[i];
-    if(pt) out[i] = { x: pt.x, y: pt.y, v: pt.visibility === undefined ? 1 : pt.visibility };
+/* ---------- Skeleton rig on BOTH camera videos + hand signs ----------
+ * Why v2.1.5's rig never showed on Giel's real devices (diagnosed from
+ * the v2.1.5 code, not guessed): the old startDualSkeleton() only ever
+ * ran on the Camera 2 feed, only started when the remote stream
+ * arrived, and — worst — failed SILENTLY: if the pose model was still
+ * downloading from the CDN, `if(!window.Pose || !window.TrackAISkeleton)
+ * return;` just bailed with no message and nothing on screen. On top of
+ * that, a cached v2.1.4 build had no dual rig code at all. v2.1.6 fixes
+ * all three: rigs on BOTH feeds, started as soon as each feed is live,
+ * and status lines that say what is actually happening.
+ *
+ * Both rigs run through the shared smooth rig engine (js/rig.js):
+ * full pose (all 33 landmarks) PLUS both hands with every finger joint,
+ * drawn ON the person in each video, interpolated on
+ * requestAnimationFrame so the rig glides instead of jumping. The engine
+ * runs ONE pose+hands pipeline at a capped rate, alternating between
+ * the two feeds — never two full-rate pipelines that lag the preview.
+ * Hand signs are read from BOTH feeds too: whichever camera sees the
+ * hand drives start/stop (1 finger held ~1s = start, 2 fingers held
+ * ~1s = stop + deep check, same exact announcements as the single
+ * camera). */
+function dualOwnVideo(){
+  return D.role === 'join' ? $('dualJoinLocalVideo') : $('dualLocalVideo');
+}
+function dualRemoteVideoEl(){
+  return D.role === 'join' ? $('dualJoinRemoteVideo') : $('dualRemoteVideo');
+}
+function dualOwnCanvas(){
+  return D.role === 'join' ? $('dualJoinLocalSkel') : $('dualLocalSkel');
+}
+function dualRemoteCanvas(){
+  return D.role === 'join' ? $('dualJoinRemoteSkel') : $('dualRemoteSkel');
+}
+function dualOwnKey(){ return D.role === 'join' ? 'dual-cam2' : 'dual-cam1'; }
+function dualRemoteKey(){ return D.role === 'join' ? 'dual-cam1' : 'dual-cam2'; }
+function setDualRigStatus(kind){
+  var msgs = {
+    starting: 'Starting skeleton…',
+    ok: 'Skeleton on — rig follows you on both cameras.',
+    smooth: 'Skeleton running in smooth mode.',
+    poseFail: "Skeleton couldn't load — check your connection and reload.",
+    handsFail: "Hand tracking didn't load — hand signs won't work. Check your connection and reload."
+  };
+  var msg = msgs[kind] || '';
+  setText('dualRigStatus', msg);
+  setText('dualJoinRigStatus', msg);
+}
+function setDualGestureStatus(kind){
+  var msgs = {
+    holdStart: '✋ 1 finger — starting recording… (keep holding)',
+    holdStop: '✌️ 2 fingers — stopping recording… (keep holding)',
+    noFace: 'Face not visible — look at a camera.',
+    noHand: 'No hand seen — hold up a hand where a camera can see it.',
+    handSeen: 'I see your hand — hold 1 finger to start recording.',
+    recording: '● Recording… hold up 2 fingers to stop.'
+  };
+  var msg = msgs[kind] || '';
+  setText('dualGestureStatus', msg);
+  setText('dualJoinGestureStatus', msg);
+}
+function dualRigStatusCb(kind){ setDualRigStatus(kind); }
+function registerDualFeed(key){
+  if(!window.TrackRig) return;
+  var isOwn = key === dualOwnKey();
+  var video = isOwn ? dualOwnVideo() : dualRemoteVideoEl();
+  var canvas = isOwn ? dualOwnCanvas() : dualRemoteCanvas();
+  if(!video || !canvas) return;
+  window.TrackRig.registerFeed(key, video, canvas, { onStatus: dualRigStatusCb });
+}
+function unregisterDualFeed(key){
+  if(window.TrackRig) window.TrackRig.unregisterFeed(key);
+}
+function startDualRig(){
+  if(D.rigStarted) return;
+  D.rigStarted = true;
+  // Own feed first (it is live), remote feed too (engine skips it
+  // until the remote stream arrives — no error, no stuck state).
+  registerDualFeed(dualOwnKey());
+  registerDualFeed(dualRemoteKey());
+}
+function stopDualRig(){
+  D.rigStarted = false;
+  unregisterDualFeed('dual-cam1');
+  unregisterDualFeed('dual-cam2');
+  setDualRigStatus('');
+}
+function dualGestureStart(){
+  // This device saw a 1-finger hold. The host drives recording: the
+  // host starts both cameras; the joiner ASKS the host to start, and
+  // the host's start fans back out to the joiner — so it records too.
+  if(D.role === 'host') hostRecord();
+  else sendMsg({ type: 'want-start' });
+}
+function dualGestureStop(){
+  if(D.role === 'host') stopRecording('hand sign');
+  else sendMsg({ type: 'want-stop' });
+}
+function dualGestureTick(){
+  if(!D.role || !window.TrackRig) return;
+  var best = null, handSeen = false, faceSeen = false;
+  ['dual-cam1', 'dual-cam2'].forEach(function(key){
+    var g = window.TrackRig.getGesture(key);
+    if(!g || !g.fresh) return;
+    if(g.handSeen) handSeen = true;
+    if(g.faceSeen) faceSeen = true;
+    if(g.frontal && (g.count === 1 || g.count === 2) && !best) best = { count: g.count, key: key };
   });
-  return out;
+  var want = '';
+  if(best && best.count === 1 && !D.recording) want = 'start';
+  else if(best && best.count === 2 && D.recording) want = 'stop';
+  if(want && want === D.gestureHoldKind) D.gestureHoldCount++;
+  else { D.gestureHoldKind = want; D.gestureHoldCount = want ? 1 : 0; }
+  if(want === 'start'){
+    setDualGestureStatus('holdStart');
+    if(D.gestureHoldCount >= 10){ D.gestureHoldKind = ''; D.gestureHoldCount = 0; dualGestureStart(); }
+  } else if(want === 'stop'){
+    setDualGestureStatus('holdStop');
+    if(D.gestureHoldCount >= 10){ D.gestureHoldKind = ''; D.gestureHoldCount = 0; dualGestureStop(); }
+  } else if(D.recording){
+    setDualGestureStatus('recording');
+  } else if(!faceSeen){
+    setDualGestureStatus('noFace');
+  } else if(!handSeen){
+    setDualGestureStatus('noHand');
+  } else {
+    setDualGestureStatus('handSeen');
+  }
 }
-function dualSkelVideo(){
-  return D.role === 'join' ? $('dualJoinLocalVideo') : $('dualRemoteVideo');
+function startDualGestures(){
+  if(D.gestureTimer) return;
+  D.gestureHoldKind = ''; D.gestureHoldCount = 0;
+  D.gestureTimer = setInterval(dualGestureTick, 120);
 }
-function dualSkelCanvas(){
-  return D.role === 'join' ? $('dualJoinLocalSkel') : $('dualRemoteSkel');
-}
-function clearDualSkel(){
-  var canvas = dualSkelCanvas();
-  if(!canvas) return;
-  var ctx = canvas.getContext('2d');
-  if(ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
-}
-function startDualSkeleton(){
-  if(D.skelTimer) return;
-  if(!window.Pose || !window.TrackAISkeleton) return;
-  try{
-    D.skelPose = new Pose({ locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/' + f; } });
-    D.skelPose.setOptions({ modelComplexity: 0, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
-    D.skelPose.onResults(function(res){
-      var canvas = dualSkelCanvas();
-      if(!canvas) return;
-      var lm = res && res.poseLandmarks;
-      if(lm) window.TrackAISkeleton.drawSkeleton(canvas, dualSimplifyLm(lm), []);
-      else clearDualSkel();
-    });
-  }catch(e){ return; }
-  D.skelTimer = setInterval(function(){
-    var v = dualSkelVideo();
-    var canvas = dualSkelCanvas();
-    if(v && canvas && v.readyState >= 2 && D.skelPose){
-      var w = v.clientWidth || 320, h = v.clientHeight || 240;
-      if(canvas.width !== w) canvas.width = w;
-      if(canvas.height !== h) canvas.height = h;
-      D.skelPose.send({ image: v }).catch(function(){});
-    }
-  }, 150);
-}
-function stopDualSkeleton(){
-  clearInterval(D.skelTimer); D.skelTimer = null;
-  D.skelPose = null;
-  clearDualSkel();
+function stopDualGestures(){
+  clearInterval(D.gestureTimer); D.gestureTimer = null;
+  D.gestureHoldKind = ''; D.gestureHoldCount = 0;
+  setDualGestureStatus('');
 }
 
 /* ---------- Clip transfer (base64 chunks, same path on both transports) ---------- */
@@ -866,7 +990,7 @@ function showDual(){
   showEl($('dualJoinPanel'), D.role === 'join');
 }
 function dualTeardown(){
-  if(D.recording) stopRecording('left the AI Analyzer');
+  if(D.recording) stopRecording('left the AI Analyzer', true);
   try{ if(D.conn) D.conn.close(); }catch(e){}
   try{ if(D.peer) D.peer.destroy(); }catch(e){}
   try{ if(D.dc) D.dc.close(); }catch(e){}
@@ -876,7 +1000,8 @@ function dualTeardown(){
   D.remoteStream = null; D.remoteBlob = null; D.remoteAnalysis = null;
   stopLocalCamera();
   stopPoseWatch();
-  stopDualSkeleton();
+  stopDualRig();
+  stopDualGestures();
   // Fresh state for the next session: cameras back on, placeholders away.
   D.role = null;
   D.camOff = false; D.remoteCamOff = false;
@@ -942,7 +1067,8 @@ window.TrackDual = {
     return { connected: connected, role: D.role, localStream: D.localStream, remoteStream: D.remoteStream, localLabel: D.localLabel, remoteLabel: D.remoteLabel, camOff: D.camOff, remoteCamOff: D.remoteCamOff };
   },
   setCamera: setDualCamera, switchCamera: switchDualCamera,
-  startSkeleton: startDualSkeleton, stopSkeleton: stopDualSkeleton,
+  startSkeleton: startDualRig, stopSkeleton: stopDualRig,
+  _test: { gestureTick: dualGestureTick, setRigStatus: setDualRigStatus, setGestureStatus: setDualGestureStatus },
   isCamOff: function(){ return D.camOff; }
 };
 })();
