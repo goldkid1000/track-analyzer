@@ -1,4 +1,15 @@
-/* Track Analyzer — AI Analyzer (v2.1.5)
+/* Track Analyzer — AI Analyzer (v2.1.6)
+ *
+ * On-device coaching: the camera watches the athlete, names what it sees,
+ * and gives one fix at a time from the embedded knowledge base
+ * (js/ai-knowledge.js). No cloud model, no API key, no network calls.
+ *
+ * v2.1.6: the live rig is drawn by the shared smooth rig engine
+ * (js/rig.js) — full pose (all 33 landmarks) PLUS both hands with every
+ * finger joint, interpolated on requestAnimationFrame so it glides
+ * instead of jumping. Gesture counting uses finger JOINTS (tip vs middle
+ * joint), and the gesture status line says what the camera actually
+ * sees (no hand / face not visible / I see your hand).
  *
  * On-device coaching: the camera watches the athlete, names what it sees,
  * and gives one fix at a time from the embedded knowledge base
@@ -65,7 +76,8 @@ var AI = {
   deep: { frames1: [], frames2: [], worst: null },
   deepReport: null, lastSession: null,
   frameAnnotations: {}, frameMarksHidden: {},
-  gesture: { hands: null, handsFailed: false, lastCount: -1, holdKind: '', holdCount: 0, timer: null }
+  gesture: { hands: null, handsFailed: false, lastCount: -1, holdKind: '', holdCount: 0, timer: null,
+    lastHands: null, handSeen: false, faceSeen: false }
 };
 var ACTIVITY_LABEL = {
   none: 'No athlete in frame', rest: 'Resting', set: 'Set position',
@@ -756,38 +768,68 @@ function maybeCaptureWorst(score, activity, lm){
   AI.deep.worst = { score: score, activity: activity, url: url, lm: lm || null };
 }
 
-/* Live skeleton rig: drawn on top of the camera preview every pose
- * result. Main angle only — never 3D, never depth. Problem joint
- * red/yellow, good joints green. */
+/* Full pose dict: all 33 landmarks the camera can see (not just the
+ * 17 the coaching math uses) — the live rig draws every body part. */
+function fullPoseDict(lm){
+  var out = {};
+  if(!lm) return out;
+  for(var i = 0; i < 33; i++){
+    var pt = lm[i];
+    if(pt) out[i] = { x: pt.x, y: pt.y, v: pt.visibility === undefined ? 1 : pt.visibility };
+  }
+  return out;
+}
+
+/* Live skeleton rig: the smooth rig engine (js/rig.js) interpolates and
+ * draws on requestAnimationFrame — this function only hands it the
+ * latest landmarks, so drawing never waits on inference. Drawn on top
+ * of the camera preview. Problem joint red/yellow, good joints green,
+ * hands in cyan/amber with every finger joint. */
 function drawLiveSkeleton(rawLm){
   var canvas = $('aiSkelOverlay');
+  if(!canvas) return;
+  if(window.TrackRig){
+    window.TrackRig.setTarget(canvas, rawLm ? fullPoseDict(rawLm) : null,
+      AI.gesture.lastHands || null, skelFaultJoints(AI.lastTripped || ''));
+    return;
+  }
+  // Fallback (rig engine missing): direct draw as before.
   var v = $('aiVideo');
-  if(!canvas || !v) return;
+  if(!v) return;
   var w = v.clientWidth || 320, h = v.clientHeight || 240;
   if(canvas.width !== w) canvas.width = w;
   if(canvas.height !== h) canvas.height = h;
   var ctx = canvas.getContext('2d');
   if(!ctx) return;
   if(!rawLm){ ctx.clearRect(0, 0, canvas.width, canvas.height); return; }
-  var dict = simplifyLm(rawLm);
-  drawSkeleton(canvas, dict, skelFaultJoints(AI.lastTripped || ''));
+  drawSkeleton(canvas, simplifyLm(rawLm), skelFaultJoints(AI.lastTripped || ''));
 }
 /* Same rig on the Camera 2 preview (two-camera mode): the skeleton is
  * drawn ON the person in the Camera 2 video. */
 function drawLiveSkeleton2(rawLm){
   var canvas = $('aiSkelOverlay2');
+  if(!canvas) return;
+  if(window.TrackRig){
+    window.TrackRig.setTarget(canvas, rawLm ? fullPoseDict(rawLm) : null,
+      null, skelFaultJoints(AI.lastTripped || ''));
+    return;
+  }
   var v = $('aiVideo2');
-  if(!canvas || !v) return;
+  if(!v) return;
   var w = v.clientWidth || 320, h = v.clientHeight || 240;
   if(canvas.width !== w) canvas.width = w;
   if(canvas.height !== h) canvas.height = h;
   var ctx = canvas.getContext('2d');
   if(!ctx) return;
   if(!rawLm){ ctx.clearRect(0, 0, canvas.width, canvas.height); return; }
-  var dict = simplifyLm(rawLm);
-  drawSkeleton(canvas, dict, skelFaultJoints(AI.lastTripped || ''));
+  drawSkeleton(canvas, simplifyLm(rawLm), skelFaultJoints(AI.lastTripped || ''));
 }
 function clearLiveSkeleton(){
+  if(window.TrackRig){
+    window.TrackRig.clearTarget($('aiSkelOverlay'));
+    window.TrackRig.clearTarget($('aiSkelOverlay2'));
+    return;
+  }
   ['aiSkelOverlay', 'aiSkelOverlay2'].forEach(function(id){
     var canvas = $(id);
     if(!canvas) return;
@@ -1240,8 +1282,10 @@ function isFrontal(lm){
   return Math.abs(nose.x - mid) < 0.35 * eyeDist;
 }
 function countFingers(lm){
-  // Count extended fingers on one hand: a finger counts when its tip sits
-  // clearly farther from the wrist than its middle joint. No hand => -1.
+  // One rule everywhere: finger joints (tip vs middle joint), via the
+  // shared rig engine when it is loaded.
+  if(window.TrackRig && window.TrackRig.countFingers) return window.TrackRig.countFingers(lm);
+  // Fallback (rig engine missing): same joint rule, counted here.
   if(!lm || lm.length < 21 || !lm[0]) return -1;
   function d(a, b){ return Math.hypot(a.x - b.x, a.y - b.y); }
   var wrist = lm[0], count = 0;
@@ -1250,6 +1294,15 @@ function countFingers(lm){
     if(lm[pair[0]] && lm[pair[1]] && d(wrist, lm[pair[0]]) > d(wrist, lm[pair[1]]) * 1.12) count++;
   });
   return count;
+}
+/* Best hand for a gesture: prefer a hand showing 1 or 2 fingers (the
+ * two hand signs); otherwise the first hand's count; none => -1. */
+function bestHandCount(hands){
+  if(window.TrackRig && window.TrackRig.bestHandCount) return window.TrackRig.bestHandCount(hands);
+  if(!hands || !hands.length) return -1;
+  var counts = hands.map(function(h){ return countFingers(h); });
+  for(var i = 0; i < counts.length; i++) if(counts[i] === 1 || counts[i] === 2) return counts[i];
+  return counts[0];
 }
 function setGestureStatus(kind){
   var el = $('gestureStatus');
@@ -1263,7 +1316,11 @@ function setGestureStatus(kind){
     noperm: 'Camera didn’t start — check the message below.',
     camerr: 'Camera didn’t start — check the message below.',
     unsupported: 'Camera not supported on this device.',
-    off: 'Camera off — tap “Camera: on” to turn it back on.'
+    off: 'Camera off — tap “Camera: on” to turn it back on.',
+    noHand: 'No hand seen — hold up a hand where the camera can see it.',
+    noFace: 'Face not visible — look at the camera.',
+    handSeen: 'I see your hand — hold 1 finger to start recording.',
+    handSeenStop: 'I see your hand — hold 2 fingers to stop recording.'
   };
   el.textContent = msgs[kind] || msgs.off;
 }
@@ -1282,10 +1339,16 @@ function loadHands(){
     try{
       if(!window.Hands){ fail(); return; }
       var h = new Hands({ locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/hands/' + f; } });
-      h.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+      // Both hands: the rig draws every finger joint on both hands, and
+      // gesture counting picks the hand showing 1 or 2 fingers.
+      h.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
       h.onResults(function(res){
-        var lm = res && res.multiHandLandmarks && res.multiHandLandmarks[0];
-        g.lastCount = lm ? countFingers(lm) : -1;
+        var hands = (res && res.multiHandLandmarks) || [];
+        g.lastHands = hands;
+        g.handSeen = hands.length > 0;
+        g.lastCount = bestHandCount(hands);
+        // Feed the live rig so the hands draw with the pose, same frame.
+        if(window.TrackRig) window.TrackRig.setHands($('aiSkelOverlay'), hands);
       });
       g.hands = h;
     }catch(e){ fail(); }
@@ -1322,8 +1385,15 @@ function gestureTick(){
   } else if(want === 'stop'){
     setGestureStatus('holdStop');
     if(g.holdCount >= 10){ g.holdKind = ''; g.holdCount = 0; setHoldBar(0); stopAndAnalyze(); }
-  } else if(AI.mode === 'watching') setGestureStatus('watching');
-  else if(AI.mode === 'coaching') setGestureStatus('coaching');
+  } else if(AI.mode === 'watching'){
+    // No silent failure: the status line says what the camera sees.
+    if(!g.faceSeen) setGestureStatus('noFace');
+    else if(!g.handSeen) setGestureStatus('noHand');
+    else setGestureStatus('handSeen');
+  } else if(AI.mode === 'coaching'){
+    if(g.handSeen) setGestureStatus('handSeenStop');
+    else setGestureStatus('coaching');
+  }
 }
 function startGestureLoop(){
   clearInterval(AI.gesture.timer);
@@ -1356,6 +1426,7 @@ function startWatching(){
     try{
       AI.poseA = makePose(function(res){
         var lm = res && res.poseLandmarks;
+        AI.gesture.faceSeen = !!(lm && lm[0] && (lm[0].visibility === undefined || lm[0].visibility > 0.5));
         if(lm){ AI.lastLandmarks1 = simplifyLm(lm); AI.lastFrontal = isFrontal(lm); AI.lastRawLm = lm; }
         drawLiveSkeleton(lm || null);
       });
@@ -1723,6 +1794,7 @@ function startAI(reuseStream, opts){
     if(opts.announce) announce('Recording has started.');
     AI.poseA = makePose(function(res){
       var lm = res && res.poseLandmarks;
+      AI.gesture.faceSeen = !!(lm && lm[0] && (lm[0].visibility === undefined || lm[0].visibility > 0.5));
       if(lm){ AI.lastLandmarks1 = simplifyLm(lm); AI.lastFrontal = isFrontal(lm); AI.lastRawLm = lm; }
       drawLiveSkeleton(lm || null);
       if(AI.running) onFrame(lm ? extractAI(lm) : { missing: ['full body'] }, 1);
@@ -1861,6 +1933,13 @@ function aiTeardown(){
 
 function initAI(){
   restoreBadges();
+  // Live rigs draw through the shared smooth rig engine (interpolated
+  // drawing on requestAnimationFrame). If the engine is missing, the
+  // draw functions fall back to direct drawing.
+  if(window.TrackRig){
+    window.TrackRig.registerDraw($('aiSkelOverlay'), $('aiVideo'));
+    window.TrackRig.registerDraw($('aiSkelOverlay2'), $('aiVideo2'));
+  }
   var toastClose = $('aiNotifyClose');
   if(toastClose) toastClose.addEventListener('click', function(){ var t = $('aiNotifyToast'); if(t) t.hidden = true; });
   var playBtn = $('runwayPlay');
@@ -1949,7 +2028,8 @@ window.TrackFrameMarks = { build: buildFrameMarks, draw: drawFrameMarks, at: fra
   figureHtml: frameMarksFigureHtml, drawAll: drawAllFrameMarks,
   getAnnotations: function(){ return AI.frameAnnotations; } };
 window.TrackAIAnnounce = { announce: announce, speakNow: announce };
-window.TrackAIGesture = { countFingers: countFingers, isFrontal: isFrontal };
+window.TrackAIGesture = { countFingers: countFingers, isFrontal: isFrontal,
+  tick: gestureTick, setStatus: setGestureStatus, bestHandCount: bestHandCount };
 window.TrackAIDeep = { segmentReps: segmentReps, buildDeepReport: buildDeepReport, pickVideos: pickVideos, absorbFrame: absorbFrame };
 window.TrackAISkeleton = { drawSkeleton: drawSkeleton, skelFaultJoints: skelFaultJoints, drawLiveSkeleton: drawLiveSkeleton, drawLiveSkeleton2: drawLiveSkeleton2 };
 
