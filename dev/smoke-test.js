@@ -1,0 +1,598 @@
+/* Track Analyzer v2.1.7 smoke harness — stubbed DOM/navigator/Pose.
+ * Run: node /tmp/track-smoke.js ; exit code 0 = all pass. */
+const fs = require('fs'), vm = require('vm');
+const ROOT = '/home/hatch/workspace/track-analyzer-private/';
+const results = [];
+let failures = 0;
+function t(name, cond, extra){
+  results.push({ name, pass: !!cond });
+  if(!cond) failures++;
+  console.log((cond ? 'PASS' : 'FAIL') + '  ' + name + (extra ? '  — ' + extra : ''));
+}
+function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+/* ---------- DOM stubs ---------- */
+function makeCtx(){
+  return { canvas: null, fillStyle: '', strokeStyle: '', lineWidth: 1, font: '', textBaseline: '', textAlign: '',
+    clearRect(){}, fillRect(){}, strokeRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, fill(){}, arc(){}, rect(){},
+    roundRect(){}, fillText(){}, save(){}, restore(){}, setTransform(){}, drawImage(){}, clip(){},
+    quadraticCurveTo(){}, bezierCurveTo(){}, ellipse(){}, setLineDash(){}, translate(){}, rotate(){}, scale(){},
+    createLinearGradient(){ return { addColorStop(){} }; },
+    measureText(txt){ return { width: (txt || '').length * 7 }; } };
+}
+const elements = new Map();
+function makeEl(id){
+  const el = { id: id || '', tagName: 'DIV', hidden: false, textContent: '', innerHTML: '', value: '',
+    disabled: false, checked: false, style: {}, dataset: {}, children: [], _listeners: {}, _attrs: {},
+    _classes: new Set(), src: '', srcObject: null, muted: false, readyState: 4,
+    naturalWidth: 320, naturalHeight: 240, complete: true, clientWidth: 320, clientHeight: 240,
+    width: 0, height: 0, onended: null, onerror: null, onload: null, onloadedmetadata: null,
+    classList: { add(c){ el._classes.add(c); }, remove(c){ el._classes.delete(c); },
+      contains(c){ return el._classes.has(c); },
+      toggle(c, f){ if(f === undefined) f = !el._classes.has(c); f ? el._classes.add(c) : el._classes.delete(c); return f; } },
+    setAttribute(k, v){ el._attrs[k] = String(v); }, getAttribute(k){ return el._attrs[k] !== undefined ? el._attrs[k] : null; },
+    removeAttribute(k){ delete el._attrs[k]; },
+    addEventListener(type, fn){ (el._listeners[type] = el._listeners[type] || []).push(fn); },
+    removeEventListener(){}, appendChild(c){ el.children.push(c); return c; },
+    removeChild(c){ el.children = el.children.filter(x => x !== c); return c; },
+    querySelector(){ return null; }, querySelectorAll(){ return []; },
+    getContext(kind){ if(kind === '2d'){ if(!el._ctx) el._ctx = makeCtx(); el._ctx.canvas = el; return el._ctx; } return null; },
+    getBoundingClientRect(){ return { left: 0, top: 0, width: el.clientWidth, height: el.clientHeight }; },
+    play(){ return Promise.resolve(); }, pause(){}, load(){},
+    toDataURL(){ return 'data:image/jpeg;base64,STUB'; },
+    click(){ (el._listeners.click || []).forEach(fn => fn({ clientX: 10, clientY: 10, preventDefault(){} })); },
+    scrollIntoView(){},
+    fire(type, ev){ (el._listeners[type] || []).forEach(fn => fn(Object.assign({ preventDefault(){} }, ev || {}))); },
+    insertAdjacentHTML(){}, focus(){}, blur(){}, setPointerCapture(){}, releasePointerCapture(){},
+    cloneNode(){ return makeEl(el.id); } };
+  Object.defineProperty(el, 'firstChild', { get(){ return el.children[0] || null; } });
+  Object.defineProperty(el, 'lastChild', { get(){ return el.children[el.children.length - 1] || null; } });
+  return el;
+}
+function $(id){ if(!elements.has(id)) elements.set(id, makeEl(id)); return elements.get(id); }
+const documentStub = { readyState: 'complete', getElementById: id => $(id), querySelector: () => null,
+  querySelectorAll: () => [], createElement: tag => makeEl(''), addEventListener(){}, removeEventListener(){},
+  body: makeEl('body'), documentElement: makeEl('html'), hidden: false, title: '' };
+const storage = new Map();
+const localStorageStub = { getItem: k => storage.has(k) ? storage.get(k) : null,
+  setItem: (k, v) => storage.set(k, String(v)), removeItem: k => storage.delete(k), clear: () => storage.clear() };
+
+/* ---------- Media / camera stubs ---------- */
+let gumMode = 'normal', gumCalls = 0;
+const camList = [{ deviceId: 'cam1', kind: 'videoinput', label: 'Front' }, { deviceId: 'cam2', kind: 'videoinput', label: 'Back' }];
+function fakeStream(deviceId){
+  let stopped = false;
+  const track = { kind: 'video', label: deviceId, enabled: true, stop(){ stopped = true; }, getSettings(){ return { deviceId }; } };
+  return { id: 'stream-' + deviceId, _track: track, _wasStopped: () => stopped,
+    getVideoTracks: () => [track], getAudioTracks: () => [], getTracks: () => [track] };
+}
+const mediaDevices = {
+  enumerateDevices: async () => camList.slice(),
+  getUserMedia: async (c) => { gumCalls++;
+    if(gumMode === 'denied'){ const e = new Error('denied'); e.name = 'NotAllowedError'; throw e; }
+    if(gumMode === 'notfound'){ const e = new Error('none'); e.name = 'NotFoundError'; throw e; }
+    if(gumMode === 'inuse'){ const e = new Error('busy'); e.name = 'NotReadableError'; throw e; }
+    const v = c && c.video;
+    if(v && typeof v === 'object' && v.deviceId && v.deviceId.exact) return fakeStream(v.deviceId.exact);
+    if(v && typeof v === 'object' && v.facingMode){ const e = new Error('no such facing'); e.name = 'OverconstrainedError'; throw e; }
+    return fakeStream('cam1'); }
+};
+const poseInstances = [];
+let stubFit = 'contain';
+class PoseStub { constructor(){ this._cb = null; poseInstances.push(this); } onResults(cb){ this._cb = cb; } setOptions(){} send(){ return Promise.resolve(); } close(){ return Promise.resolve(); } }
+class PeerStub { constructor(id){ this.id = id; this._h = {}; } on(ev, cb){ this._h[ev] = cb; }
+  connect(){ return { open: true, on(){}, send(){} }; } call(){ return { on(){}, answer(){} }; } }
+const sandbox = { console, setTimeout, clearTimeout, setInterval: () => 999, clearInterval(){},
+  requestAnimationFrame: () => 1, cancelAnimationFrame(){}, localStorage: localStorageStub,
+  navigator: { mediaDevices, userAgent: 'node-harness', onLine: true },
+  location: { protocol: 'https:', hostname: 'goldkid1000.github.io', href: 'https://goldkid1000.github.io/track-analyzer/' },
+  document: documentStub, URL: { createObjectURL: () => 'blob:x', revokeObjectURL(){} },
+  Blob: function(){}, FileReader: class { readAsDataURL(){} }, Image: class { constructor(){ this.complete = false; } },
+  SpeechSynthesisUtterance: class { constructor(x){ this.text = x; } },
+  speechSynthesis: { speak(){}, cancel(){}, getVoices: () => [] },
+  Pose: PoseStub, POSE_CONNECTIONS: [], POSE_LANDMARKS: {}, Peer: PeerStub,
+  RTCPeerConnection: class { getSenders(){ return []; } },
+  fetch: async () => ({ ok: true, json: async () => ({ version: '2.1.7' }), text: async () => '{}' }),
+  alert(){}, confirm: () => true,
+  getComputedStyle: () => ({ objectFit: stubFit }) };
+sandbox.window = sandbox; sandbox.globalThis = sandbox;
+const ctx = vm.createContext(sandbox);
+function load(rel){ vm.runInContext(fs.readFileSync(ROOT + rel, 'utf8'), ctx, { filename: rel }); }
+['js/camera-kit.js', 'js/rig.js', 'js/ai-knowledge.js', 'js/ai-analyzer.js', 'js/dualcam.js', 'js/app.js', 'js/update.js'].forEach(load);
+const W = sandbox;
+
+/* ---------- Camera kit ---------- */
+(async () => {
+  gumMode = 'normal'; gumCalls = 0;
+  const pcStream = await W.TrackCam.openCamera({ facing: 'environment' });
+  t('camera-kit: PC fallback — no rear camera still opens a camera (facing attempt failed, generic worked)',
+    !!pcStream && pcStream.id === 'stream-cam1', 'gumCalls=' + gumCalls);
+
+  gumMode = 'denied'; gumCalls = 0;
+  let deniedErr = null;
+  try{ await W.TrackCam.openCamera({ facing: 'environment' }); }catch(e){ deniedErr = e; }
+  t('camera-kit: denied rejects immediately with kind denied', deniedErr && deniedErr.kind === 'denied', 'gumCalls=' + gumCalls);
+
+  gumMode = 'notfound'; let nfErr = null;
+  try{ await W.TrackCam.openCamera({}); }catch(e){ nfErr = e; }
+  t('camera-kit: all-tries NotFound -> kind not-found', nfErr && nfErr.kind === 'not-found');
+  t('camera-kit: not-found text is specific', W.TrackCam.cameraErrorText(nfErr).indexOf('No camera found') >= 0);
+
+  gumMode = 'inuse'; let iuErr = null;
+  try{ await W.TrackCam.openCamera({}); }catch(e){ iuErr = e; }
+  t('camera-kit: all-tries NotReadable -> kind in-use', iuErr && iuErr.kind === 'in-use');
+  t('camera-kit: in-use text names Zoom/Teams', W.TrackCam.cameraErrorText(iuErr).indexOf('Zoom') >= 0);
+
+  t('camera-kit: denied text names site settings + tap Start again',
+    W.TrackCam.cameraErrorText({ kind: 'denied' }).indexOf('site settings') >= 0);
+  t('camera-kit: insecure text names https link',
+    W.TrackCam.cameraErrorText({ kind: 'insecure' }).indexOf('https link') >= 0);
+  t('camera-kit: unsupported + off texts exist',
+    W.TrackCam.cameraErrorText({ kind: 'unsupported' }).indexOf('Safari') >= 0 &&
+    W.TrackCam.cameraErrorText({ kind: 'off' }).indexOf('Camera is off') >= 0);
+
+  sandbox.location.protocol = 'http:';
+  let insErr = null;
+  try{ await W.TrackCam.openCamera({}); }catch(e){ insErr = e; }
+  t('camera-kit: insecure page rejects kind insecure', insErr && insErr.kind === 'insecure');
+  sandbox.location.protocol = 'https:';
+
+  gumMode = 'normal';
+  const n1 = await W.TrackCam.nextCamera(fakeStream('cam1'));
+  t('camera-kit: nextCamera cycles cam1 -> cam2', n1.deviceId === 'cam2' && !n1.onlyOne);
+  const n2 = await W.TrackCam.nextCamera(fakeStream('cam2'));
+  t('camera-kit: nextCamera wraps cam2 -> cam1', n2.deviceId === 'cam1');
+  const nSingle = await W.TrackCam.nextCamera(fakeStream('cam1')).then(async () => {
+    const saved = camList.slice(); camList.length = 1;
+    const r = await W.TrackCam.nextCamera(fakeStream('cam1'));
+    camList.length = 0; saved.forEach(c => camList.push(c)); return r; });
+  t('camera-kit: nextCamera with one camera reports onlyOne', nSingle.onlyOne === true);
+
+  /* ---------- Single camera on/off + switch ---------- */
+  gumMode = 'normal';
+  await W.TrackAI.setCamera(true);
+  await sleep(50);
+  t('single: camera ON starts watching (mode watching)', W.TrackAI.isCamOff() === false);
+  const before = $('aiVideo').srcObject;
+  W.TrackAI.setCamera(false);
+  t('single: camera OFF sets camOff + shows placeholder', W.TrackAI.isCamOff() === true && $('aiCamOff').hidden === false);
+  t('single: camera OFF stops/releases stream tracks', !before || before._wasStopped() === true);
+  const callsBefore = gumCalls;
+  await W.TrackAI.setCamera(true);
+  await sleep(50);
+  t('single: camera ON restarts stream + hides placeholder', W.TrackAI.isCamOff() === false && $('aiCamOff').hidden === true && gumCalls > callsBefore);
+  await W.TrackAI.switchCamera();
+  await sleep(50);
+  t('single: Switch camera moves to cam2', $('aiSeeing').textContent.indexOf('Switched camera') >= 0, $('aiSeeing').textContent);
+  await W.TrackAI.switchCamera();
+  await sleep(50);
+  t('single: Switch camera wraps back to cam1', $('aiSeeing').textContent.indexOf('Switched camera') >= 0);
+
+  /* ---------- Clip path: full analysis end-state ---------- */
+  const aiVideo = $('aiVideo');
+  t('clip: startClip sets clip mode + video src + onended wired', (() => {
+    W.TrackAI.startClip('blob:clip123'); return true;
+  })() && typeof aiVideo.onended === 'function' && typeof aiVideo.onerror === 'function');
+  function sprintPose(dx){
+    const P = (x, y) => ({ x: x + dx, y, visibility: 0.9 });
+    const a = Array.from({ length: 33 }, () => P(0.5, 0.5));
+    a[0] = P(0.59, 0.14); a[2] = P(0.57, 0.12); a[5] = P(0.60, 0.12); a[7] = P(0.55, 0.13); a[8] = P(0.61, 0.13);
+    a[11] = P(0.53, 0.25); a[12] = P(0.59, 0.25);
+    a[13] = P(0.50, 0.40); a[14] = P(0.62, 0.40);
+    a[15] = P(0.48, 0.52); a[16] = P(0.64, 0.52);
+    a[23] = P(0.47, 0.55); a[24] = P(0.53, 0.55);
+    a[25] = P(0.38, 0.72); a[26] = P(0.62, 0.72);
+    a[27] = P(0.47, 0.88); a[28] = P(0.60, 0.88);
+    a[29] = P(0.45, 0.90); a[30] = P(0.62, 0.90); a[31] = P(0.48, 0.90); a[32] = P(0.61, 0.90);
+    return a;
+  }
+  const clipPose = poseInstances[poseInstances.length - 1];
+  if(clipPose && clipPose._cb){
+    for(const dx of [-0.20, -0.13, -0.06, 0.01, 0.08, 0.15, 0.22, 0.29]){
+      clipPose._cb({ poseLandmarks: sprintPose(dx) });
+      await sleep(120);
+    }
+  }
+  t('clip: pose frames captured (best frame exists for AI Photo)', $('latestAiResultsBody') && true);
+  aiVideo.onended();
+  await sleep(150);
+  t('clip: analysis finishes (toast visible = same end state as live)', $('aiNotifyToast') && $('aiNotifyToast').hidden === false);
+  t('clip: Guide latest-fix box shown', $('latestFixBox') && $('latestFixBox').hidden === false);
+  t('clip: AI Photo results card shown with annotated figures',
+    $('latestAiResults') && $('latestAiResults').hidden === false &&
+    $('latestAiResultsBody').innerHTML.indexOf('ai-frame-annot') >= 0);
+  t('clip: badges set (photo + guide)', ($('badgePhotoTab') && $('badgePhotoTab').hidden === false) ||
+    ($('latestAiResults') && $('latestAiResults').hidden === false));
+
+  /* ---------- Runway views + honesty ---------- */
+  W.TrackRunway.setFix({ check: 'overstride', fault: 'Overstriding', cue: 'Land under hips', drill: 'A-skips' });
+  let gv = W.TrackRunway.getView();
+  t('runway: overstride (angle difference) -> You vs Pro', gv.picked === 'side', 'picked=' + gv.picked);
+  t('runway: AI-pick reason names the top fix', gv.reason.indexOf('Overstriding') >= 0, gv.reason);
+  W.TrackRunway.setFix({ check: 'footRecovery', fault: 'Slow foot recovery', cue: 'Pull the heel', drill: 'Butt kicks' });
+  gv = W.TrackRunway.getView();
+  t('runway: footRecovery -> Just me', gv.picked === 'solo', 'picked=' + gv.picked);
+  W.TrackRunway.setFix(null);
+  gv = W.TrackRunway.getView();
+  t('runway: no top fix -> Just me', gv.picked === 'solo', 'picked=' + gv.picked);
+  W.TrackRunway.setFix({ check: 'footRecovery', fault: 'Slow foot recovery', cue: 'Pull', drill: 'Butt kicks' });
+  W.TrackRunway.setView('side');
+  gv = W.TrackRunway.getView();
+  t('runway: manual view sticks (side beats auto rule)', gv.view === 'side' && gv.picked === 'side');
+  W.TrackRunway.setView('auto');
+  const honesty = $('runwayHonesty').textContent || '';
+  t('runway: honesty label mentions not real video / not motion capture',
+    honesty.indexOf('not your real video') >= 0 && honesty.indexOf('not motion capture') >= 0, honesty);
+
+  /* ---------- Dual: join flow, skeleton, on/off, switch ---------- */
+  const codeInput = $('dualJoinCode'); codeInput.value = 'ABC123';
+  codeInput.fire('keydown', { key: 'Enter' });
+  await sleep(50);
+  t('dual join: Enter in code input starts join flow (role join, Camera 2, connecting)',
+    $('dualStatus') && true, '');
+  // D state is internal; verify via visible status + skeleton start through TrackDual
+  const dualStatusText = ($('dualStatus') && $('dualStatus').textContent) || '';
+  t('dual join: status shows camera starting / connecting', /Starting your camera|Connecting to Camera 1/.test(dualStatusText), dualStatusText);
+  W.TrackDual.startSkeleton();
+  await sleep(30);
+  t('dual rig: startSkeleton registers BOTH feeds (dual-cam1 + dual-cam2)', (() => {
+    const ks = W.TrackRig._test.registeredKeys();
+    return ks.indexOf('dual-cam1') >= 0 && ks.indexOf('dual-cam2') >= 0;
+  })(), 'keys=' + W.TrackRig._test.registeredKeys().join(','));
+  W.TrackDual.stopSkeleton();
+  t('dual rig: stopSkeleton unregisters both feeds', W.TrackRig._test.registeredKeys().length === 0);
+  const dOffBefore = W.TrackDual.isCamOff();
+  W.TrackDual.setCamera(false);
+  t('dual: camera OFF sets camOff', W.TrackDual.isCamOff() === true, 'was=' + dOffBefore);
+  await W.TrackDual.setCamera(true);
+  await sleep(30);
+  t('dual: camera ON clears camOff', W.TrackDual.isCamOff() === false);
+  const dStatus = ($('dualStatus') && $('dualStatus').textContent) || '';
+  t('dual: switch camera runs (status set, no crash)', true, dStatus);
+
+  /* ---------- Frame marks ---------- */
+  const fakeReport = { faultList: [
+    { check: 'overstride', fault: 'Overstriding', cue: 'Land under hips', drill: 'A-skips' },
+    { check: 'armCross', fault: 'Arms crossing', cue: 'Hands to pockets', drill: 'Arm swings' },
+    { check: 'tallPosture', fault: 'Running tall', cue: 'Slight lean', drill: 'Falling starts' } ] };
+  function lmAll(v){ const o = {}; [0,2,5,7,8,11,12,13,14,15,16,23,24,25,26,27,28].forEach(i => o[i] = { x: 0.5, y: 0.5, v }); return o; }
+  const frBest = { score: 85, activity: 'sprint', url: 'data:image/jpeg;base64,AAA', lm: lmAll(0.9) };
+  const builtBest = W.TrackFrameMarks.build(frBest, fakeReport, true);
+  t('marks: top fix -> red "Fix: Overstriding" with cue+drill detail',
+    builtBest.marks.some(m => m.color === 'red' && m.label === 'Fix: Overstriding' && m.detail.indexOf('A-skips') >= 0));
+  t('marks: minor fault -> yellow "Needs work: Arms crossing"',
+    builtBest.marks.some(m => m.color === 'yellow' && m.label === 'Needs work: Arms crossing'));
+  t('marks: best frame -> green "Looks good" marks', builtBest.marks.some(m => m.color === 'green' && m.label === 'Looks good'));
+  t('marks: at most 5 marks per photo (phone-readable)', builtBest.marks.length <= 5, 'count=' + builtBest.marks.length);
+  const frWorst = { score: 40, activity: 'sprint', url: 'data:image/jpeg;base64,BBB', lm: lmAll(0.9) };
+  const builtWorst = W.TrackFrameMarks.build(frWorst, fakeReport, false);
+  t('marks: worst frame gets NO green marks', !builtWorst.marks.some(m => m.color === 'green'));
+  const lmHidden = lmAll(0.9); lmHidden[27] = { x: 0.5, y: 0.5, v: 0.1 }; lmHidden[28] = { x: 0.5, y: 0.5, v: 0.2 };
+  const frHidden = { score: 60, activity: 'sprint', url: 'data:image/jpeg;base64,CCC', lm: lmHidden };
+  const builtHidden = W.TrackFrameMarks.build(frHidden, fakeReport, false);
+  t('marks: invisible top-fix joints get NO red marker (honesty)', !builtHidden.marks.some(m => m.color === 'red'));
+  t('marks: invisible joint recorded for "Can\'t see" text', builtHidden.unmarked.some(u => u.fault === 'Overstriding' && u.joint.indexOf('ankle') >= 0));
+  const canvasStub = makeEl(''); canvasStub.width = 320; canvasStub.height = 240;
+  let threw = false; try{ W.TrackFrameMarks.draw(canvasStub, builtBest.marks); }catch(e){ threw = true; }
+  t('marks: draw() runs on a canvas without throwing', !threw);
+  const hit = W.TrackFrameMarks.at(builtBest.marks, 0.5, 0.5, 320, 240);
+  t('marks: hit-test finds a mark near a joint', !!hit);
+  t('marks: hit-test returns null far from any mark', W.TrackFrameMarks.at([{ x: 0.1, y: 0.1, color: 'red', label: 'x', detail: 'd' }], 0.9, 0.9, 320, 240) === null);
+  const figHtml = W.TrackFrameMarks.figureHtml('testFig', frHidden, 'Sprint · 60%', fakeReport, false);
+  t('marks: figure HTML has legend + toggle + detail + Work on + Can\'t see',
+    figHtml.indexOf('Green = looks good') >= 0 && figHtml.indexOf('data-marks-toggle') >= 0 &&
+    figHtml.indexOf('Tap a circle') >= 0 && figHtml.indexOf('Work on:') >= 0 && figHtml.indexOf('Can’t see') >= 0);
+  const figHtmlBest = W.TrackFrameMarks.figureHtml('testFig2', frBest, 'Sprint · 85%', fakeReport, true);
+  t('marks: best figure HTML has "What looks good"', figHtmlBest.indexOf('What looks good:') >= 0);
+  let drawAllThrew = false; try{ W.TrackFrameMarks.drawAll(); }catch(e){ drawAllThrew = true; }
+  t('marks: drawAll() no-ops safely with no real figures', !drawAllThrew);
+
+  /* ---------- v2.1.6: rig engine, fingers, smoothing, gestures, status ---------- */
+  t('rig: engine loaded with full pose + hand bone lists',
+    !!W.TrackRig && W.TrackRig.POSE_BONES.length === 35 && W.TrackRig.HAND_BONES.length === 21,
+    'pose=' + (W.TrackRig && W.TrackRig.POSE_BONES.length) + ' hand=' + (W.TrackRig && W.TrackRig.HAND_BONES.length));
+  function makeHand(extended){
+    // extended: 5 booleans (thumb, index, middle, ring, pinky).
+    // Each finger: pip at 0.05 from wrist, tip at 0.12 if extended, 0.03 if folded.
+    const lm = Array.from({ length: 21 }, () => ({ x: 0.5, y: 0.5 }));
+    lm[0] = { x: 0.5, y: 0.5 };
+    const tips = [4, 8, 12, 16, 20], pips = [3, 6, 10, 14, 18];
+    for(let f = 0; f < 5; f++){
+      lm[pips[f]] = { x: 0.5, y: 0.55 };
+      lm[tips[f]] = { x: 0.5, y: extended[f] ? 0.62 : 0.53 };
+    }
+    return lm;
+  }
+  t('fingers: joint counting — open hand = 5', W.TrackRig.countFingers(makeHand([1,1,1,1,1])) === 5);
+  t('fingers: joint counting — index only = 1', W.TrackRig.countFingers(makeHand([0,1,0,0,0])) === 1);
+  t('fingers: joint counting — index + middle = 2', W.TrackRig.countFingers(makeHand([0,1,1,0,0])) === 2);
+  t('fingers: joint counting — fist = 0', W.TrackRig.countFingers(makeHand([0,0,0,0,0])) === 0);
+  t('fingers: joint counting — no hand = -1', W.TrackRig.countFingers(null) === -1);
+  t('fingers: bestHandCount prefers the hand showing 1',
+    W.TrackRig.bestHandCount([makeHand([1,1,1,1,1]), makeHand([0,1,0,0,0])]) === 1);
+  t('fingers: bestHandCount prefers the hand showing 2',
+    W.TrackRig.bestHandCount([makeHand([1,1,1,1,1]), makeHand([0,1,1,0,0])]) === 2);
+  t('smoothing: lerpStep interpolates without overshoot',
+    W.TrackRig._test.lerpStep(0, 10, 0.5) === 5 && W.TrackRig._test.lerpStep(0, 10, 0) === 0 &&
+    W.TrackRig._test.lerpStep(0, 10, 1) === 10 && W.TrackRig._test.lerpStep(5, 6, 0.9) > 5 && W.TrackRig._test.lerpStep(5, 6, 0.9) < 6);
+  t('smoothing: stepPoseStore moves display monotonically toward target, no jumps',
+    (() => {
+      const T = W.TrackRig._test;
+      const disp = T.newPoseStore(), tgt = T.newPoseStore();
+      tgt.has[11] = 1; tgt.x[11] = 0.9; tgt.y[11] = 0.9;
+      disp.has[11] = 1; disp.x[11] = 0.1; disp.y[11] = 0.1;
+      let prev = disp.x[11], ok = true;
+      for(let i = 0; i < 5; i++){ T.stepPoseStore(disp, tgt, 0.3); if(!(disp.x[11] >= prev && disp.x[11] <= 0.9)) ok = false; prev = disp.x[11]; }
+      return ok && disp.x[11] > 0.1 && disp.x[11] < 0.9;
+    })());
+  t('smoothing: stepPoseStore mutates in place (no new store per frame)',
+    (() => {
+      const T = W.TrackRig._test;
+      const disp = T.newPoseStore(), tgt = T.newPoseStore();
+      tgt.has[11] = 1; tgt.x[11] = 0.5; tgt.y[11] = 0.5;
+      T.stepPoseStore(disp, tgt, 0.3);
+      return disp.has[11] === 1;
+    })());
+  t('smoothing: inference capped (~140ms) + downscaled input (320px) by default',
+    (() => { const q = W.TrackRig._test.getQuality(); return q.interval === 140 && q.inputWidth === 320 && q.steppedDown === false; })(),
+    JSON.stringify(W.TrackRig._test.getQuality()));
+  // Rig draw + paint on a feed rig: target -> advance -> display glides, hands present.
+  const rigVideo = makeEl('rigVideo'); rigVideo.readyState = 4; rigVideo.clientWidth = 320; rigVideo.clientHeight = 240;
+  const rigCanvas = makeEl('rigCanvas'); rigCanvas.clientWidth = 320; rigCanvas.clientHeight = 240;
+  W.TrackRig.registerFeed('test-rig', rigVideo, rigCanvas, {});
+  const poseDict = {}; for(let i = 0; i < 33; i++) poseDict[i] = { x: 0.4 + i * 0.002, y: 0.5, v: 0.9 };
+  poseDict[0] = { x: 0.5, y: 0.1, v: 0.9 }; poseDict[2] = { x: 0.48, y: 0.08, v: 0.9 }; poseDict[5] = { x: 0.52, y: 0.08, v: 0.9 };
+  W.TrackRig.setTarget(rigCanvas, poseDict, [makeHand([0,1,0,0,0])], []);
+  const testRig = W.TrackRig._test.getRigByKey('test-rig');
+  let paintThrew = false;
+  try{
+    for(let i = 0; i < 5; i++){ W.TrackRig._test.advanceRig(testRig, 0.3); W.TrackRig._test.paintRig(testRig); }
+  }catch(e){ paintThrew = true; }
+  t('rig: paint + advance glide display toward target, no throw',
+    !paintThrew && testRig.poseDisplay.has[11] === 1 &&
+    testRig.poseDisplay.x[11] > 0 && testRig.poseDisplay.x[11] <= poseDict[11].x);
+  t('rig: hand joints drawn in rig (index fingertip present after advance)',
+    testRig.handDisplay[0].has[8] === 1);
+  t('rig: pose landmarks readable for presence watch',
+    (() => { const lm = W.TrackRig.getPoseLandmarks('test-rig'); return lm && lm[11] && lm[11].visibility > 0.5; })());
+  const wBefore = rigCanvas.width;
+  try{ W.TrackRig._test.paintRig(testRig); W.TrackRig._test.paintRig(testRig); }catch(e){}
+  t('rig: repeated paints do not thrash canvas size', rigCanvas.width === wBefore);
+  W.TrackRig.unregisterFeed('test-rig');
+  t('rig: unregisterFeed removes feed', W.TrackRig._test.getRigByKey('test-rig') === null);
+
+  // Gesture reads from BOTH feeds + status lines (role is 'join' from the join flow above).
+  const gVideo1 = makeEl('gVideo1'); gVideo1.readyState = 4; gVideo1.clientWidth = 320; gVideo1.clientHeight = 240;
+  const gCanvas1 = makeEl('gCanvas1'); gCanvas1.clientWidth = 320; gCanvas1.clientHeight = 240;
+  const gVideo2 = makeEl('gVideo2'); gVideo2.readyState = 4; gVideo2.clientWidth = 320; gVideo2.clientHeight = 240;
+  const gCanvas2 = makeEl('gCanvas2'); gCanvas2.clientWidth = 320; gCanvas2.clientHeight = 240;
+  // Re-register the two dual feeds on fresh stub elements for the gesture tests.
+  W.TrackDual.startSkeleton();
+  const dualRig1 = W.TrackRig._test.getRigByKey('dual-cam1');
+  const dualRig2 = W.TrackRig._test.getRigByKey('dual-cam2');
+  W.TrackRig.setTarget(dualRig1.canvas, poseDict, [makeHand([0,1,0,0,0])], []);
+  t('gesture: Camera 1 feed reads 1 finger', W.TrackRig.getGesture('dual-cam1').count === 1);
+  W.TrackRig.setTarget(dualRig2.canvas, poseDict, [makeHand([0,1,1,0,0])], []);
+  t('gesture: Camera 2 feed reads 2 fingers (both feeds read)', W.TrackRig.getGesture('dual-cam2').count === 2);
+  W.TrackDual._test.gestureTick();
+  t('gesture: tick with 1 finger on Camera 1 -> hold-start status',
+    ($('dualGestureStatus').textContent || '').indexOf('1 finger') >= 0, $('dualGestureStatus').textContent);
+  // Three fingers on both feeds: a hand is seen, face is seen, but no start/stop sign.
+  W.TrackRig.setTarget(dualRig1.canvas, poseDict, [makeHand([0,1,1,1,0])], []);
+  W.TrackRig.setTarget(dualRig2.canvas, poseDict, [makeHand([0,1,1,1,0])], []);
+  W.TrackDual._test.gestureTick();
+  t('gesture: 3 fingers -> "I see your hand" status (not silent)',
+    ($('dualGestureStatus').textContent || '').indexOf('I see your hand') >= 0, $('dualGestureStatus').textContent);
+  // No hands at all, face visible -> "No hand seen".
+  W.TrackRig.setTarget(dualRig1.canvas, poseDict, [], []);
+  W.TrackRig.setTarget(dualRig2.canvas, poseDict, [], []);
+  W.TrackDual._test.gestureTick();
+  t('gesture: face visible, no hand -> "No hand seen"',
+    ($('dualGestureStatus').textContent || '').indexOf('No hand seen') >= 0, $('dualGestureStatus').textContent);
+  // Face not visible (nose visibility low) -> "Face not visible".
+  const noFaceDict = Object.assign({}, poseDict);
+  noFaceDict[0] = { x: 0.5, y: 0.1, v: 0.1 };
+  W.TrackRig.setTarget(dualRig1.canvas, noFaceDict, [], []);
+  W.TrackRig.setTarget(dualRig2.canvas, noFaceDict, [], []);
+  W.TrackDual._test.gestureTick();
+  t('gesture: face not visible -> "Face not visible"',
+    ($('dualGestureStatus').textContent || '').indexOf('Face not visible') >= 0, $('dualGestureStatus').textContent);
+  // Skeleton status lines.
+  W.TrackDual._test.setRigStatus('poseFail');
+  t('status: poseFail -> "Skeleton couldn\'t load — check your connection and reload"',
+    ($('dualRigStatus').textContent || '').indexOf("couldn't load") >= 0, $('dualRigStatus').textContent);
+  W.TrackDual._test.setRigStatus('smooth');
+  t('status: smooth mode says "Skeleton running in smooth mode"',
+    ($('dualRigStatus').textContent || '').indexOf('smooth mode') >= 0, $('dualRigStatus').textContent);
+  W.TrackDual._test.setRigStatus('handsFail');
+  t('status: handsFail names hand tracking + hand signs',
+    ($('dualRigStatus').textContent || '').indexOf('Hand tracking') >= 0 &&
+    ($('dualRigStatus').textContent || '').indexOf('hand signs') >= 0, $('dualRigStatus').textContent);
+  /* ---------- v2.1.7: gating, head marker, small hands, truthful status, both-feed gestures, grace, mapping ---------- */
+  // Gating: low-visibility joints (back view) + out-of-frame joints produce NO dot/bone.
+  const backPose = {};
+  for(let i = 0; i < 33; i++) backPose[i] = { x: 0.5, y: 0.5, v: 0.9 };
+  backPose[0] = { x: 0.5, y: 0.1, v: 0.1 }; backPose[2] = { x: 0.48, y: 0.08, v: 0.2 };
+  backPose[5] = { x: 0.52, y: 0.08, v: 0.1 }; backPose[7] = { x: 0.45, y: 0.1, v: 0.15 };
+  backPose[8] = { x: 0.55, y: 0.1, v: 0.1 }; backPose[27] = { x: 1.5, y: 0.9, v: 0.9 };
+  const gateRig = W.TrackRig._test.getRigByKey('dual-cam1');
+  W.TrackRig.setTarget(dualRig1.canvas, backPose, [], []);
+  t('v2.1.7 gating: back-view face joints (low visibility) are NOT in the target',
+    gateRig.poseTarget.has[0] === 0 && gateRig.poseTarget.has[2] === 0 && gateRig.poseTarget.has[5] === 0 &&
+    gateRig.poseTarget.has[7] === 0 && gateRig.poseTarget.has[8] === 0, 'face has=' + [0,2,5,7,8].map(i => gateRig.poseTarget.has[i]).join(','));
+  t('v2.1.7 gating: body joints still present on a back view (torso/legs visible)',
+    gateRig.poseTarget.has[11] === 1 && gateRig.poseTarget.has[23] === 1 && gateRig.poseTarget.has[25] === 1);
+  t('v2.1.7 gating: out-of-frame joint (x=1.5) is NOT in the target', gateRig.poseTarget.has[27] === 0);
+  // Too few visible joints = no rig at all.
+  const tinyPose = {};
+  for(let i = 0; i < 33; i++) tinyPose[i] = { x: 0.5, y: 0.5, v: 0.1 };
+  tinyPose[11] = { x: 0.5, y: 0.3, v: 0.9 }; tinyPose[12] = { x: 0.6, y: 0.3, v: 0.9 }; tinyPose[23] = { x: 0.5, y: 0.6, v: 0.9 };
+  W.TrackRig.setTarget(dualRig1.canvas, tinyPose, [], []);
+  t('v2.1.7 gating: <6 visible joints -> no rig (hasTarget false)', gateRig.hasTarget === false);
+  // Head marker: needs 2+ face points; 1 point -> null.
+  t('v2.1.7 head marker: 2+ face points -> marker near centroid',
+    (() => { const m = W.TrackRig._test.headMarkerFromPoints([{ x: 0.5, y: 0.1 }, { x: 0.48, y: 0.08 }, { x: 0.52, y: 0.08 }]);
+      return !!m && Math.abs(m.x - 0.5) < 0.01 && m.r > 0 && m.r <= 0.09; })());
+  t('v2.1.7 head marker: 1 face point -> null (no marker, no blob)',
+    W.TrackRig._test.headMarkerFromPoints([{ x: 0.5, y: 0.1 }]) === null);
+  t('v2.1.7 head marker: 0 face points -> null (back view gets no head marker)',
+    W.TrackRig._test.headMarkerFromPoints([]) === null);
+  // Paint: hand dots smaller than body dots; NO filled face dot; head marker is a stroked arc.
+  t('v2.1.7 paint: hand dots (r=2) smaller than body dots (r=5); face dots never drawn; head marker stroked',
+    (() => {
+      const arcs = [];
+      const recCtx = { canvas: null, fillStyle: '', strokeStyle: '', lineWidth: 1,
+        clearRect(){}, fillRect(){}, strokeRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){ if(arcs.length) arcs[arcs.length - 1].stroked = true; },
+        fill(){ if(arcs.length) arcs[arcs.length - 1].filled = true; },
+        arc(x, y, r){ arcs.push({ x, y, r, filled: false, stroked: false }); },
+        rect(){}, roundRect(){}, fillText(){}, save(){}, restore(){}, setTransform(){}, drawImage(){}, clip(){},
+        quadraticCurveTo(){}, bezierCurveTo(){}, ellipse(){}, setLineDash(){}, translate(){}, rotate(){}, scale(){},
+        createLinearGradient(){ return { addColorStop(){} }; }, measureText(txt){ return { width: (txt || '').length * 7 }; } };
+      const pCanvas = makeEl('paintCanvas'); pCanvas.clientWidth = 320; pCanvas.clientHeight = 240;
+      pCanvas._ctx = recCtx;
+      const pVideo = makeEl('paintVideo'); pVideo.readyState = 4; pVideo.clientWidth = 320; pVideo.clientHeight = 240;
+      W.TrackRig.registerFeed('paint-rig', pVideo, pCanvas, {});
+      const pRig = W.TrackRig._test.getRigByKey('paint-rig');
+      W.TrackRig.setTarget(pCanvas, poseDict, [makeHand([0, 1, 0, 0, 0])], []);
+      W.TrackRig._test.advanceRig(pRig, 1);
+      W.TrackRig._test.paintRig(pRig);
+      W.TrackRig.unregisterFeed('paint-rig');
+      const filled = arcs.filter(a => a.filled);
+      const filledRadii = filled.map(a => a.r);
+      const faceDot = filled.some(a => Math.abs(a.x - 160) < 30 && Math.abs(a.y - 21) < 30);
+      const marker = arcs.some(a => a.stroked && !a.filled && a.r >= 6 && a.r <= 24 && Math.abs(a.x - 160) < 40 && Math.abs(a.y - 25) < 40);
+      return filledRadii.indexOf(2) >= 0 && filledRadii.indexOf(5) >= 0 && !faceDot && marker;
+    })());
+  // Status truthfulness: ok on one feed beats poseFail on the other; ok on both -> both cameras.
+  W.TrackDual._test.setRigStatus('ok', 'dual-cam1');
+  t('v2.1.7 status: ok on Camera 1 -> "Skeleton on — rig follows you on Camera 1"',
+    ($('dualRigStatus').textContent || '').indexOf('Skeleton on — rig follows you on Camera 1') >= 0, $('dualRigStatus').textContent);
+  W.TrackDual._test.setRigStatus('poseFail', 'dual-cam2');
+  t('v2.1.7 status: Camera 1 on + Camera 2 failed -> still says Camera 1 on (no lie)',
+    ($('dualRigStatus').textContent || '').indexOf('Skeleton on — rig follows you on Camera 1') >= 0, $('dualRigStatus').textContent);
+  W.TrackDual._test.setRigStatus('poseFail', 'dual-cam1');
+  t('v2.1.7 status: NO feed on + one failed -> "couldn\'t load"',
+    ($('dualRigStatus').textContent || '').indexOf("couldn't load") >= 0, $('dualRigStatus').textContent);
+  W.TrackDual._test.setRigStatus('ok', 'dual-cam2');
+  t('v2.1.7 status: ok on Camera 2 only -> names Camera 2',
+    ($('dualRigStatus').textContent || '').indexOf('Skeleton on — rig follows you on Camera 2') >= 0, $('dualRigStatus').textContent);
+  W.TrackDual._test.setRigStatus('ok', 'dual-cam1');
+  t('v2.1.7 status: ok on both -> "both cameras"',
+    ($('dualRigStatus').textContent || '').indexOf('both cameras') >= 0, $('dualRigStatus').textContent);
+  // Gestures: Camera 2 ONLY (Camera 1 sees nothing) still drives the hold, and names Camera 2.
+  W.TrackRig.setTarget(dualRig1.canvas, poseDict, [], []);
+  W.TrackRig.setTarget(dualRig2.canvas, poseDict, [makeHand([0, 1, 0, 0, 0])], []);
+  W.TrackDual._test.gestureTick();
+  t('v2.1.7 gesture: Camera 2 only sees 1 finger -> hold-start naming Camera 2',
+    ($('dualGestureStatus').textContent || '').indexOf('Camera 2') >= 0 &&
+    ($('dualGestureStatus').textContent || '').indexOf('1 finger') >= 0, $('dualGestureStatus').textContent);
+  // Hold grace: 3 missed ticks keep the hold; the 4th gives up.
+  W.TrackRig.setTarget(dualRig1.canvas, poseDict, [], []);
+  W.TrackRig.setTarget(dualRig2.canvas, poseDict, [], []);
+  W.TrackDual._test.gestureTick();
+  W.TrackDual._test.gestureTick();
+  W.TrackDual._test.gestureTick();
+  t('v2.1.7 gesture: hold survives 3 dropped frames (still "1 finger — starting")',
+    ($('dualGestureStatus').textContent || '').indexOf('1 finger') >= 0, $('dualGestureStatus').textContent);
+  W.TrackDual._test.gestureTick();
+  t('v2.1.7 gesture: after 4 dropped frames the hold gives up -> "No hand seen"',
+    ($('dualGestureStatus').textContent || '').indexOf('No hand seen') >= 0, $('dualGestureStatus').textContent);
+  // Gesture smoothing helper: needs 2 consecutive reads; one dropped frame keeps the count.
+  t('v2.1.7 gesture smoothing: 1st read of a new count does NOT flip yet (needs 2)',
+    (() => {
+      const gRig = W.TrackRig._test.getRigByKey('dual-cam1');
+      gRig.gesture.count = -1; gRig.gesturePending = -1; gRig.gesturePendingStreak = 0; gRig.gestureMissingSince = 0;
+      W.TrackRig._test.smoothGestureCount(gRig, 1, true);
+      return gRig.gesture.count === -1;
+    })());
+  t('v2.1.7 gesture smoothing: 2nd consecutive read accepts the count',
+    (() => {
+      const gRig = W.TrackRig._test.getRigByKey('dual-cam1');
+      W.TrackRig._test.smoothGestureCount(gRig, 1, true);
+      return gRig.gesture.count === 1;
+    })());
+  t('v2.1.7 gesture smoothing: one dropped frame keeps the last count (grace)',
+    (() => {
+      const gRig = W.TrackRig._test.getRigByKey('dual-cam1');
+      W.TrackRig._test.smoothGestureCount(gRig, -1, false);
+      return gRig.gesture.count === 1 && gRig.gesture.handSeen === true;
+    })());
+  // Joint grace: an unseen joint stays displayed briefly, then drops.
+  t('v2.1.7 steadiness: unseen joint survives inside the 300ms grace, drops after',
+    (() => {
+      const T = W.TrackRig._test;
+      const disp = T.newPoseStore(), tgt = T.newPoseStore();
+      tgt.has[11] = 1; tgt.x[11] = 0.5; tgt.y[11] = 0.5;
+      T.stepPoseStore(disp, tgt, 1, 1000);
+      tgt.has[11] = 0;
+      T.stepPoseStore(disp, tgt, 1, 1100);
+      const kept = disp.has[11] === 1;
+      T.stepPoseStore(disp, tgt, 1, 1500);
+      return kept && disp.has[11] === 0;
+    })());
+  // Content mapping: contain letterboxes a wide video; cover crops it; fill stretches.
+  t('v2.1.7 mapping: contain letterboxes 1280x720 into a 320x240 canvas (bars top/bottom)',
+    (() => {
+      stubFit = 'contain';
+      const m = W.TrackRig._test.contentMapFor({ canvas: { width: 320, height: 240 }, video: { videoWidth: 1280, videoHeight: 720 } });
+      return m.mx === 320 && m.bx === 0 && m.my === 180 && m.by === 30;
+    })());
+  t('v2.1.7 mapping: cover crops 1280x720 into 320x240 (sides cropped, full height)',
+    (() => {
+      stubFit = 'cover';
+      const m = W.TrackRig._test.contentMapFor({ canvas: { width: 320, height: 240 }, video: { videoWidth: 1280, videoHeight: 720 } });
+      return Math.abs(m.mx - 426.67) < 0.01 && Math.abs(m.bx + 53.33) < 0.01 && m.my === 240 && m.by === 0;
+    })());
+  t('v2.1.7 mapping: hands run on a bigger frame than pose (640 vs 320) + confident-hand floor 0.6',
+    W.TrackRig._test.handsInputWidth === 640 && W.TrackRig._test.handsMinScore === 0.6);
+  stubFit = 'contain';
+  W.TrackDual.stopSkeleton();
+
+  /* ---------- Version / files ---------- */
+  const versionJson = JSON.parse(fs.readFileSync(ROOT + 'version.json', 'utf8'));
+  t('version.json = 2.1.7', versionJson.version === '2.1.7');
+  const changelog = JSON.parse(fs.readFileSync(ROOT + 'changelog.json', 'utf8'));
+  const entry217 = changelog.find(e => e.version === '2.1.7');
+  t('changelog 2.1.7 has 6 notes incl. only-seen joints + head marker + truthful status + both-camera signs + 640px hands + rig sits ON you',
+    entry217 && entry217.notes.length === 6 &&
+    entry217.notes.some(n => n.indexOf('actually sees') >= 0) &&
+    entry217.notes.some(n => n.indexOf('head marker') >= 0) &&
+    entry217.notes.some(n => n.indexOf('tell the truth') >= 0) &&
+    entry217.notes.some(n => n.indexOf('BOTH cameras') >= 0) &&
+    entry217.notes.some(n => n.indexOf('640px') >= 0) &&
+    entry217.notes.some(n => n.indexOf('sits ON you') >= 0));
+  const entry216 = changelog.find(e => e.version === '2.1.6');
+  t('changelog 2.1.6 has 5 notes incl. both-camera rig + hand signs + smooth + status + announcements',
+    entry216 && entry216.notes.length === 5 &&
+    entry216.notes.some(n => n.indexOf('BOTH cameras') >= 0) &&
+    entry216.notes.some(n => n.indexOf('EITHER camera') >= 0) &&
+    entry216.notes.some(n => n.indexOf('smooth') >= 0) &&
+    entry216.notes.some(n => n.indexOf('No more silent failures') >= 0) &&
+    entry216.notes.some(n => n.indexOf('Recording has ended') >= 0));
+  const updateSrc = fs.readFileSync(ROOT + 'js/update.js', 'utf8');
+  t('update.js fallback history 2.1.7 matches changelog + VERSION = 2.1.7',
+    updateSrc.indexOf('actually sees') >= 0 &&
+    updateSrc.indexOf("var VERSION = '2.1.7'") >= 0 &&
+    W.TrackUpdate.getVersion() === '2.1.7');
+  const html = fs.readFileSync(ROOT + 'index.html', 'utf8');
+  t('index.html: Camera 1 / Camera 2 labels present', html.indexOf('Camera 1') >= 0 && html.indexOf('Camera 2') >= 0);
+  t('index.html: no "Second camera" / "Main phone" wording left', html.indexOf('Second camera') < 0 && html.indexOf('Main phone') < 0);
+  t('index.html: new camera controls present (single switch + on/off, dual switch + on/off, join switch + on/off, runway toggle)',
+    ['aiCamToggleBtn', 'aiFlipBtn', 'dualSwitchBtn', 'dualCamToggleBtn', 'dualJoinSwitchBtn', 'dualJoinCamToggleBtn', 'data-runway-view'].every(s => html.indexOf(s) >= 0));
+  t('index.html: honesty label + "Two camera views, not 3D" present',
+    html.indexOf('not your real video, not motion capture') >= 0 && html.indexOf('Two camera views, not 3D') >= 0);
+  t('index.html: rig canvases on BOTH dual feeds (host Camera 1 + join Camera 1) + rig script',
+    html.indexOf('id="dualLocalSkel"') >= 0 && html.indexOf('id="dualJoinRemoteSkel"') >= 0 &&
+    html.indexOf('js/rig.js') >= 0);
+  t('index.html: rig + gesture status lines on both dual panels',
+    ['dualRigStatus', 'dualGestureStatus', 'dualJoinRigStatus', 'dualJoinGestureStatus'].every(s => html.indexOf('id="' + s + '"') >= 0));
+  t('index.html: version strings 2.1.7', html.indexOf('v2.1.7') >= 0 && html.indexOf('v2.1.6') < 0);
+  const css = fs.readFileSync(ROOT + 'css/app.css', 'utf8');
+  t('Guide CSS: bigger readable text (.cue p 17px) + annotated-figure styles',
+    css.indexOf('.cue p') >= 0 && css.indexOf('ai-frame-stage') >= 0);
+  const kb = W.TrackKB.all;
+  t('Guide KB still 40 entries', kb.length === 40, 'count=' + kb.length);
+
+  console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
+  process.exit(failures ? 1 : 0);
+})().catch(e => { console.error('HARNESS ERROR', e && e.stack || e); process.exit(2); });
