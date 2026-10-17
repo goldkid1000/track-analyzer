@@ -58,6 +58,7 @@
             <input type="file" id="aiFileInput" accept="video/*" hidden />
             <button class="ghost-control" id="aiSlowReview" type="button" aria-pressed="false">Slow review</button>
             <button class="ghost-control" id="aiFlipBtn" type="button">Switch camera</button>
+            <button class="ghost-control" id="aiCamToggleBtn" type="button" aria-pressed="true">Camera: on</button>
             <button class="ghost-control" id="aiVoiceBtn" type="button" aria-pressed="false">Voice coaching: off</button>
           </div>
         </div>
@@ -77,11 +78,13 @@
             <div class="ai-preview-card">
               <video id="aiVideo" playsinline muted autoplay></video>
               <canvas id="aiSkelOverlay" aria-hidden="true"></canvas>
-              <span class="ai-skel-tag">2D skeleton — a flat drawing from the camera, not 3D</span>
+              <div class="ai-cam-off" id="aiCamOff" hidden>Camera off</div>
+              <span class="ai-skel-tag">Skeleton lines on you</span>
               <span class="ai-angle-tag" id="aiAngleTag">Camera</span>
             </div>
             <div class="ai-preview-card" id="aiPreview2Wrap" hidden>
               <video id="aiVideo2" playsinline muted autoplay></video>
+              <canvas id="aiSkelOverlay2" aria-hidden="true"></canvas>
               <span class="ai-angle-tag" id="aiAngle2Tag">Camera 2</span>
             </div>
           </div>
@@ -103,8 +106,8 @@
 
         <div class="panel dual-intro">
           <h2>Two cameras</h2>
-          <p class="dual-sub">Two cameras, two views, one rep. Put one phone on one side and a second camera on the other, connect with a code, and get coaching from both sides at once.</p>
-          <p class="dual-note">Two flat camera views combined — not 3D. Two phone cameras can’t measure depth, so this app never fakes 3D numbers.</p>
+          <p class="dual-sub">Two cameras, two views, one rep. Put Camera 1 on one side and Camera 2 on the other, connect with a code, and get coaching from both sides at once.</p>
+          <p class="dual-note">Two camera views, not 3D. Two cameras can’t measure depth, so this app never fakes 3D numbers.</p>
           <div class="dual-role-row">
             <button class="ghost-control" id="dualHostBtn" type="button">Connect a second camera</button>
             <button class="ghost-control" id="dualJoinBtn" type="button">Join as the second camera</button>
@@ -113,19 +116,22 @@
         </div>
 
         <div class="panel dual-panel" id="dualHostPanel" hidden>
-          <h3>This phone — main camera</h3>
-          <p>Share this code with the second camera:</p>
+          <h3>Camera 1</h3>
+          <p>Share this code with Camera 2:</p>
           <div class="dual-code" id="dualCode">······</div>
-          <p class="dual-wait">Waiting for the second camera…</p>
+          <p class="dual-wait">Waiting for Camera 2…</p>
           <div class="dual-previews">
             <div class="dual-preview-card">
-              <div class="dual-preview-head"><span id="dualLocalLabelWrap">This phone · <select id="dualLocalLabel" aria-label="This camera's side"><option value="Side" selected>Side</option><option value="Front">Front</option></select></span><button class="ghost-control small" id="dualCalibrate" type="button">Line up frame</button></div>
+              <div class="dual-preview-head"><span>Camera 1</span><span class="dual-head-btns"><button class="ghost-control small" id="dualCalibrate" type="button">Line up frame</button><button class="ghost-control small" id="dualSwitchBtn" type="button">Switch camera</button><button class="ghost-control small" id="dualCamToggleBtn" type="button" aria-pressed="true">Camera: on</button></span></div>
               <video id="dualLocalVideo" playsinline muted autoplay></video>
+              <div class="dual-cam-off" id="dualLocalCamOff" hidden>Camera off</div>
               <p class="dual-calib-state" id="dualCalibState"></p>
             </div>
             <div class="dual-preview-card">
-              <div class="dual-preview-head"><span id="dualRemoteLabel">Second camera</span></div>
+              <div class="dual-preview-head"><span>Camera 2</span></div>
               <video id="dualRemoteVideo" playsinline muted autoplay></video>
+              <canvas id="dualRemoteSkel" aria-hidden="true"></canvas>
+              <div class="dual-cam-off" id="dualRemoteCamOff" hidden>Camera 2 off</div>
             </div>
           </div>
           <div class="dual-record-row" id="dualRecordRow" hidden>
@@ -139,10 +145,10 @@
           <div class="dual-manual">
             <button class="ghost-control small" id="dualManualHostBtn" type="button">Having trouble? Connect by hand</button>
             <div id="dualManualHost" hidden>
-              <p>Copy this offer code to the second camera, then paste its answer code below.</p>
+              <p>Copy this offer code to Camera 2, then paste its answer code below.</p>
               <label>Offer code <textarea id="dualOfferOut" rows="3" readonly></textarea></label>
               <button class="ghost-control small" id="dualCopyOffer" type="button">Copy offer</button>
-              <label>Answer code <textarea id="dualAnswerIn" rows="3" placeholder="Paste the iPad’s answer code here"></textarea></label>
+              <label>Answer code <textarea id="dualAnswerIn" rows="3" placeholder="Paste Camera 2’s answer code here"></textarea></label>
               <button class="ghost-control small" id="dualManualHostGo" type="button">Connect with answer</button>
             </div>
           </div>
@@ -150,8 +156,8 @@
         </div>
 
         <div class="panel dual-panel" id="dualJoinPanel" hidden>
-          <h3>Second camera</h3>
-          <p>Type the 6-letter code shown on the main phone:</p>
+          <h3>Camera 2</h3>
+          <p>Type the 6-letter code shown on Camera 1:</p>
           <div class="dual-join-row">
             <input id="dualJoinCode" type="text" inputmode="text" autocomplete="off" maxlength="6" placeholder="K7Q2P9" aria-label="Connection code" />
             <button class="primary" id="dualJoinGo" type="button">Join</button>
@@ -159,21 +165,24 @@
           <p class="dual-status" id="dualJoinStatus" aria-live="polite"></p>
           <div class="dual-previews">
             <div class="dual-preview-card">
-              <div class="dual-preview-head"><span>This iPad · <select id="dualJoinLocalLabel" aria-label="This camera's side"><option value="Side">Side</option><option value="Front" selected>Front</option></select></span><button class="ghost-control small" id="dualJoinCalibrate" type="button">Line up frame</button></div>
+              <div class="dual-preview-head"><span>Camera 2</span><span class="dual-head-btns"><button class="ghost-control small" id="dualJoinCalibrate" type="button">Line up frame</button><button class="ghost-control small" id="dualJoinSwitchBtn" type="button">Switch camera</button><button class="ghost-control small" id="dualJoinCamToggleBtn" type="button" aria-pressed="true">Camera: on</button></span></div>
               <video id="dualJoinLocalVideo" playsinline muted autoplay></video>
+              <canvas id="dualJoinLocalSkel" aria-hidden="true"></canvas>
+              <div class="dual-cam-off" id="dualJoinLocalCamOff" hidden>Camera off</div>
               <p class="dual-calib-state" id="dualJoinCalibState"></p>
             </div>
             <div class="dual-preview-card">
-              <div class="dual-preview-head"><span id="dualJoinRemoteLabel">Main phone</span></div>
+              <div class="dual-preview-head"><span>Camera 1</span></div>
               <video id="dualJoinRemoteVideo" playsinline muted autoplay></video>
+              <div class="dual-cam-off" id="dualJoinRemoteCamOff" hidden>Camera 1 off</div>
             </div>
           </div>
-          <p class="dual-join-note" id="dualJoinRecordNote" hidden>The main phone starts and stops recording for both cameras. Hold this camera steady on your side.</p>
+          <p class="dual-join-note" id="dualJoinRecordNote" hidden>Camera 1 starts and stops recording for both cameras. Hold this camera steady on your side.</p>
           <div class="dual-manual">
             <button class="ghost-control small" id="dualManualJoinBtn" type="button">Having trouble? Connect by hand</button>
             <div id="dualManualJoin" hidden>
-              <p>Paste the main phone’s offer code, then copy your answer code back to it.</p>
-              <label>Offer code <textarea id="dualJoinOfferIn" rows="3" placeholder="Paste the main phone’s offer code here"></textarea></label>
+              <p>Paste Camera 1’s offer code, then copy your answer code back to it.</p>
+              <label>Offer code <textarea id="dualJoinOfferIn" rows="3" placeholder="Paste Camera 1’s offer code here"></textarea></label>
               <button class="ghost-control small" id="dualManualJoinGo" type="button">Create answer</button>
               <label>Answer code <textarea id="dualJoinAnswerOut" rows="3" readonly></textarea></label>
               <button class="ghost-control small" id="dualJoinCopyAnswer" type="button">Copy answer</button>
@@ -274,8 +283,19 @@
       </div>
       <section class="runway-panel" aria-label="Your form vs Pro form">
         <h2>Your form vs Pro form — watch the run</h2>
-        <p class="ai-note">Animated demo from your measured angles — 2D drawing, not real 3D, not your real video.</p>
+        <p class="ai-note" id="runwayHonesty">3D animated demo — cartoon runners built from your measured angles, not your real video, not motion capture.</p>
+        <div class="runway-view-toggle" role="group" aria-label="Comparison view">
+          <button type="button" data-runway-view="auto" aria-pressed="true">AI picks</button>
+          <button type="button" data-runway-view="side" aria-pressed="false">You vs Pro</button>
+          <button type="button" data-runway-view="solo" aria-pressed="false">Just me</button>
+        </div>
+        <p id="runwayPickReason" class="ai-note"></p>
         <p id="runwayPlaceholder">Finish an AI Analyzer run to see your form vs pro form.</p>
+        <div id="runway3dWrap" hidden>
+          <span class="runway3d-label" id="runway3dLabelYou">You</span>
+          <span class="runway3d-label" id="runway3dLabelPro">Pro</span>
+          <span class="runway3d-fix" id="runway3dFix" hidden></span>
+        </div>
         <canvas id="runwayCanvas" width="640" height="280" hidden></canvas>
         <p id="runwayCallout" class="ai-note">Your run will show up here after an analysis.</p>
         <div class="runway-controls">
@@ -287,7 +307,7 @@
     </section>
     </section>
       <footer class="app-footer">
-        <span>Track Analyzer <span id="appVersion">v2.1.4</span></span>
+        <span>Track Analyzer <span id="appVersion">v2.1.5</span></span>
         <button id="whatsNewBtn" type="button">What&rsquo;s New</button>
         <button id="checkUpdatesBtn" type="button">Check for updates</button>
         <span id="updateCheckStatus" aria-live="polite"></span>
@@ -326,13 +346,14 @@
     <div class="sheet-grabber" aria-hidden="true"></div>
     <div class="review-dialog-inner">
       <div class="review-dialog-head"><h2 id="whatsNewTitle">What&rsquo;s New</h2><button class="sheet-close" id="closeWhatsNew" type="button" aria-label="Close What&rsquo;s New">×</button></div>
-      <p id="whatsNewCurrent">You are running v2.1.4</p>
+      <p id="whatsNewCurrent">You are running v2.1.5</p>
       <div id="whatsNewList"></div>
     </div>
   </dialog>
 
   <script src="js/mediapipe-pose.js"></script>
   <script src="js/mediapipe-draw.js"></script>
+  <script src="js/camera-kit.js"></script>
   <script src="js/app.js"></script>
   <script src="js/dualcam.js"></script>
   <script src="js/update.js"></script>
