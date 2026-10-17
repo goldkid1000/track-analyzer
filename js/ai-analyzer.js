@@ -1,17 +1,18 @@
-/* Track Analyzer — AI Analyzer (v2.1.2)
+/* Track Analyzer — AI Analyzer (v2.1.4)
  *
  * On-device coaching: the camera watches the athlete, names what it sees,
  * and gives one fix at a time from the embedded knowledge base
  * (js/ai-knowledge.js). No cloud model, no API key, no network calls.
  *
- * v2.1.2: the old separate rep-check screen is merged in — one "What to
- * check" picker drives both this coaching and the rep check
- * (js/app.js, TrackClassic), and the rep check's score + one fix feed
- * this live panel. A live 2D skeleton drawing sits on top of the camera
- * preview. Gestures mean record: 1 finger = start recording + analyzing,
- * 2 fingers = stop + deep check. The voice always says "Recording has
- * started." / "Recording has ended." on those transitions, even when
- * voice coaching is off.
+ * v2.1.4: the AI auto-detects the movement — no activity picker. One
+ * Block Starts toggle drives both this coaching and the rep check
+ * (js/app.js, TrackClassic): off = auto-detect everything, on = block
+ * starts. The rep check's score + one fix feed this live panel. A live
+ * 2D skeleton drawing sits on top of the camera preview. Gestures mean
+ * record: 1 finger = start recording + analyzing, 2 fingers = stop +
+ * deep check. The voice always says "Recording has started." /
+ * "Recording has ended." on those transitions, even when voice coaching
+ * is off.
  *
  * Honest limits: it only coaches what the camera can see. If joints are out
  * of frame it says what it can't see instead of guessing. Activity labels
@@ -41,7 +42,7 @@ function ang(a, b, c){
 }
 
 var AI = {
-  running: false, voice: false, focus: 'auto',
+  running: false, voice: false, blockStarts: false,
   ownStream: null, usingDual: false,
   poseA: null, poseB: null, timer: null,
   hist: [], // per-angle feature history (angle 1 drives state)
@@ -52,7 +53,7 @@ var AI = {
   movingSince: 0, setSince: 0,
   mode: 'idle', // idle | watching | coaching
   lastFrontal: false, lastLandmarks1: null, lastRawLm: null,
-  classicMode: 'block', facing: 'environment',
+  facing: 'environment',
   clipMode: false, clipUrl: null,
   lastClassic: null, lastTripped: null, lastGuideIssue: '',
   announcingUntil: 0,
@@ -75,23 +76,25 @@ function getDual(){
   try{ return window.TrackDual ? window.TrackDual.getState() : null; }catch(e){ return null; }
 }
 function kbFor(activity){
-  if(AI.focus !== 'auto') return (window.TrackKB && window.TrackKB.byId(AI.focus)) || null;
-  var id = CLASSIC_MODE_KB[AI.classicMode] || ACTIVITY_KB[activity] || 'sprint-100';
+  if(AI.blockStarts) return (window.TrackKB && window.TrackKB.byId('block-starts')) || null;
+  var id = ACTIVITY_KB[activity] || 'sprint-100';
   return (window.TrackKB && window.TrackKB.byId(id)) || null;
 }
-/* One "What to check" pick drives both engines: this coaching (via the
- * knowledge-base entry below) and the rep check (via TrackClassic). */
-var CLASSIC_MODE_KB = {
-  block: 'block-starts', side: 'sprint-100', askip: 'sprint-100',
-  arms: 'sprint-100', sprint: 'sprint-100'
-};
-function setClassicMode(m){
-  if(!CLASSIC_MODE_KB[m]) return;
-  AI.classicMode = m;
-  document.querySelectorAll('.mode').forEach(function(b){ b.setAttribute('aria-pressed', b.dataset.mode === m ? 'true' : 'false'); });
-  var guide = $('aiSideGuide');
-  if(guide) guide.hidden = (m !== 'side');
-  if(window.TrackClassic) window.TrackClassic.setMode(m);
+/* One Block Starts toggle drives both engines: this coaching (via the
+ * knowledge-base entry above) and the rep check (via TrackClassic).
+ * Flipping it takes effect for the next rep — no restart needed. */
+function setBlockStarts(on){
+  AI.blockStarts = !!on;
+  var btn = $('blockStartsToggle');
+  if(btn){
+    btn.setAttribute('aria-pressed', AI.blockStarts ? 'true' : 'false');
+    btn.textContent = AI.blockStarts ? 'Block starts: on' : 'Block starts: off';
+  }
+  var state = $('blockStartsState');
+  if(state) state.textContent = AI.blockStarts
+    ? 'Block starts: on — watching for set position.'
+    : 'Block starts: off — auto-detecting.';
+  if(window.TrackClassic) window.TrackClassic.setBlockStarts(AI.blockStarts);
 }
 function speak(text){
   if(!AI.voice || !window.speechSynthesis) return;
@@ -1268,10 +1271,10 @@ function initAI(){
     voiceBtn.textContent = AI.voice ? 'Voice coaching: on' : 'Voice coaching: off';
     if(!AI.voice && window.speechSynthesis) try{ window.speechSynthesis.cancel(); }catch(e){}
   });
-  /* One "What to check" picker drives both engines. */
-  document.querySelectorAll('.mode').forEach(function(btn){
-    btn.addEventListener('click', function(){ setClassicMode(btn.dataset.mode); });
-  });
+  /* One Block Starts toggle: on = block starts, off = auto-detect. */
+  var blockBtn = $('blockStartsToggle');
+  if(blockBtn) blockBtn.addEventListener('click', function(){ setBlockStarts(!AI.blockStarts); });
+  setBlockStarts(false);
   /* One "Upload a clip" option inside the AI Analyzer: the clip feeds the
    * same analysis as the live camera — no second camera card. */
   var uploadBtn = $('aiUploadClip');
@@ -1305,8 +1308,6 @@ function initAI(){
       else startWatching();
     }
   });
-  var focusSel = $('aiFocus');
-  if(focusSel) focusSel.addEventListener('change', function(){ AI.focus = focusSel.value; });
   var filter = $('aiKbFilter');
   if(filter) filter.addEventListener('change', renderKB);
   document.querySelectorAll('.nav-item,.tab-item').forEach(function(item){
@@ -1315,11 +1316,6 @@ function initAI(){
       else aiTeardown();
     });
   });
-  var focus = $('aiFocus');
-  if(focus && window.TrackKB && !focus.options.length){
-    focus.appendChild(new Option('Everything (auto)', 'auto'));
-    window.TrackKB.all.forEach(function(e){ focus.appendChild(new Option(e.name, e.id)); });
-  }
 }
 
 // Test hooks (smoke tests only — the app never calls these on its own).
@@ -1327,7 +1323,7 @@ window.TrackNotify = { notifyDone: notifyAnalysisDone, clear: function(which){ s
   has: function(which){ var els = badgeEls(which); return els.some(function(el){ return el && !el.hidden; }); } };
 window.TrackRunway = { render: renderRunway, draw: runwayDraw, start: runwayStart, pause: runwayPause, replay: runwayReplay,
   getState: function(){ return { playing: runway.playing, phase: runway.phase, your: runway.your, fix: runway.fix }; } };
-window.TrackAI = { setClassicMode: setClassicMode, getClassicMode: function(){ return AI.classicMode; },
+window.TrackAI = { setBlockStarts: setBlockStarts, getBlockStarts: function(){ return AI.blockStarts; },
   getLastClassic: function(){ return AI.lastClassic; }, announce: announce };
 window.TrackAIAnnounce = { announce: announce, speakNow: announce };
 window.TrackAIGesture = { countFingers: countFingers, isFrontal: isFrontal };
