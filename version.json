@@ -1,6 +1,1 @@
-{
-  "version": "2.1.1",
-  "updated": "2026-10-17",
-  "notify": true,
-  "notes": "One AI Analyzer screen (Analyze + two cameras moved in) + gestures + deep check + videos to watch + skeleton drawings + simpler words."
-}
+{"notes":"Rep check merged into AI Analyzer (no separate block) + live skeleton on the camera + voice says Recording has started / Recording has ended.","notify":true,"updated":"2026-10-17","version":"2.1.2"}
