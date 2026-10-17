@@ -1,4 +1,4 @@
-/* Track Analyzer — Dual-Angle camera + one-time photo access (v2.1.0)
+/* Track Analyzer — Two-camera + one-time photo access (v2.1.1)
  *
  * Two features in one file, kept separate from app.js so the existing
  * analyzer keeps working untouched:
@@ -15,13 +15,13 @@
  *    trigger the picker except on your explicit tap, remember whether you
  *    want Camera or Photo Library, and never loop-re-prompt after a cancel.
  *
- * 2. DUAL-ANGLE (two cameras, one rep). iPhone hosts, iPad joins with a
- *    6-character code. Signaling via the free PeerJS cloud (0.peerjs.com,
+ * 2. TWO CAMERAS (two cameras, one rep). One phone hosts, the other joins with a
+ *    6-letter code. Signaling via the free PeerJS cloud (0.peerjs.com,
  *    no API key). If PeerJS is unreachable, manual copy-paste WebRTC
  *    signaling (offer/answer codes) is offered — never a dead end.
  *    Both cameras record in sync, auto-stop on duration / motion end /
- *    Stop, then a synced two-angle replay + a Dual-Angle verdict.
- *    Labelled "Dual-Angle — two 2D views combined, not true 3D" everywhere:
+ *    Stop, then a synced two-camera replay + a two-camera result.
+ *    Labelled "two flat camera views combined, not 3D" everywhere:
  *    two uncalibrated phone cameras cannot measure depth, and this app
  *    never fakes 3D numbers.
  */
@@ -227,10 +227,10 @@ function onMessage(msg){
   if(msg.type === 'hello'){ D.remoteLabel = msg.label || 'Front'; setText('dualRemoteLabel', D.remoteLabel + ' view'); setText('dualJoinRemoteLabel', 'Main phone · ' + D.remoteLabel + ' view'); }
   else if(msg.type === 'label'){ D.remoteLabel = msg.label; setText('dualRemoteLabel', D.remoteLabel + ' view'); }
   else if(msg.type === 'start'){ startRecording(msg.duration || 10); }
-  else if(msg.type === 'stop'){ stopRecording('other side stopped'); }
+  else if(msg.type === 'stop'){ stopRecording('other camera stopped'); }
   else if(msg.type === 'analysis'){ D.remoteAnalysis = msg.summary; maybeRenderVerdict(); }
-  else if(msg.type === 'clip-meta'){ D.clipExpected = msg.chunks || 0; D.clipGot = 0; D.clipParts = {}; setText('dualTransfer', 'Receiving iPad clip… 0%'); }
-  else if(msg.type === 'clip-chunk'){ D.clipParts[msg.index] = msg.data; D.clipGot++; if(D.clipExpected) setText('dualTransfer', 'Receiving iPad clip… ' + Math.round(D.clipGot / D.clipExpected * 100) + '%'); }
+  else if(msg.type === 'clip-meta'){ D.clipExpected = msg.chunks || 0; D.clipGot = 0; D.clipParts = {}; setText('dualTransfer', 'Receiving second clip\u2026 0%'); }
+  else if(msg.type === 'clip-chunk'){ D.clipParts[msg.index] = msg.data; D.clipGot++; if(D.clipExpected) setText('dualTransfer', 'Receiving second clip\u2026 ' + Math.round(D.clipGot / D.clipExpected * 100) + '%'); }
   else if(msg.type === 'clip-done'){ assembleRemoteClip(); }
   else if(msg.type === 'bye'){ dualStatus('Second camera left.'); }
 }
@@ -256,17 +256,17 @@ function hostStart(){
     });
     D.peer.on('error', function(err){
       if(err && err.type === 'unavailable-id'){ D.code = makeCode(); setText('dualCode', D.code); dualStatus('That code was taken — new code ' + D.code + '. Share it instead.'); }
-      else dualStatus('Could not reach the free PeerJS cloud — use Manual connect below.');
+      else dualStatus('Couldn\u2019t reach the connection helper \u2014 use Connect by hand below.');
     });
   }).catch(function(err){
-    dualStatus('Could not start camera or PeerJS: ' + (err && err.message ? err.message : err) + ' — use Manual connect below, or single-camera Analyze.');
+    dualStatus('Could not start camera or connection helper: ' + (err && err.message ? err.message : err) + ' \u2014 use Connect by hand below, or one camera.');
     showEl($('dualManualHost'), true);
   });
 }
 function joinStart(){
   var input = $('dualJoinCode');
   var code = (input && input.value ? input.value : '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-  if(code.length < 4){ dualStatus('Type the 6-character code shown on the main phone.'); return; }
+  if(code.length < 4){ dualStatus('Type the 6-letter code shown on the main phone.'); return; }
   D.role = 'join'; D.mode = 'peerjs'; D.code = code; D.localLabel = 'Front';
   showEl($('dualJoinPanel'), true);
   dualStatus('Starting your camera…');
@@ -284,11 +284,11 @@ function joinStart(){
       else D.pendingCall = call;
     });
     D.peer.on('error', function(){
-      dualStatus('Could not reach the main phone — check the code, or use Manual connect below.');
+      dualStatus('Couldn\u2019t reach the main phone \u2014 check the code, or use Connect by hand below.');
       showEl($('dualManualJoin'), true);
     });
   }).catch(function(err){
-    dualStatus('Could not start camera or PeerJS: ' + (err && err.message ? err.message : err) + ' — use Manual connect below.');
+    dualStatus('Could not start camera or connection helper: ' + (err && err.message ? err.message : err) + ' \u2014 use Connect by hand below.');
     showEl($('dualManualJoin'), true);
   });
 }
@@ -310,7 +310,7 @@ function makePC(){
 }
 function manualHostStart(){
   D.role = 'host'; D.mode = 'manual'; D.localLabel = 'Side';
-  dualStatus('Manual connect: starting camera…');
+  dualStatus('Connecting by hand: starting camera\u2026');
   startLocalCamera().then(function(){
     D.pc = makePC();
     D.localStream.getTracks().forEach(function(t){ D.pc.addTrack(t, D.localStream); });
@@ -318,15 +318,15 @@ function manualHostStart(){
     setupManualDC(dc);
     return D.pc.createOffer().then(function(o){ return D.pc.setLocalDescription(o); }).then(function(){ return waitIce(D.pc); }).then(function(){
       var ta = $('dualOfferOut'); if(ta) ta.value = btoa(JSON.stringify(D.pc.localDescription));
-      dualStatus('Copy the offer code and paste it on the iPad.');
+      dualStatus('Copy the offer code and paste it on the second camera.');
     });
-  }).catch(function(err){ dualStatus('Manual connect failed: ' + (err && err.message ? err.message : err)); });
+  }).catch(function(err){ dualStatus('Connect by hand failed: ' + (err && err.message ? err.message : err)); });
 }
 function manualHostAccept(){
   var ta = $('dualAnswerIn');
   try{
     var ans = JSON.parse(atob((ta.value || '').trim()));
-    D.pc.setRemoteDescription(ans).then(function(){ dualStatus('Connected manually — waiting for the iPad video…'); });
+    D.pc.setRemoteDescription(ans).then(function(){ dualStatus('Connected by hand \u2014 waiting for the second camera\u2019s video\u2026'); });
   }catch(e){ dualStatus('That answer code did not parse — copy it exactly.'); }
 }
 function manualJoinAccept(){
@@ -335,7 +335,7 @@ function manualJoinAccept(){
   var offer;
   try{ offer = JSON.parse(atob((ta.value || '').trim())); }
   catch(e){ dualStatus('That offer code did not parse — copy it exactly.'); return; }
-  dualStatus('Manual connect: starting camera…');
+  dualStatus('Connecting by hand: starting camera\u2026');
   startLocalCamera().then(function(){
     D.pc = makePC();
     D.localStream.getTracks().forEach(function(t){ D.pc.addTrack(t, D.localStream); });
@@ -347,7 +347,7 @@ function manualJoinAccept(){
         var out = $('dualJoinAnswerOut'); if(out) out.value = btoa(JSON.stringify(D.pc.localDescription));
         dualStatus('Copy the answer code back to the main phone.');
       });
-  }).catch(function(err){ dualStatus('Manual connect failed: ' + (err && err.message ? err.message : err)); });
+  }).catch(function(err){ dualStatus('Connect by hand failed: ' + (err && err.message ? err.message : err)); });
 }
 
 /* ---------- Recording: synced start, auto-stop, transfer ---------- */
@@ -376,7 +376,7 @@ function startRecording(duration){
   clearTimeout(D.recTimer);
   D.recTimer = setTimeout(function(){ stopRecording('time is up'); }, D.duration * 1000);
   startPoseWatch();
-  setText('dualRecState', '● Recording… ' + D.duration + 's max — auto-stops when the rep ends.');
+  setText('dualRecState', 'Recording\u2026 ' + D.duration + 's max \u2014 stops on its own when the rep ends.');
   showEl($('dualStopBtn'), true);
   var rb = $('dualRecordBtn'); if(rb) rb.disabled = true;
 }
@@ -393,7 +393,7 @@ function stopRecording(reason){
 }
 function onLocalStopped(){
   D.localBlob = new Blob(D.chunks, { type: (D.recorder && D.recorder.mimeType) || 'video/mp4' });
-  setText('dualRecState', 'Clip saved — analyzing this angle…');
+  setText('dualRecState', 'Clip saved \u2014 checking this camera\u2026');
   runLocalAnalysis();
   if(D.role === 'join'){
     sendClip(D.localBlob);
@@ -420,12 +420,12 @@ function startPoseWatch(){
           var hip = { x: (lm[23].x + lm[24].x) / 2, y: (lm[23].y + lm[24].y) / 2 };
           D.calib = { torso: Math.hypot(sh.x - hip.x, sh.y - hip.y), at: now };
           D.calibPending = false;
-          setText('dualCalibState', 'Calibrated ✓ — frame guide locked.');
+          setText('dualCalibState', 'Lined up ✓ \u2014 frame locked.');
         }
         if(seen){ D.poseSeen = true; D.poseMissingSince = 0; }
         else if(D.poseSeen && !D.poseMissingSince){ D.poseMissingSince = now; }
         else if(D.poseSeen && D.poseMissingSince && now - D.poseMissingSince > 1500 && now - D.recStartedAt > 2000){
-          stopRecording('athlete left the frame');
+          stopRecording('you left the frame');
         }
       });
     }
@@ -458,15 +458,15 @@ function sendClip(blob){
     sendMsg({ type: 'clip-meta', size: reader.result.byteLength, chunks: total, mime: blob.type });
     for(var i = 0; i < total; i++) sendMsg({ type: 'clip-chunk', index: i, data: b64.slice(i * CH, (i + 1) * CH) });
     sendMsg({ type: 'clip-done' });
-    setText('dualTransfer', 'iPad clip sent to the main phone ✓');
+    setText('dualTransfer', 'Second clip sent to the main phone ✓');
   };
   reader.readAsArrayBuffer(blob);
 }
 function assembleRemoteClip(){
   var b64 = '';
-  for(var i = 0; i < D.clipExpected; i++){ if(D.clipParts[i] === undefined){ setText('dualTransfer', 'iPad clip transfer incomplete — replaying this angle only.'); maybeShowReplay(); return; } b64 += D.clipParts[i]; }
+  for(var i = 0; i < D.clipExpected; i++){ if(D.clipParts[i] === undefined){ setText('dualTransfer', 'Second clip transfer didn\u2019t finish \u2014 replaying this camera only.'); maybeShowReplay(); return; } b64 += D.clipParts[i]; }
   D.remoteBlob = base64ToBlob(b64, 'video/mp4');
-  setText('dualTransfer', 'iPad clip received ✓');
+  setText('dualTransfer', 'Second clip received ✓');
   maybeShowReplay();
 }
 
@@ -490,7 +490,7 @@ function extractDualFeatures(lm){
   var shoulder = dAvg(lm[11], lm[12]), hip = dAvg(lm[23], lm[24]);
   var torso = Math.hypot(shoulder.x - hip.x, shoulder.y - hip.y);
   if(torso < 0.04) return null;
-  if(D.calib && D.calib.torso) torso = (torso + D.calib.torso) / 2; // calibrated scale reference (smoothing only)
+  if(D.calib && D.calib.torso) torso = (torso + D.calib.torso) / 2; // lined-up scale reference (smoothing only)
   var facing = ((lm[0] && lm[0].visibility > 0.45) ? Math.sign(lm[0].x - shoulder.x) : 0) || 1;
   function fwdThigh(hipP, kneeP){
     if((kneeP.x - hipP.x) * facing <= 0) return 90;
@@ -515,7 +515,7 @@ function extractDualFeatures(lm){
   };
 }
 function summarizeDual(mode, feats){
-  if(!feats.length) return { label: D.localLabel, score: 0, metrics: [0, 0, 0], issue: 'projection', headline: 'No clear pose in this clip', fix: DUAL_FIX.projection, frames: 0 };
+  if(!feats.length) return { label: D.localLabel, score: 0, metrics: [0, 0, 0], issue: 'projection', headline: 'No clear body shape in this clip', fix: DUAL_FIX.projection, frames: 0 };
   var lean = dMedian(feats.map(function(f){ return f.lean; }));
   var elbow = dMedian(feats.map(function(f){ return f.elbow; }));
   var thigh = Math.min.apply(null, feats.map(function(f){ return f.thigh; }));
@@ -552,7 +552,7 @@ function summarizeDual(mode, feats){
   return { label: D.localLabel, score: score, metrics: metrics, issue: issue, headline: DUAL_FIX[issue].fix, fix: DUAL_FIX[issue], frames: feats.length };
 }
 function runLocalAnalysis(){
-  if(!D.localBlob || !window.Pose){ D.localAnalysis = { label: D.localLabel, score: 0, metrics: [0, 0, 0], issue: 'projection', headline: 'Analysis unavailable on this clip', fix: DUAL_FIX.projection, frames: 0 }; finishLocalAnalysis(); return; }
+  if(!D.localBlob || !window.Pose){ D.localAnalysis = { label: D.localLabel, score: 0, metrics: [0, 0, 0], issue: 'projection', headline: 'Check unavailable on this clip', fix: DUAL_FIX.projection, frames: 0 }; finishLocalAnalysis(); return; }
   var url = URL.createObjectURL(D.localBlob);
   var v = document.createElement('video');
   v.src = url; v.muted = true; v.setAttribute('playsinline', '');
@@ -562,7 +562,7 @@ function runLocalAnalysis(){
     pose = new Pose({ locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/' + f; } });
     pose.setOptions({ modelComplexity: 0, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
     pose.onResults(function(res){ if(res && res.poseLandmarks){ var f = extractDualFeatures(res.poseLandmarks); if(f) feats.push(f); } });
-  }catch(e){ D.localAnalysis = { label: D.localLabel, score: 0, metrics: [0, 0, 0], issue: 'projection', headline: 'Pose model did not start for this clip', fix: DUAL_FIX.projection, frames: 0 }; finishLocalAnalysis(); return; }
+  }catch(e){ D.localAnalysis = { label: D.localLabel, score: 0, metrics: [0, 0, 0], issue: 'projection', headline: 'Analyzer didn\u2019t start for this clip', fix: DUAL_FIX.projection, frames: 0 }; finishLocalAnalysis(); return; }
   function finish(){
     if(done) return; done = true;
     clearInterval(timer);
@@ -581,20 +581,20 @@ function runLocalAnalysis(){
 function finishLocalAnalysis(){
   if(D.role === 'join'){
     sendMsg({ type: 'analysis', summary: D.localAnalysis });
-    renderVerdict([D.localAnalysis], 'This angle only — the main phone combines both angles.');
+    renderVerdict([D.localAnalysis], 'This camera only \u2014 the main phone combines both cameras.');
   } else {
     maybeRenderVerdict();
   }
 }
 function maybeRenderVerdict(){
   if(D.localAnalysis && D.remoteAnalysis) renderVerdict([D.localAnalysis, D.remoteAnalysis], null);
-  else if(D.localAnalysis && !D.remoteAnalysis) setText('dualVerdict', 'This angle scored ' + D.localAnalysis.score + '%. Waiting on the other angle…');
+  else if(D.localAnalysis && !D.remoteAnalysis) setText('dualVerdict', 'This camera scored ' + D.localAnalysis.score + '%. Waiting on the other camera\u2026');
 }
 function renderVerdict(list, note){
   var wrap = $('dualVerdictCards');
   if(wrap){
     wrap.innerHTML = list.map(function(s){
-      return '<div class="dual-card"><h4>' + s.label + ' view · ' + s.score + '%</h4>' +
+      return '<div class="dual-card"><h4>' + s.label + ' camera \u00b7 ' + s.score + '%</h4>' +
         '<p>' + s.headline + '</p>' +
         '<p class="dual-card-fix"><strong>One fix:</strong> ' + s.fix.cue + ' — ' + s.fix.drill + '</p></div>';
     }).join('');
@@ -604,11 +604,11 @@ function renderVerdict(list, note){
     if(list.length >= 2){
       var a = list[0], b = list[1];
       var weak = a.score <= b.score ? a : b;
-      combined.innerHTML = '<strong>Dual-Angle verdict — ' + a.label + ' ' + a.score + '% · ' + b.label + ' ' + b.score + '%.</strong> ' +
-        'Both views agree the clearest fix is: ' + weak.fix.cue + ' Drill: ' + weak.fix.drill + '.' +
-        '<span class="dual-disclaimer">Dual-Angle = two 2D views combined. Not true 3D — two phone cameras can’t measure depth without calibration.</span>';
+      combined.innerHTML = '<strong>Two-camera result \u2014 ' + a.label + ' ' + a.score + '% \u00b7 ' + b.label + ' ' + b.score + '%.</strong> ' +
+        'Both cameras agree the clearest fix is: ' + weak.fix.cue + ' Drill: ' + weak.fix.drill + '.' +
+        '<span class="dual-disclaimer">Two flat camera views combined. Not 3D \u2014 two phone cameras can\u2019t measure depth.</span>';
     } else if(note){
-      combined.innerHTML = note + '<span class="dual-disclaimer">Dual-Angle = two 2D views combined. Not true 3D.</span>';
+      combined.innerHTML = note + '<span class="dual-disclaimer">Two flat camera views combined. Not 3D.</span>';
     }
   }
   showEl($('dualVerdictBox'), true);
@@ -619,7 +619,7 @@ function maybeShowReplay(){
   if(D.role === 'join') return; // joiner replays its own clip (see showOwnReplay)
   if(!D.localBlob) return;
   if(D.remoteBlob){ showReplay(D.localBlob, D.remoteBlob); }
-  else setText('dualRecState', 'Your clip is ready. Waiting for the iPad clip… (or tap Replay my angle only)');
+  else setText('dualRecState', 'Your clip is ready. Waiting for the second clip\u2026 (or tap Replay my camera only)');
 }
 function showOwnReplay(){
   if(!D.localBlob) return;
@@ -663,23 +663,20 @@ function showReplay(blobA, blobB){
     if(vb && blobB){ vb.pause(); vb.currentTime = clamp(vb.currentTime + dt, 0, vb.duration || 0); }
     var pb = $('dualPlayBtn'); if(pb) pb.textContent = '▶ Play both';
   }
-  setText('dualRecState', 'Replay ready — one scrub bar drives both angles.');
+  setText('dualRecState', 'Replay ready \u2014 one slider moves both clips.');
 }
 
 /* ---------- View switching / teardown ---------- */
 function showDual(){
-  document.body.dataset.activeView = 'dual';
-  setText('screenTitle', 'Dual-Angle');
-  setText('screenSubtitle', 'Two cameras, one rep — side + front together');
-  document.querySelectorAll('.nav-item,.tab-item').forEach(function(item){
-    item.setAttribute('aria-current', item.dataset.view === 'dual' ? 'page' : 'false');
-  });
-  document.querySelector('.page').scrollTop = 0;
+  // Two cameras live INSIDE the AI Analyzer now — no separate tab.
+  // Just bring the Two cameras section into view.
+  var sec = $('dualSection');
+  if(sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
   showEl($('dualHostPanel'), D.role === 'host');
   showEl($('dualJoinPanel'), D.role === 'join');
 }
 function dualTeardown(){
-  if(D.recording) stopRecording('left Dual view');
+  if(D.recording) stopRecording('left the AI Analyzer');
   try{ if(D.conn) D.conn.close(); }catch(e){}
   try{ if(D.peer) D.peer.destroy(); }catch(e){}
   try{ if(D.dc) D.dc.close(); }catch(e){}
@@ -696,10 +693,8 @@ function initDual(){
   var joinBtn = $('dualJoinBtn'); if(joinBtn) joinBtn.addEventListener('click', function(){ showDual(); showEl($('dualHostPanel'), false); showEl($('dualJoinPanel'), true); });
   document.querySelectorAll('.nav-item,.tab-item').forEach(function(item){
     item.addEventListener('click', function(){
-      if(item.dataset.view === 'dual'){ showDual(); }
-      // The AI Analyzer can use the live dual connection — do NOT tear it
-      // down when navigating there. Every other view frees the cameras.
-      else if(item.dataset.view !== 'ai'){ dualTeardown(); }
+      // Two cameras live inside the AI Analyzer — leaving it frees the cameras.
+      if(item.dataset.view !== 'ai'){ dualTeardown(); }
     });
   });
   var joinGo = $('dualJoinGo'); if(joinGo) joinGo.addEventListener('click', joinStart);
@@ -708,8 +703,8 @@ function initDual(){
   var replayOwn = $('dualReplayOwnBtn'); if(replayOwn) replayOwn.addEventListener('click', showOwnReplay);
   var disc = $('dualDisconnect'); if(disc) disc.addEventListener('click', function(){ dualTeardown(); dualStatus('Disconnected.'); showEl($('dualHostPanel'), false); showEl($('dualJoinPanel'), false); });
   var discJ = $('dualJoinDisconnect'); if(discJ) discJ.addEventListener('click', function(){ dualTeardown(); dualStatus('Disconnected.'); showEl($('dualHostPanel'), false); showEl($('dualJoinPanel'), false); });
-  var calib = $('dualCalibrate'); if(calib) calib.addEventListener('click', function(){ D.calibPending = true; setText('dualCalibState', 'Stand in frame — calibrating…'); startPoseWatchOnce(); });
-  var calibJ = $('dualJoinCalibrate'); if(calibJ) calibJ.addEventListener('click', function(){ D.calibPending = true; setText('dualJoinCalibState', 'Stand in frame — calibrating…'); startPoseWatchOnce(); });
+  var calib = $('dualCalibrate'); if(calib) calib.addEventListener('click', function(){ D.calibPending = true; setText('dualCalibState', 'Stand in frame \u2014 lining up\u2026'); startPoseWatchOnce(); });
+  var calibJ = $('dualJoinCalibrate'); if(calibJ) calibJ.addEventListener('click', function(){ D.calibPending = true; setText('dualJoinCalibState', 'Stand in frame \u2014 lining up\u2026'); startPoseWatchOnce(); });
   var labelSel = $('dualLocalLabel'); if(labelSel) labelSel.addEventListener('change', function(){ D.localLabel = labelSel.value; sendMsg({ type: 'label', label: D.localLabel }); });
   var labelSelJ = $('dualJoinLocalLabel'); if(labelSelJ) labelSelJ.addEventListener('change', function(){ D.localLabel = labelSelJ.value; sendMsg({ type: 'label', label: D.localLabel }); });
   var manualHost = $('dualManualHostBtn'); if(manualHost) manualHost.addEventListener('click', function(){ showEl($('dualManualHost'), true); manualHostStart(); });
