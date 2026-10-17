@@ -1,18 +1,23 @@
-/* Track Analyzer — AI Analyzer (v2.1.4)
+/* Track Analyzer — AI Analyzer (v2.1.5)
  *
  * On-device coaching: the camera watches the athlete, names what it sees,
  * and gives one fix at a time from the embedded knowledge base
  * (js/ai-knowledge.js). No cloud model, no API key, no network calls.
  *
- * v2.1.4: the AI auto-detects the movement — no activity picker. One
+ * v2.1.5: camera works on PC too (camera kit falls back to any available
+ * camera, with a specific error when it cannot start). Every camera can
+ * switch (front / back / any webcam) and can be turned off and back on.
+ * In two-camera mode the skeleton rig is drawn ON the person in the
+ * Camera 2 video. Your form vs Pro form is a 3D-style side-by-side
+ * comparison (cartoon runners from measured angles, never real video,
+ * never motion capture) with a view toggle: AI picks / You vs Pro /
+ * Just me. The AI auto-detects the movement — no activity picker. One
  * Block Starts toggle drives both this coaching and the rep check
  * (js/app.js, TrackClassic): off = auto-detect everything, on = block
- * starts. The rep check's score + one fix feed this live panel. A live
- * 2D skeleton drawing sits on top of the camera preview. Gestures mean
- * record: 1 finger = start recording + analyzing, 2 fingers = stop +
- * deep check. The voice always says "Recording has started." /
- * "Recording has ended." on those transitions, even when voice coaching
- * is off.
+ * starts. Gestures mean record: 1 finger = start recording + analyzing,
+ * 2 fingers = stop + deep check. The voice always says "Recording has
+ * started." / "Recording has ended." on those transitions, even when
+ * voice coaching is off.
  *
  * Honest limits: it only coaches what the camera can see. If joints are out
  * of frame it says what it can't see instead of guessing. Activity labels
@@ -53,12 +58,13 @@ var AI = {
   movingSince: 0, setSince: 0,
   mode: 'idle', // idle | watching | coaching
   lastFrontal: false, lastLandmarks1: null, lastRawLm: null,
-  facing: 'environment',
+  facing: 'environment', camOff: false, camDeviceId: null,
   clipMode: false, clipUrl: null,
   lastClassic: null, lastTripped: null, lastGuideIssue: '',
   announcingUntil: 0,
   deep: { frames1: [], frames2: [], worst: null },
   deepReport: null, lastSession: null,
+  frameAnnotations: {}, frameMarksHidden: {},
   gesture: { hands: null, handsFailed: false, lastCount: -1, holdKind: '', holdCount: 0, timer: null }
 };
 var ACTIVITY_LABEL = {
@@ -161,11 +167,196 @@ function renderLatestFix(){
   else text.textContent = 'No repeated fault stood out in this run — nice work.';
   box.hidden = false;
 }
+/* On-picture annotations for the grabbed frames in the "Latest AI Analyzer
+ * results" card. Circles + leader lines + short labels drawn ON the photo
+ * itself: green = looks good, yellow = needs work, red = fix. Tapping a
+ * circle/label shows that fault's full cue + drill below the photo.
+ * Honesty rule: a joint is only marked when it is clearly visible in that
+ * frame (visibility > 0.5). If a fault's joints can't be seen, NO marker
+ * is drawn — the text below says "Can't see [joint]" instead. */
+var FRAME_JOINT_NAMES = { 0: 'nose', 2: 'left eye', 5: 'right eye', 7: 'left ear', 8: 'right ear',
+  11: 'left shoulder', 12: 'right shoulder', 13: 'left elbow', 14: 'right elbow',
+  15: 'left wrist', 16: 'right wrist', 23: 'left hip', 24: 'right hip',
+  25: 'left knee', 26: 'right knee', 27: 'left ankle', 28: 'right ankle' };
+function frameJointVisible(lm, idx){
+  var p = lm && lm[idx];
+  return !!(p && (p.v === undefined || p.v > 0.5));
+}
+function buildFrameMarks(fr, report, isBest){
+  // Returns { marks, unmarked }. At most 5 marks per photo (phone-readable):
+  // red top fix first, then up to 2 yellow minor faults, then green
+  // strengths on the best frames only. Each fault marks ONE joint — its
+  // first clearly visible joint — so the photo stays readable.
+  var out = { marks: [], unmarked: [] };
+  var lm = fr && fr.lm;
+  if(!lm || !report) return out;
+  var faults = report.faultList || [];
+  var used = {};
+  function addMark(idx, color, label, detail){
+    if(!frameJointVisible(lm, idx) || used[idx]) return false;
+    used[idx] = true;
+    out.marks.push({ idx: idx, x: lm[idx].x, y: lm[idx].y, color: color, label: label, detail: detail });
+    return true;
+  }
+  function markFault(f, color, labelPrefix){
+    var joints = skelFaultJoints(f.check);
+    for(var i = 0; i < joints.length; i++){
+      if(addMark(joints[i], color, labelPrefix + f.fault,
+        'Cue: “' + f.cue + '” Drill: ' + f.drill + '.')) return;
+    }
+    if(joints.length) out.unmarked.push({ fault: f.fault, joint: FRAME_JOINT_NAMES[joints[0]] || 'joint' });
+  }
+  if(faults[0]) markFault(faults[0], 'red', 'Fix: ');
+  faults.slice(1, 3).forEach(function(f){ if(out.marks.length < 4) markFault(f, 'yellow', 'Needs work: '); });
+  if(isBest){
+    // Green = posture anchors that were NOT flagged, on a frame that
+    // scored well. The label describes the frame, not a perfect joint.
+    [23, 24, 11, 12].forEach(function(j){
+      if(out.marks.length < 5) addMark(j, 'green', 'Looks good',
+        'This frame scored ~' + fr.score + '% — ' + (FRAME_JOINT_NAMES[j] || 'joint') + ' held its shape.');
+    });
+  }
+  return out;
+}
+function frameMarkColor(color){
+  return color === 'red' ? '#ff5c5c' : color === 'yellow' ? '#ffd23d' : '#3ddc97';
+}
+function drawFrameMarks(canvas, marks){
+  if(!canvas || !marks) return;
+  var ctx = canvas.getContext('2d');
+  if(!ctx) return;
+  var w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  var fs = Math.max(11, Math.round(w * 0.04));
+  ctx.font = '700 ' + fs + 'px Barlow, system-ui, sans-serif';
+  ctx.textBaseline = 'middle';
+  marks.forEach(function(m){
+    var cx = m.x * w, cy = m.y * h;
+    var color = frameMarkColor(m.color);
+    var pad = fs * 0.55, tw = ctx.measureText(m.label).width;
+    var pw = tw + pad * 2, ph = fs * 1.9;
+    var right = m.x < 0.55;
+    var lx = right ? cx + w * 0.05 : cx - w * 0.05 - pw;
+    lx = Math.max(2, Math.min(w - pw - 2, lx));
+    var ly = Math.max(2, Math.min(h - ph - 2, cy - ph / 2));
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(2, w * 0.006);
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(right ? lx : lx + pw, ly + ph / 2);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(0,0,0,0.72)';
+    ctx.beginPath();
+    if(ctx.roundRect) ctx.roundRect(lx, ly, pw, ph, ph / 2);
+    else ctx.rect(lx, ly, pw, ph);
+    ctx.fill();
+    ctx.fillStyle = color;
+    ctx.fillText(m.label, lx + pad, ly + ph / 2 + 1);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.max(6, w * 0.02), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  });
+}
+function frameMarkAt(marks, nx, ny, w, h){
+  // Nearest mark to a normalized (0..1) point, or null. Tolerance is
+  // generous so a finger tap on a phone can hit a small circle.
+  if(!marks || !marks.length) return null;
+  var tol = Math.max(0.12, (30 / Math.max(1, w)));
+  var best = null, bestD = Infinity;
+  marks.forEach(function(m){
+    var d = Math.sqrt(Math.pow(m.x - nx, 2) + Math.pow(m.y - ny, 2));
+    if(d < bestD){ bestD = d; best = m; }
+  });
+  return bestD <= tol ? best : null;
+}
+function frameMarksFigureHtml(key, fr, caption, report, isBest){
+  var built = buildFrameMarks(fr, report, isBest);
+  AI.frameAnnotations[key] = built;
+  var marks = built.marks;
+  var html = '<figure class="ai-frame-annot" data-frame="' + key + '"><div class="ai-frame-stage">' +
+    '<img src="' + fr.url + '" alt="' + caption + '">' +
+    '<canvas class="ai-frame-marks" data-frame="' + key + '"></canvas></div>' +
+    '<figcaption>' + caption + '</figcaption>';
+  if(marks.length){
+    html += '<p class="ai-frame-legend">Green = looks good · Yellow = needs work · Red = fix</p>' +
+      '<button class="ghost-control small" type="button" data-marks-toggle="' + key + '">Hide markings</button>' +
+      '<p class="ai-frame-detail" data-frame-detail="' + key + '">Tap a circle or label to see its fix.</p>';
+  }
+  // Below-photo detail text: quick read on the picture, full detail here.
+  var good = marks.filter(function(m){ return m.color === 'green'; });
+  if(good.length){
+    var parts = [];
+    if(good.some(function(m){ return m.idx === 23 || m.idx === 24; })) parts.push('hips');
+    if(good.some(function(m){ return m.idx === 11 || m.idx === 12; })) parts.push('shoulders');
+    html += '<p class="ai-frame-below"><strong>What looks good:</strong> ' +
+      (parts.length ? parts.join(' and ') + ' held their shape.' : 'This frame held its shape.') + '</p>';
+  }
+  marks.filter(function(m){ return m.color !== 'green'; }).forEach(function(m){
+    html += '<p class="ai-frame-below"><strong>' + (m.color === 'red' ? 'Work on: ' : 'Work on: ') + '</strong>' +
+      m.label + ' — ' + m.detail + '</p>';
+  });
+  built.unmarked.forEach(function(u){
+    html += '<p class="ai-frame-below ai-frame-cantsee">Can’t see ' + u.joint +
+      ' in this frame — no marker drawn for ' + u.fault + '. The fix still counts; check the full video.</p>';
+  });
+  return html + '</figure>';
+}
+function sizeAndDrawFrameMarks(fig){
+  if(!fig) return;
+  var key = fig.getAttribute('data-frame');
+  var built = AI.frameAnnotations[key];
+  if(!built) return;
+  var img = fig.querySelector('img');
+  var canvas = fig.querySelector('canvas.ai-frame-marks');
+  if(!img || !canvas) return;
+  function draw(){
+    if(img.naturalWidth > 0){ canvas.width = img.naturalWidth; canvas.height = img.naturalHeight; }
+    else { canvas.width = 320; canvas.height = 240; }
+    if(AI.frameMarksHidden[key]){ canvas.hidden = true; return; }
+    canvas.hidden = false;
+    drawFrameMarks(canvas, built.marks);
+  }
+  if(img.complete && img.naturalWidth > 0) draw();
+  else img.onload = draw;
+  if(!canvas._marksWired){
+    canvas._marksWired = true;
+    canvas.addEventListener('click', function(ev){
+      var rect = canvas.getBoundingClientRect();
+      var nx = (ev.clientX - rect.left) / Math.max(1, rect.width);
+      var ny = (ev.clientY - rect.top) / Math.max(1, rect.height);
+      var hit = frameMarkAt(built.marks, nx, ny, canvas.width, canvas.height);
+      var detail = fig.querySelector('[data-frame-detail]');
+      if(hit && detail) detail.textContent = hit.label + ' — ' + hit.detail;
+      else if(detail) detail.textContent = 'Tap a circle or label to see its fix.';
+    });
+  }
+  var toggle = fig.querySelector('[data-marks-toggle]');
+  if(toggle && !toggle._marksWired){
+    toggle._marksWired = true;
+    toggle.addEventListener('click', function(){
+      AI.frameMarksHidden[key] = !AI.frameMarksHidden[key];
+      toggle.textContent = AI.frameMarksHidden[key] ? 'Show markings' : 'Hide markings';
+      var legend = fig.querySelector('.ai-frame-legend');
+      if(legend) legend.hidden = !!AI.frameMarksHidden[key];
+      draw();
+    });
+  }
+}
+function drawAllFrameMarks(){
+  var body = $('latestAiResultsBody');
+  if(!body) return;
+  body.querySelectorAll('figure.ai-frame-annot').forEach(function(fig){ sizeAndDrawFrameMarks(fig); });
+}
 function renderLatestAiPhoto(){
   var card = $('latestAiResults'), body = $('latestAiResultsBody');
   if(!card || !body) return;
   var s = AI.lastSession, rep = AI.deepReport;
   if(!s){ card.hidden = true; return; }
+  AI.frameAnnotations = {};
   var repsHtml = '<p>Total reps: ' + totalReps(s) + '</p>';
   var faultsHtml;
   if(rep && rep.faultList.length){
@@ -177,16 +368,19 @@ function renderLatestAiPhoto(){
   }
   var framesHtml = '';
   if(s.bestFrames.length){
-    framesHtml = '<h4>Best frames</h4><div class="ai-best-frames">' + s.bestFrames.map(function(fr){
-      return '<figure><img src="' + fr.url + '" alt="Best frame"><figcaption>' + (ACTIVITY_LABEL[fr.activity] || fr.activity) + ' · ' + fr.score + '%</figcaption></figure>';
+    framesHtml = '<h4>Best frames</h4><div class="ai-best-frames">' + s.bestFrames.map(function(fr, i){
+      return frameMarksFigureHtml('best' + i, fr,
+        (ACTIVITY_LABEL[fr.activity] || fr.activity) + ' · ' + fr.score + '%', rep, true);
     }).join('') + '</div>';
   }
   if(AI.deep.worst){
-    framesHtml += '<h4>Worst frame</h4><figure><img src="' + AI.deep.worst.url + '" alt="Worst frame"><figcaption>' +
-      (ACTIVITY_LABEL[AI.deep.worst.activity] || AI.deep.worst.activity) + ' · ~' + AI.deep.worst.score + '%</figcaption></figure>';
+    var wf = AI.deep.worst;
+    framesHtml += '<h4>Worst frame</h4>' + frameMarksFigureHtml('worst', wf,
+      (ACTIVITY_LABEL[wf.activity] || wf.activity) + ' · ~' + wf.score + '%', rep, false);
   }
   body.innerHTML = repsHtml + faultsHtml + framesHtml;
   card.hidden = false;
+  drawAllFrameMarks();
 }
 function notifyAnalysisDone(){
   renderLatestFix();
@@ -216,6 +410,81 @@ function attachStream(video, stream){
   video.muted = true;
   video.setAttribute('playsinline', '');
   var p = video.play(); if(p && p.catch) p.catch(function(){});
+}
+/* Single camera: open via the camera kit (chosen device / facing first,
+ * then ANY available camera — this is what makes a PC webcam work).
+ * Falls back to a direct request if the kit ever fails to load. */
+function openSingleCamera(){
+  if(window.TrackCam){
+    var pref = {};
+    if(AI.camDeviceId) pref.deviceId = AI.camDeviceId;
+    else if(AI.facing) pref.facing = AI.facing;
+    return window.TrackCam.openCamera(pref).then(function(stream){
+      AI.ownStream = stream;
+      var d = window.TrackCam.currentDeviceId(stream);
+      if(d) AI.camDeviceId = d;
+      return stream;
+    });
+  }
+  return new Promise(function(resolve, reject){
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ reject(new Error('Camera not supported on this device.')); return; }
+    navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: AI.facing, width: { ideal: 1280 }, height: { ideal: 720 } } })
+      .then(function(stream){ AI.ownStream = stream; resolve(stream); }).catch(reject);
+  });
+}
+function camErrorText(err){
+  if(window.TrackCam) return window.TrackCam.cameraErrorText(err);
+  return 'Camera didn’t start — tap to try again.';
+}
+/* Camera on/off (single camera). OFF ends a running recording first (same
+ * as Stop — announces “Recording has ended.” and runs the deep check), so
+ * the app never silently records a black feed. ON starts watching again. */
+function setSingleCamera(on){
+  AI.camOff = !on;
+  var btn = $('aiCamToggleBtn');
+  if(btn){
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    btn.textContent = on ? 'Camera: on' : 'Camera: off';
+  }
+  showEl($('aiCamOff'), !on);
+  var v = $('aiVideo');
+  if(v) v.style.visibility = on ? '' : 'hidden';
+  if(!on){
+    if(AI.running) stopAndAnalyze();
+    else if(AI.mode === 'watching') stopAI();
+    else if(AI.ownStream){ AI.ownStream.getTracks().forEach(function(t){ t.stop(); }); AI.ownStream = null; if(v) v.srcObject = null; }
+    setGestureStatus('off');
+    setText('aiSeeing', 'Camera off.');
+  } else if(AI.mode === 'idle'){
+    startWatching();
+  }
+}
+/* Switch camera (single camera): cycle this device's REAL cameras —
+ * front / back on phones, every webcam on a PC. Swaps the live stream
+ * without stopping the session. One camera only? Stays on it, no error. */
+function switchSingleCamera(){
+  if(AI.camOff){ setText('aiSeeing', 'Camera is off — turn it on first, then switch.'); return; }
+  if(AI.usingDual){ setText('aiSeeing', 'Two cameras are connected — switch each camera in Two cameras below.'); return; }
+  if(AI.ownStream && window.TrackCam){
+    window.TrackCam.nextCamera(AI.ownStream).then(function(n){
+      if(n.onlyOne){ setText('aiSeeing', 'Only one camera on this device — staying on it.'); return; }
+      var oldStream = AI.ownStream;
+      AI.camDeviceId = n.deviceId;
+      openSingleCamera().then(function(stream){
+        attachStream($('aiVideo'), stream);
+        if(oldStream && oldStream !== stream) oldStream.getTracks().forEach(function(t){ t.stop(); });
+        setText('aiSeeing', 'Switched camera.');
+      }).catch(function(err){
+        AI.camDeviceId = null;
+        setText('aiSeeing', camErrorText(err));
+      });
+    });
+    return;
+  }
+  // No live stream yet: flip the preferred facing for the next start.
+  AI.facing = AI.facing === 'environment' ? 'user' : 'environment';
+  AI.camDeviceId = null;
+  if(AI.mode === 'idle') startWatching();
 }
 function makePose(onResult){
   var pose = new Pose({ locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/' + f; } });
@@ -487,9 +756,9 @@ function maybeCaptureWorst(score, activity, lm){
   AI.deep.worst = { score: score, activity: activity, url: url, lm: lm || null };
 }
 
-/* Live skeleton rig: the same 2D drawing as the deep report, drawn on top
- * of the camera preview every pose result. Main angle only — never 3D,
- * never depth. Problem joint red/yellow, good joints green. */
+/* Live skeleton rig: drawn on top of the camera preview every pose
+ * result. Main angle only — never 3D, never depth. Problem joint
+ * red/yellow, good joints green. */
 function drawLiveSkeleton(rawLm){
   var canvas = $('aiSkelOverlay');
   var v = $('aiVideo');
@@ -503,20 +772,44 @@ function drawLiveSkeleton(rawLm){
   var dict = simplifyLm(rawLm);
   drawSkeleton(canvas, dict, skelFaultJoints(AI.lastTripped || ''));
 }
-function clearLiveSkeleton(){
-  var canvas = $('aiSkelOverlay');
-  if(!canvas) return;
+/* Same rig on the Camera 2 preview (two-camera mode): the skeleton is
+ * drawn ON the person in the Camera 2 video. */
+function drawLiveSkeleton2(rawLm){
+  var canvas = $('aiSkelOverlay2');
+  var v = $('aiVideo2');
+  if(!canvas || !v) return;
+  var w = v.clientWidth || 320, h = v.clientHeight || 240;
+  if(canvas.width !== w) canvas.width = w;
+  if(canvas.height !== h) canvas.height = h;
   var ctx = canvas.getContext('2d');
-  if(ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if(!ctx) return;
+  if(!rawLm){ ctx.clearRect(0, 0, canvas.width, canvas.height); return; }
+  var dict = simplifyLm(rawLm);
+  drawSkeleton(canvas, dict, skelFaultJoints(AI.lastTripped || ''));
+}
+function clearLiveSkeleton(){
+  ['aiSkelOverlay', 'aiSkelOverlay2'].forEach(function(id){
+    var canvas = $(id);
+    if(!canvas) return;
+    var ctx = canvas.getContext('2d');
+    if(ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+  });
 }
 
-/* ================= Runway: Your form vs Pro form (2D demo) =================
- * Two 2D stick-rig characters running on a track lane. LEFT runs with
- * YOUR measured angles from the analysis (trunk lean, thigh separation,
- * foot strike); RIGHT runs with ideal angles for the activity. The fix
- * shown is the analysis's actual top fix. This is an animated 2D drawing
- * from measured angles — never 3D, never motion capture, never the
- * athlete's real video. */
+/* ================= Runway: Your form vs Pro form =================
+ * 3D-style side-by-side comparison (like the 3D speed-comparison videos,
+ * but comparing FORM, not speed). Two cartoon runners on the same track:
+ * LEFT = YOU, joint angles / posture from the AI's measured angles in the
+ * just-finished run; RIGHT = PRO, ideal angles from the knowledge base.
+ * The fix shown is the analysis's actual top fix. Cartoon runners built
+ * from measured angles — never real video, never motion capture, never
+ * a 3D scan. If Three.js fails to load, the 2D canvas version below
+ * draws instead, so the feature never breaks.
+ *
+ * View toggle: "AI picks" (default) / "You vs Pro" / "Just me". AI picks
+ * is a plain rule on the detected top fix, stated in the UI — no fake
+ * intelligence: posture/angle fixes show side-by-side (the difference is
+ * the lesson); foot-recovery (and a clean run) shows Just me, bigger. */
 var RUNWAY_IDEAL = {
   overstride: 'foot lands under the hips', earlyRise: 'stays low, rises gradually',
   armCross: 'hands run on two straight rails', elbowShape: 'elbows drive hip to lip, loose shoulders',
@@ -525,8 +818,50 @@ var RUNWAY_IDEAL = {
   squatDepth: 'deep, tall squat', hingeBack: 'flat back, hips back', squatKnee: 'knees track over the toes',
   armSplit: 'hands rip apart at clearance'
 };
-var runway = { playing: false, phase: 0, raf: 0, lastT: 0,
+var runway = { playing: false, phase: 0, raf: 0, lastT: 0, view: 'auto', hasRun: false,
   your: { lean: 14, thigh: 80, shin: 0.18 }, pro: { lean: 12, thigh: 100, shin: 0.05 }, fix: null };
+/* Top fixes where watching YOUR OWN leg cycle alone reads clearest. Every
+ * other top fix is a shape/angle comparison — side-by-side wins. */
+var RUNWAY_SOLO_CHECKS = ['footRecovery'];
+function runwayPickedView(){
+  if(runway.view === 'side') return 'side';
+  if(runway.view === 'solo') return 'solo';
+  // AI picks: plain rule on the detected top fix. No fix (clean run) or a
+  // foot-recovery fix -> your form alone, bigger. Everything else -> side.
+  if(!runway.fix) return 'solo';
+  if(RUNWAY_SOLO_CHECKS.indexOf(runway.fix.check) !== -1) return 'solo';
+  return 'side';
+}
+function runwayPickReason(){
+  if(!runway.hasRun || runway.view !== 'auto') return '';
+  if(runway.fix){
+    if(RUNWAY_SOLO_CHECKS.indexOf(runway.fix.check) !== -1)
+      return 'AI picked Just me by a plain rule: your top fix was \u201c' + runway.fix.fault + '\u201d — watching your own leg cycle alone, bigger, shows that one clearest.';
+    return 'AI picked You vs Pro by a plain rule: your top fix was \u201c' + runway.fix.fault + '\u201d — seeing your form next to the pro makes the difference clearest.';
+  }
+  return 'AI picked Just me by a plain rule: no top fix stood out, so your form shows alone, bigger.';
+}
+function applyRunwayView(){
+  document.querySelectorAll('[data-runway-view]').forEach(function(btn){
+    btn.setAttribute('aria-pressed', btn.dataset.runwayView === runway.view ? 'true' : 'false');
+  });
+  var reason = $('runwayPickReason');
+  if(reason) reason.textContent = runwayPickReason();
+  var fixEl = $('runway3dFix');
+  var picked = runwayPickedView();
+  if(fixEl){
+    if(runway.fix){
+      fixEl.hidden = false;
+      fixEl.textContent = 'Fix this: ' + runway.fix.fault;
+      fixEl.style.left = picked === 'solo' ? '50%' : '25%';
+    } else fixEl.hidden = true;
+  }
+  var youLabel = $('runway3dLabelYou'), proLabel = $('runway3dLabelPro');
+  if(youLabel) youLabel.style.left = picked === 'solo' ? '50%' : '25%';
+  if(proLabel) proLabel.style.display = picked === 'solo' ? 'none' : '';
+  if(runway3d.active) runway3dDraw();
+  else runwayDraw();
+}
 function runwayMedians(){
   var frames = AI.deep.frames1 || [];
   function med(key){
@@ -544,8 +879,8 @@ function renderRunway(){
   if(m.shin !== null) runway.your.shin = Math.max(0, Math.min(0.5, m.shin));
   var rep = AI.deepReport;
   runway.fix = rep && rep.faultList && rep.faultList[0] ? rep.faultList[0] : null;
+  runway.hasRun = true;
   if(ph) ph.hidden = true;
-  if(canvas) canvas.hidden = false;
   if(call){
     if(runway.fix){
       var ideal = RUNWAY_IDEAL[runway.fix.check] || 'clean, tall, relaxed shape';
@@ -554,36 +889,45 @@ function renderRunway(){
       call.textContent = 'Your form looked clean this run — the pro shows the same tall, relaxed shape.';
     }
   }
+  applyRunwayView();
+  // 2D canvas shows right away (fallback); if Three.js loads, the 3D
+  // version takes over. Either way the box never sits blank.
+  if(!runway3d.active && canvas) canvas.hidden = false;
+  ensureRunway3D();
   runwayStart();
 }
-function drawRunner(ctx, cx, groundY, p, phase, color){
+function drawRunner(ctx, cx, groundY, p, phase, color, scale){
+  scale = scale || 1;
   var leanRad = p.lean * Math.PI / 180;
-  var hipX = cx, hipY = groundY - 78;
-  var shX = hipX + Math.sin(leanRad) * 52, shY = hipY - 52 * Math.cos(leanRad);
-  var headX = shX + Math.sin(leanRad) * 18, headY = shY - 18 * Math.cos(leanRad) - 8;
-  ctx.strokeStyle = color; ctx.lineWidth = 6; ctx.lineCap = 'round';
+  var hipX = cx, hipY = groundY - 78 * scale;
+  var shX = hipX + Math.sin(leanRad) * 52 * scale, shY = hipY - 52 * Math.cos(leanRad) * scale;
+  var headX = shX + Math.sin(leanRad) * 18 * scale, headY = shY - 18 * Math.cos(leanRad) * scale - 8 * scale;
+  ctx.strokeStyle = color; ctx.lineWidth = 6 * scale; ctx.lineCap = 'round';
   ctx.beginPath(); ctx.moveTo(hipX, hipY); ctx.lineTo(shX, shY); ctx.stroke();
-  ctx.beginPath(); ctx.arc(headX, headY, 13, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(headX, headY, 13 * scale, 0, Math.PI * 2); ctx.stroke();
   var swing = (p.thigh / 100) * 0.9;
   for(var s = 0; s < 2; s++){
     var ph = phase + s * Math.PI;
     var thighAng = Math.sin(ph) * swing;
-    var kx = hipX + Math.sin(thighAng) * 42, ky = hipY + Math.cos(thighAng) * 42;
+    var kx = hipX + Math.sin(thighAng) * 42 * scale, ky = hipY + Math.cos(thighAng) * 42 * scale;
     var footSwing = Math.sin(ph - 0.6) * swing;
-    var fx = kx + Math.sin(footSwing) * 40 + p.shin * 120, fy = groundY - Math.max(0, Math.cos(ph) * 10);
+    var fx = kx + Math.sin(footSwing) * 40 * scale + p.shin * 120 * scale, fy = groundY - Math.max(0, Math.cos(ph) * 10 * scale);
     ctx.beginPath(); ctx.moveTo(hipX, hipY); ctx.lineTo(kx, ky); ctx.lineTo(fx, fy); ctx.stroke();
     var armPh = ph + Math.PI;
-    var ex = shX + Math.sin(Math.sin(armPh) * 0.7) * 30, ey = shY + 30;
-    var hx = ex + Math.sin(Math.sin(armPh - 0.6) * 0.7) * 26, hy = ey + 26;
+    var ex = shX + Math.sin(Math.sin(armPh) * 0.7) * 30 * scale, ey = shY + 30 * scale;
+    var hx = ex + Math.sin(Math.sin(armPh - 0.6) * 0.7) * 26 * scale, hy = ey + 26 * scale;
     ctx.beginPath(); ctx.moveTo(shX, shY); ctx.lineTo(ex, ey); ctx.lineTo(hx, hy); ctx.stroke();
   }
 }
-function runwayDraw(){
+/* 2D fallback: same comparison as the 3D version, drawn on the canvas.
+ * Used only when Three.js fails to load — the honesty label says so. */
+function runwayDraw2D(){
   var canvas = $('runwayCanvas');
   if(!canvas) return;
   var ctx = canvas.getContext('2d');
   if(!ctx) return;
   var W = canvas.width || 640, H = canvas.height || 280;
+  var solo = runwayPickedView() === 'solo';
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = '#0e2a1a'; ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = '#b3552f'; ctx.fillRect(0, H - 52, W, 52);
@@ -592,20 +936,31 @@ function runwayDraw(){
   ctx.beginPath();
   for(var x = -48 + dashOff; x < W; x += 48){ ctx.moveTo(x, H - 26); ctx.lineTo(x + 24, H - 26); }
   ctx.stroke();
-  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-  ctx.beginPath(); ctx.moveTo(W / 2, 8); ctx.lineTo(W / 2, H - 56); ctx.stroke();
   ctx.fillStyle = '#ffffff'; ctx.font = 'bold 15px Barlow, sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText('Your form', W / 4, 24);
-  ctx.fillText('Pro form', (3 * W) / 4, 24);
-  ctx.fillStyle = '#ffd23d'; ctx.font = '12px Barlow, sans-serif';
-  ctx.fillText('from your measured angles', W / 4, 42);
-  ctx.fillText('ideal angles', (3 * W) / 4, 42);
-  drawRunner(ctx, W / 4, H - 52, runway.your, runway.phase, '#ffd23d');
-  drawRunner(ctx, (3 * W) / 4, H - 52, runway.pro, runway.phase, '#3ddc97');
+  if(solo){
+    ctx.fillText('Your form', W / 2, 24);
+    ctx.fillStyle = '#ffd23d'; ctx.font = '12px Barlow, sans-serif';
+    ctx.fillText('from your measured angles', W / 2, 42);
+    drawRunner(ctx, W / 2, H - 52, runway.your, runway.phase, '#ffd23d', 1.5);
+  } else {
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.beginPath(); ctx.moveTo(W / 2, 8); ctx.lineTo(W / 2, H - 56); ctx.stroke();
+    ctx.fillText('Your form', W / 4, 24);
+    ctx.fillText('Pro form', (3 * W) / 4, 24);
+    ctx.fillStyle = '#ffd23d'; ctx.font = '12px Barlow, sans-serif';
+    ctx.fillText('from your measured angles', W / 4, 42);
+    ctx.fillText('ideal angles', (3 * W) / 4, 42);
+    drawRunner(ctx, W / 4, H - 52, runway.your, runway.phase, '#ffd23d');
+    drawRunner(ctx, (3 * W) / 4, H - 52, runway.pro, runway.phase, '#3ddc97');
+  }
   if(runway.fix){
     ctx.fillStyle = '#ff5c5c'; ctx.font = 'bold 13px Barlow, sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('Fix this: ' + runway.fix.fault, W / 4, H - 210);
+    ctx.fillText('Fix this: ' + runway.fix.fault, solo ? W / 2 : W / 4, H - 210);
   }
+}
+function runwayDraw(){
+  if(runway3d.active) runway3dDraw();
+  else runwayDraw2D();
 }
 function runwayTick(ts){
   if(!runway.playing) return;
@@ -628,6 +983,237 @@ function runwayPause(){
 }
 function runwayReplay(){
   runway.phase = 0; runwayDraw(); runwayStart();
+}
+
+/* ================= Runway 3D: cartoon runners (Three.js via CDN) =================
+ * Simple articulated low-poly figures — capsules/boxes for torso and
+ * limbs, animated run cycle. YOU leans/swings/lands by the measured
+ * angles; PRO uses ideal angles. Same track, same pace. If Three.js
+ * fails to load, the 2D canvas version above keeps working. */
+var runway3d = { loading: false, failed: false, active: false,
+  renderer: null, scene: null, camera: null, you: null, pro: null,
+  dashes: [], divider: null, wrap: null, lastW: 0, lastH: 0 };
+function setRunwayHonesty(){
+  var el = $('runwayHonesty');
+  if(!el) return;
+  el.textContent = runway3d.active
+    ? '3D animated demo — cartoon runners built from your measured angles, not your real video, not motion capture.'
+    : 'Animated demo from your measured angles — 2D drawing, not your real video, not motion capture.';
+}
+function loadThree(){
+  return new Promise(function(resolve, reject){
+    if(window.THREE){ resolve(); return; }
+    var urls = [
+      'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js',
+      'https://unpkg.com/three@0.160.0/build/three.min.js'
+    ];
+    (function next(i){
+      if(i >= urls.length){ reject(new Error('Three.js CDN unreachable')); return; }
+      var sc = document.createElement('script');
+      sc.src = urls[i]; sc.async = true;
+      sc.onload = function(){ resolve(); };
+      sc.onerror = function(){ next(i + 1); };
+      document.head.appendChild(sc);
+    })(0);
+  });
+}
+function runway3dLimb(radius, len, color){
+  var g = new THREE.Group();
+  var mesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(radius * 0.85, radius, len, 10),
+    new THREE.MeshLambertMaterial({ color: color })
+  );
+  mesh.position.y = -len / 2;
+  g.add(mesh);
+  return g;
+}
+function buildRunner(color){
+  var mat = new THREE.MeshLambertMaterial({ color: color });
+  var dark = new THREE.MeshLambertMaterial({ color: 0x1c1c1c });
+  var root = new THREE.Group();
+  var hip = new THREE.Group();
+  hip.position.y = 1.12;
+  root.add(hip);
+  var pelvis = new THREE.Mesh(new THREE.SphereGeometry(0.17, 12, 10), mat);
+  hip.add(pelvis);
+  // Torso leans with the measured trunk angle; legs do not lean with it.
+  var torso = new THREE.Group();
+  hip.add(torso);
+  var chest = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.13, 0.7, 12), mat);
+  chest.position.y = 0.38;
+  torso.add(chest);
+  var head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 14, 12), mat);
+  head.position.y = 0.9;
+  torso.add(head);
+  function arm(side){
+    var shoulder = new THREE.Group();
+    shoulder.position.set(0, 0.62, 0.22 * side);
+    torso.add(shoulder);
+    var upper = runway3dLimb(0.055, 0.4, color);
+    shoulder.add(upper);
+    var elbow = new THREE.Group();
+    elbow.position.y = -0.4;
+    shoulder.add(elbow);
+    var fore = runway3dLimb(0.05, 0.38, color);
+    elbow.add(fore);
+    var hand = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 8), dark);
+    hand.position.y = -0.4;
+    elbow.add(hand);
+    return { shoulder: shoulder, elbow: elbow };
+  }
+  function leg(side){
+    var thigh = new THREE.Group();
+    thigh.position.set(0, 0, 0.12 * side);
+    hip.add(thigh);
+    var upper = runway3dLimb(0.075, 0.55, color);
+    thigh.add(upper);
+    var knee = new THREE.Group();
+    knee.position.y = -0.55;
+    thigh.add(knee);
+    var shin = runway3dLimb(0.06, 0.55, color);
+    knee.add(shin);
+    var foot = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.07, 0.1), dark);
+    foot.position.set(0.06, -0.56, 0);
+    knee.add(foot);
+    return { thigh: thigh, knee: knee, foot: foot };
+  }
+  var armL = arm(1), armR = arm(-1);
+  var legL = leg(1), legR = leg(-1);
+  return { root: root, torso: torso,
+    armL: armL.shoulder, foreL: armL.elbow, armR: armR.shoulder, foreR: armR.elbow,
+    thighL: legL.thigh, shinL: legL.knee, footL: legL.foot,
+    thighR: legR.thigh, shinR: legR.knee, footR: legR.foot };
+}
+function poseRunner(r, p, phase){
+  if(!r) return;
+  r.torso.rotation.z = -(p.lean * Math.PI / 180); // lean forward, toward +X
+  var swing = (p.thigh / 100) * 0.9; // thigh separation -> leg swing size
+  r.thighL.rotation.z = Math.sin(phase) * swing;
+  r.thighR.rotation.z = Math.sin(phase + Math.PI) * swing;
+  r.shinL.rotation.z = -Math.max(0, Math.sin(phase - 0.6)) * 1.7; // heel recovery
+  r.shinR.rotation.z = -Math.max(0, Math.sin(phase + Math.PI - 0.6)) * 1.7;
+  r.armL.rotation.z = Math.sin(phase + Math.PI) * 0.65; // arms oppose the legs
+  r.armR.rotation.z = Math.sin(phase) * 0.65;
+  r.foreL.rotation.z = -0.9 - Math.max(0, Math.sin(phase + Math.PI)) * 0.3;
+  r.foreR.rotation.z = -0.9 - Math.max(0, Math.sin(phase)) * 0.3;
+  // Foot-strike reach: a bigger measured shin reach lands the foot farther ahead.
+  r.footL.position.x = 0.06 + p.shin * 0.9;
+  r.footR.position.x = 0.06 + p.shin * 0.9;
+  r.root.position.y = Math.abs(Math.sin(phase)) * 0.06; // run-cycle bob
+}
+function initRunway3D(){
+  if(runway3d.renderer || !window.THREE) return false;
+  var wrap = $('runway3dWrap');
+  if(!wrap) return false;
+  try{
+    var scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0e2a1a);
+    var camera = new THREE.PerspectiveCamera(45, 16 / 7, 0.1, 100);
+    camera.position.set(0, 1.6, 7.2);
+    camera.lookAt(0, 1.0, 0);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+    var sun = new THREE.DirectionalLight(0xffffff, 0.9);
+    sun.position.set(2, 6, 4);
+    scene.add(sun);
+    var ground = new THREE.Mesh(new THREE.BoxGeometry(34, 0.2, 6),
+      new THREE.MeshLambertMaterial({ color: 0xb3552f }));
+    ground.position.y = -0.1;
+    scene.add(ground);
+    var dashMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+    for(var i = 0; i < 14; i++){
+      var dash = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.02, 0.08), dashMat);
+      dash.position.set(-9 + i * 1.4, 0.01, 0);
+      scene.add(dash);
+      runway3d.dashes.push(dash);
+    }
+    var divider = new THREE.Mesh(new THREE.BoxGeometry(0.03, 2.6, 0.03), dashMat);
+    divider.position.set(0, 1.3, 0);
+    scene.add(divider);
+    runway3d.divider = divider;
+    var you = buildRunner(0xffd23d);
+    var pro = buildRunner(0x3ddc97);
+    scene.add(you.root);
+    scene.add(pro.root);
+    runway3d.you = you;
+    runway3d.pro = pro;
+    var renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.domElement.style.position = 'absolute';
+    renderer.domElement.style.inset = '0';
+    renderer.domElement.style.width = '100%';
+    renderer.domElement.style.height = '100%';
+    wrap.appendChild(renderer.domElement);
+    runway3d.renderer = renderer;
+    runway3d.scene = scene;
+    runway3d.camera = camera;
+    runway3d.wrap = wrap;
+    return true;
+  }catch(e){
+    return false;
+  }
+}
+function runway3dDraw(){
+  if(!runway3d.renderer || !runway3d.scene) return;
+  var wrap = runway3d.wrap;
+  var w = (wrap && wrap.clientWidth) || 640, h = (wrap && wrap.clientHeight) || 280;
+  if(w !== runway3d.lastW || h !== runway3d.lastH){
+    runway3d.lastW = w; runway3d.lastH = h;
+    runway3d.renderer.setSize(w, h, false);
+    runway3d.camera.aspect = w / Math.max(1, h);
+    runway3d.camera.updateProjectionMatrix();
+  }
+  var solo = runwayPickedView() === 'solo';
+  var you = runway3d.you, pro = runway3d.pro;
+  you.root.position.x = solo ? 0 : -1.7;
+  you.root.scale.setScalar(solo ? 1.25 : 1);
+  pro.root.visible = !solo;
+  pro.root.position.x = 1.7;
+  if(runway3d.divider) runway3d.divider.visible = !solo;
+  runway3d.camera.position.set(0, 1.6, solo ? 6.0 : 7.2);
+  runway3d.camera.lookAt(0, 1.0, 0);
+  poseRunner(you, runway.your, runway.phase);
+  poseRunner(pro, runway.pro, runway.phase);
+  for(var i = 0; i < runway3d.dashes.length; i++){
+    var d = runway3d.dashes[i];
+    d.position.x -= 0.055;
+    if(d.position.x < -9.5) d.position.x += 14 * 1.4;
+  }
+  runway3d.renderer.render(runway3d.scene, runway3d.camera);
+}
+function ensureRunway3D(){
+  if(runway3d.active || runway3d.failed) return;
+  if(window.THREE){
+    if(initRunway3D()){
+      runway3d.active = true;
+      var canvas = $('runwayCanvas'); if(canvas) canvas.hidden = true;
+      var wrap = $('runway3dWrap'); if(wrap) wrap.hidden = false;
+      setRunwayHonesty();
+      applyRunwayView();
+    } else {
+      runway3d.failed = true;
+      setRunwayHonesty();
+    }
+    return;
+  }
+  if(runway3d.loading) return;
+  runway3d.loading = true;
+  loadThree().then(function(){
+    runway3d.loading = false;
+    if(initRunway3D()){
+      runway3d.active = true;
+      var canvas2 = $('runwayCanvas'); if(canvas2) canvas2.hidden = true;
+      var wrap2 = $('runway3dWrap'); if(wrap2) wrap2.hidden = false;
+      setRunwayHonesty();
+      applyRunwayView();
+    } else {
+      runway3d.failed = true;
+      setRunwayHonesty();
+    }
+  }).catch(function(){
+    runway3d.loading = false;
+    runway3d.failed = true;
+    setRunwayHonesty(); // 2D fallback stays on screen; label says 2D.
+  });
 }
 
 /* ================= Gesture control (1 finger = start, 2 = stop) ================= */
@@ -674,9 +1260,10 @@ function setGestureStatus(kind){
     holdStart: '✋ 1 finger — starting recording… (keep holding)',
     holdStop: '✌️ 2 fingers — stopping recording… (keep holding)',
     unavailable: 'Gesture control unavailable — use the Start recording / Stop recording buttons.',
-    noperm: 'Camera needs permission — allow it, or use Two cameras below.',
+    noperm: 'Camera didn’t start — check the message below.',
+    camerr: 'Camera didn’t start — check the message below.',
     unsupported: 'Camera not supported on this device.',
-    off: 'Camera off — tap Start recording.'
+    off: 'Camera off — tap “Camera: on” to turn it back on.'
   };
   el.textContent = msgs[kind] || msgs.off;
 }
@@ -745,6 +1332,13 @@ function startGestureLoop(){
 }
 function startWatching(){
   if(AI.mode !== 'idle') return;
+  if(AI.camOff){
+    showEl($('aiLivePanel'), true);
+    showEl($('aiSummary'), false);
+    setGestureStatus('off');
+    setText('aiSeeing', 'Camera off.');
+    return;
+  }
   AI.mode = 'watching';
   AI.lastFrontal = false; AI.gesture.lastCount = -1;
   showEl($('aiLivePanel'), true);
@@ -783,17 +1377,14 @@ function startWatching(){
     setText('aiSeeing', useDual ? 'Watching both cameras…' : 'Watching — move into frame.');
   }
   if(useDual){ beginWatch(); return; }
-  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ setGestureStatus('unsupported'); AI.mode = 'idle'; return; }
-  navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: AI.facing, width: { ideal: 1280 }, height: { ideal: 720 } } })
-    .then(function(stream){
-      AI.ownStream = stream;
-      attachStream($('aiVideo'), stream);
-      beginWatch();
-    }).catch(function(){
-      setGestureStatus('noperm');
-      AI.mode = 'idle';
-      setText('aiSeeing', 'Camera needs permission — allow it, or use Two cameras below.');
-    });
+  openSingleCamera().then(function(stream){
+    attachStream($('aiVideo'), stream);
+    beginWatch();
+  }).catch(function(err){
+    setGestureStatus('camerr');
+    AI.mode = 'idle';
+    setText('aiSeeing', camErrorText(err));
+  });
 }
 function startCoachingFromWatch(){
   if(AI.mode !== 'watching') return;
@@ -906,8 +1497,8 @@ function buildDeepReport(reps, frames2count, opts){
       ? 'You gave this reference: "' + opts.ref + '" — times use it as context. Speeds are still approximate.'
       : 'No distance/time reference given — so no speed is reported. Add one above next time for calibrated measurements.',
     dualNote: (frames2count || 0) > 0
-      ? 'Second camera: ' + frames2count + ' frames reviewed. Its replay lives in Two cameras.'
-      : 'One camera only — add a second camera for the other side.'
+      ? 'Camera 2: ' + frames2count + ' frames reviewed. Its replay lives in Two cameras.'
+      : 'One camera only — add Camera 2 for the other side.'
   };
 }
 function skelFaultJoints(check){
@@ -921,7 +1512,8 @@ function skelFaultJoints(check){
 var SKEL_BONES = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24],
   [23, 25], [25, 27], [24, 26], [26, 28], [0, 11], [0, 12]];
 function drawSkeleton(canvas, lm, faultJoints){
-  // 2D skeleton: a flat drawing from the camera's 2D landmarks — never 3D.
+  // Skeleton lines drawn ON the video/photo of the person — never a
+  // separate stick-figure drawing, never 3D.
   if(!canvas || !lm) return [];
   var ctx = canvas.getContext('2d');
   if(!ctx) return [];
@@ -1013,7 +1605,7 @@ function renderDeepReport(report){
         '<canvas id="deepSkelFault' + i + '" width="320" height="240"></canvas>';
     });
   }
-  html += '<p class="ai-note">2D skeleton — a flat drawing from the camera, not 3D. Red = joint to fix, green = joint that looked good.</p>';
+  html += '<p class="ai-note">Skeleton lines on you. Red = joint to fix, green = joint that looked good.</p>';
   html += '<p id="aiSkelDetail" class="ai-note">Tap a red joint to see its fix.</p>';
   if(report.videos.length){
     html += '<h5>Videos to watch</h5><ul>' + report.videos.map(function(v){
@@ -1047,7 +1639,7 @@ function runDeepAnalysis(){
       var end = Math.min(frames1.length, idx + 60);
       for(; idx < end; idx++) absorbFrame(state, frames1[idx]);
       setText('aiAnalyzeStatus', 'Reviewing frame ' + Math.min(idx, frames1.length) + ' of ' + frames1.length + '…');
-      setText('aiAnalyzeDetail', 'Reps found so far: ' + state.reps.length + '. Second camera frames: ' + frames2count + '.');
+      setText('aiAnalyzeDetail', 'Reps found so far: ' + state.reps.length + '. Camera 2 frames: ' + frames2count + '.');
       if(idx < frames1.length){ setTimeout(step, 0); return; }
       var report = buildDeepReport(state.reps, frames2count, {
         ref: ref,
@@ -1101,6 +1693,7 @@ function renderSessionSummary(s){
 function startAI(reuseStream, opts){
   if(AI.running) return;
   opts = opts || {};
+  if(AI.camOff && !opts.clipUrl){ setText('aiSeeing', 'Camera is off — turn it on to record.'); return; }
   AI.clipMode = !!(opts && opts.clipUrl);
   AI.clipUrl = (opts && opts.clipUrl) || null;
   AI.lastClassic = null; AI.lastTripped = null; AI.lastGuideIssue = '';
@@ -1142,13 +1735,28 @@ function startAI(reuseStream, opts){
         cv.muted = true;
         cv.setAttribute('playsinline', '');
         var cp = cv.play(); if(cp && cp.catch) cp.catch(function(){});
+        // Same pipeline as a live recording: pose on every frame, deep
+        // check at the end. Two safety nets so a bad or stalled clip
+        // can never hang in "recording" forever — an unreadable file
+        // finishes the analysis with what it has, and a clip that
+        // never fires "ended" is finished by its own length + 5s.
         cv.onended = function(){ if(AI.running) stopAndAnalyze(); };
+        cv.onerror = function(){ if(AI.running) stopAndAnalyze(); };
+        cv.onloadedmetadata = function(){
+          var dur = cv.duration;
+          if(isFinite(dur) && dur > 0){
+            setTimeout(function(){ if(AI.running && AI.clipMode) stopAndAnalyze(); }, (dur * 1000) + 5000);
+          }
+        };
       }
       showEl($('aiPreview2Wrap'), false);
       setText('aiAngleTag', 'Uploaded clip');
     } else if(useDual && dual.remoteStream){
       AI.poseB = makePose(function(res){
         var lm = res && res.poseLandmarks;
+        // Skeleton rig, driven by Camera 2, drawn ON the person in the
+        // Camera 2 video — never a separate drawing.
+        drawLiveSkeleton2(lm || null);
         if(lm){
           var ef = extractAI(lm);
           if(ef && (!ef.missing || !ef.missing.length)){
@@ -1178,15 +1786,19 @@ function startAI(reuseStream, opts){
   if(AI.clipMode){ begin(); return; }
   if(useDual){ begin(); return; }
   if(reuseStream && AI.ownStream){ attachStream($('aiVideo'), AI.ownStream); begin(); return; }
-  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ setText('aiSeeing', 'Camera not supported on this device.'); return; }
-  navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: AI.facing, width: { ideal: 1280 }, height: { ideal: 720 } } })
-    .then(function(stream){
-      AI.ownStream = stream;
-      attachStream($('aiVideo'), stream);
-      begin();
-    }).catch(function(){
-      setText('aiSeeing', 'Camera needs permission — allow it, or use Two cameras below.');
-    });
+  openSingleCamera().then(function(stream){
+    attachStream($('aiVideo'), stream);
+    begin();
+  }).catch(function(err){
+    // Camera failed: back to idle with the buttons restored — never stuck
+    // on a “Starting camera…” state with no camera.
+    AI.mode = 'idle';
+    showEl($('aiStartBtn'), true);
+    showEl($('aiStopBtn'), false);
+    showEl($('aiEndSessionBtn'), false);
+    setGestureStatus('camerr');
+    setText('aiSeeing', camErrorText(err));
+  });
 }
 
 function stopAI(){
@@ -1299,14 +1911,14 @@ function initAI(){
     setText('aiSeeing', slow ? 'Slow review — clip at a third of normal speed.' : 'Recording — clip at normal speed.');
   });
   var flipBtn = $('aiFlipBtn');
-  if(flipBtn) flipBtn.addEventListener('click', function(){
-    AI.facing = AI.facing === 'environment' ? 'user' : 'environment';
-    if(AI.ownStream && navigator.mediaDevices && navigator.mediaDevices.getUserMedia){
-      var wasRecording = AI.running;
-      stopAI();
-      if(wasRecording) startAI(false, { announce: true });
-      else startWatching();
-    }
+  if(flipBtn) flipBtn.addEventListener('click', switchSingleCamera);
+  var camToggleBtn = $('aiCamToggleBtn');
+  if(camToggleBtn) camToggleBtn.addEventListener('click', function(){ setSingleCamera(AI.camOff); });
+  document.querySelectorAll('[data-runway-view]').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      runway.view = btn.dataset.runwayView || 'auto';
+      applyRunwayView();
+    });
   });
   var filter = $('aiKbFilter');
   if(filter) filter.addEventListener('change', renderKB);
@@ -1322,13 +1934,24 @@ function initAI(){
 window.TrackNotify = { notifyDone: notifyAnalysisDone, clear: function(which){ setBadge(which, false); },
   has: function(which){ var els = badgeEls(which); return els.some(function(el){ return el && !el.hidden; }); } };
 window.TrackRunway = { render: renderRunway, draw: runwayDraw, start: runwayStart, pause: runwayPause, replay: runwayReplay,
-  getState: function(){ return { playing: runway.playing, phase: runway.phase, your: runway.your, fix: runway.fix }; } };
+  getState: function(){ return { playing: runway.playing, phase: runway.phase, your: runway.your, fix: runway.fix }; },
+  setView: function(v){ runway.view = v; applyRunwayView(); },
+  setFix: function(f){ runway.fix = f || null; applyRunwayView(); },
+  getView: function(){ return { view: runway.view, picked: runwayPickedView(), reason: runwayPickReason() }; },
+  get3D: function(){ return { active: runway3d.active, failed: runway3d.failed }; } };
 window.TrackAI = { setBlockStarts: setBlockStarts, getBlockStarts: function(){ return AI.blockStarts; },
-  getLastClassic: function(){ return AI.lastClassic; }, announce: announce };
+  getLastClassic: function(){ return AI.lastClassic; }, announce: announce,
+  setCamera: setSingleCamera, switchCamera: switchSingleCamera,
+  isCamOff: function(){ return AI.camOff; },
+  startClip: function(url){ startAI(false, { clipUrl: url, announce: false }); },
+  endClip: function(){ if(AI.running) stopAndAnalyze(); } };
+window.TrackFrameMarks = { build: buildFrameMarks, draw: drawFrameMarks, at: frameMarkAt,
+  figureHtml: frameMarksFigureHtml, drawAll: drawAllFrameMarks,
+  getAnnotations: function(){ return AI.frameAnnotations; } };
 window.TrackAIAnnounce = { announce: announce, speakNow: announce };
 window.TrackAIGesture = { countFingers: countFingers, isFrontal: isFrontal };
 window.TrackAIDeep = { segmentReps: segmentReps, buildDeepReport: buildDeepReport, pickVideos: pickVideos, absorbFrame: absorbFrame };
-window.TrackAISkeleton = { drawSkeleton: drawSkeleton, skelFaultJoints: skelFaultJoints, drawLiveSkeleton: drawLiveSkeleton };
+window.TrackAISkeleton = { drawSkeleton: drawSkeleton, skelFaultJoints: skelFaultJoints, drawLiveSkeleton: drawLiveSkeleton, drawLiveSkeleton2: drawLiveSkeleton2 };
 
 initAI();
 })();
