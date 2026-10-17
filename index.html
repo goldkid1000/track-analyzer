@@ -38,15 +38,28 @@
           <h2>AI Analyzer</h2>
           <p>Coaching on this device &mdash; <strong>no cloud, no sign-in, no video leaves your device.</strong> The camera watches your rep, names what it sees, and gives one fix at a time.</p>
           <p class="ai-note">It only coaches what the camera can see. If a body part is out of frame, it says so instead of guessing.</p>
-          <p class="ai-note">Hands-free: look at the camera and <strong>hold up 1 finger to start</strong>. <strong>Hold up 2 fingers to stop.</strong> The buttons below always work too.</p>
+          <p class="ai-note">Hands-free: look at the camera and <strong>hold up 1 finger to start recording</strong>. <strong>Hold up 2 fingers to stop recording.</strong> The buttons below always work too.</p>
+          <p class="ai-note">Voice will say “Recording has started” and “Recording has ended.”</p>
+          <nav class="mode-picker" aria-label="What to check">
+            <button class="mode" data-mode="block" aria-pressed="true">Block start</button>
+            <button class="mode" data-mode="side" aria-pressed="false">Side-angle sprint</button>
+            <button class="mode" data-mode="askip" aria-pressed="false">A-skip</button>
+            <button class="mode" data-mode="arms" aria-pressed="false">Arm action</button>
+            <button class="mode" data-mode="sprint" aria-pressed="false">Sprint form</button>
+          </nav>
+          <p class="ai-note">What to check: one pick sets both the live coaching and the rep check, so there is one movement to choose, not two.</p>
           <label class="ai-ref-label">Known reference (optional)
             <input id="aiReference" type="text" placeholder="e.g. hurdle height 42in, 10m split marker" aria-label="Known reference, for example hurdle height or a measured split marker" />
           </label>
           <p class="ai-note">With a reference, the report can label measurements against it. Without one, measurements stay approximate &mdash; the app never invents a distance or a speed.</p>
           <div class="ai-controls">
-            <button class="primary" id="aiStartBtn" type="button">Start watching</button>
-            <button class="ghost-control" id="aiStopBtn" type="button" hidden>Stop</button>
+            <button class="primary" id="aiStartBtn" type="button">Start recording</button>
+            <button class="ghost-control" id="aiStopBtn" type="button" hidden>Stop recording</button>
             <button class="ghost-control" id="aiEndSessionBtn" type="button" hidden>See my results</button>
+            <button class="ghost-control" id="aiUploadClip" type="button">Upload a clip</button>
+            <input type="file" id="aiFileInput" accept="video/*" hidden />
+            <button class="ghost-control" id="aiSlowReview" type="button" aria-pressed="false">Slow review</button>
+            <button class="ghost-control" id="aiFlipBtn" type="button">Switch camera</button>
             <button class="ghost-control" id="aiVoiceBtn" type="button" aria-pressed="false">Voice coaching: off</button>
             <label class="ai-focus-label">Watch for
               <select id="aiFocus" aria-label="Watch for one activity"></select>
@@ -68,6 +81,8 @@
           <div class="ai-previews">
             <div class="ai-preview-card">
               <video id="aiVideo" playsinline muted autoplay></video>
+              <canvas id="aiSkelOverlay" aria-hidden="true"></canvas>
+              <span class="ai-skel-tag">2D skeleton — a flat drawing from the camera, not 3D</span>
               <span class="ai-angle-tag" id="aiAngleTag">Camera</span>
             </div>
             <div class="ai-preview-card" id="aiPreview2Wrap" hidden>
@@ -75,6 +90,7 @@
               <span class="ai-angle-tag" id="aiAngle2Tag">Camera 2</span>
             </div>
           </div>
+          <p class="ai-note" id="aiSideGuide" hidden>Side view: phone square to the lane, 10–15 ft away. Keep both feet, hips, shoulders, and head in frame.</p>
           <div class="ai-state">
             <div><strong>Seeing:</strong> <span id="aiSeeing">—</span></div>
             <div><strong>Good:</strong> <span id="aiGood">—</span></div>
@@ -82,7 +98,9 @@
             <div><strong>Can’t see:</strong> <span id="aiCantSee">—</span></div>
             <div><strong>Reps:</strong> <span id="aiRepCount">0</span> · <strong>Form score:</strong> <span id="aiScore">—</span></div>
           </div>
+          <div class="ai-classic-metrics" id="aiClassicMetrics"></div>
           <div class="ai-callouts" id="aiCallouts"></div>
+          <button class="review-sheet-button" id="openReviewSheet" type="button">See full rep review</button>
         </div>
 <div class="ai-section" id="dualSection">
           <h2 class="ai-section-title">Two cameras</h2>
@@ -191,103 +209,6 @@
           <p id="dualVerdictCombined"></p>
         </div>
         </div>
-<div class="ai-section" id="classicSection">
-          <h2 class="ai-section-title">Check a rep</h2>
-          <p class="ai-section-sub">Pick a move, turn on the camera or upload a clip, and get a score plus one fix per rep.</p>
-
-    <nav class="mode-picker" aria-label="Choose movement to analyze">
-      <button class="mode" data-mode="block" aria-pressed="true">Block start</button>
-      <button class="mode" data-mode="side" aria-pressed="false">Side-angle sprint</button>
-      <button class="mode" data-mode="askip" aria-pressed="false">A-skip</button>
-      <button class="mode" data-mode="arms" aria-pressed="false">Arm action</button>
-      <button class="mode" data-mode="sprint" aria-pressed="false">Sprint form</button>
-    </nav>
-
-    <section class="workspace">
-      <div class="camera-card" id="cameraCard">
-        <video id="sourceVideo" playsinline muted></video>
-        <canvas id="outputCanvas"></canvas>
-        <div class="frame-guide" id="frameGuide"></div>
-        <div class="status-pill" id="statusPill">Camera off</div>
-        <div class="side-guide" id="sideGuide" hidden><strong>Side view</strong>Phone square to the lane, 10–15 ft away. Keep both feet, hips, shoulders, and head in frame.</div>
-        <div class="pose-loader" id="poseLoader" hidden>
-          <div class="pose-loader-inner">
-            <div class="spinner" aria-hidden="true"></div>
-            <p id="poseLoaderText">Warming up analyzer…</p>
-          </div>
-        </div>
-        <div class="camera-empty" id="cameraEmpty">
-          <div class="empty-inner">
-            <div class="record-ring"></div>
-            <h2>Ready for a block start</h2>
-            <p>Place your phone sideways, step back until your full body fits, then turn on the camera.</p>
-            <div class="empty-actions">
-            <button class="primary volt-start" id="startCameraTop">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 10l4.55-2.27A1 1 0 0121 8.62v6.76a1 1 0 01-1.45.89L15 14M4 6h9a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V8a2 2 0 012-2z"/></svg>
-              Turn on camera
-            </button>
-            <button class="ghost-control wide" id="uploadClipTop" type="button">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 16V4m0 0L7 9m5-5l5 5M5 20h14"/></svg>
-              <span>Upload a clip</span>
-            </button>
-            </div>
-          </div>
-        </div>
-        <div class="camera-controls">
-          <button class="ghost-control" id="cameraToggle" aria-label="Start camera">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 10l4.55-2.27A1 1 0 0121 8.62v6.76a1 1 0 01-1.45.89L15 14M4 6h9a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V8a2 2 0 012-2z"/></svg><span>Camera</span>
-          </button>
-          <button class="ghost-control" id="uploadClip" type="button">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 16V4m0 0L7 9m5-5l5 5M5 20h14"/></svg><span>Upload clip</span>
-          </button>
-          <input type="file" id="fileInput" accept="video/*" hidden />
-          <button class="ghost-control" id="slowReview" aria-label="Play uploaded clip in slow motion" aria-pressed="false">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 6v6l4 2M12 3a9 9 0 109 9"/></svg><span>Slow review</span>
-          </button>
-          <button class="ghost-control" id="flipCamera" aria-label="Flip camera">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 7h-4V3M4 17h4v4M5.5 9A7 7 0 0116 5l4 2M18.5 15A7 7 0 018 19l-4-2"/></svg><span>Switch camera</span>
-          </button>
-        </div>
-      </div>
-
-      <aside class="coach idle" id="coachPanel" aria-live="polite">
-        <div class="coach-top">
-          <div><h2>Coach</h2><p class="coach-sub" id="analysisState">Start the camera or upload a clip</p></div>
-          <div class="coach-actions">
-            <div class="score" id="scoreRing"><div><b id="scoreValue">—</b><small>Camera view</small></div></div>
-          </div>
-        </div>
-        <div class="intent-pill" id="intentPill" hidden><span class="intent-dot" aria-hidden="true"></span><span id="intentText">Waiting for athlete</span></div>
-        <div class="intent-bubbles" id="intentBubbles" aria-live="polite"></div>
-        <div class="coach-getstarted">
-          <h3>Ready in 10 seconds</h3>
-          <ol>
-            <li>Pick a movement above</li>
-            <li>Turn on the camera or upload a clip</li>
-            <li>Keep your full body in frame — I’ll coach each rep</li>
-          </ol>
-        </div>
-        <div class="analysis-progress" id="analysisProgress" data-state="waiting" aria-live="polite">
-          <div class="analysis-progress-head"><strong id="analysisProgressLabel">Waiting to analyze</strong><span id="analysisProgressPercent">0%</span></div>
-          <div class="analysis-track" aria-hidden="true"><i id="analysisProgressBar"></i></div>
-          <p id="analysisProgressDetail">Your score appears after 24 clear pose frames and one complete movement—not while the camera is off.</p>
-        </div>
-        <div class="focus">
-          <div class="focus-label">Your rep &mdash; good first, then one fix</div>
-          <h3 id="coachHeadline">Set the camera first</h3>
-          <p id="coachCopy">The skeleton and scores appear only after the camera can see your shoulders, hips, knees, and ankles.</p>
-          <a class="watch-fix" id="watchFix" href="https://www.youtube.com/results?search_query=sprint+block+start+technique" target="_blank" rel="noopener" hidden>Watch: how to fix this</a>
-        </div>
-        <div class="metrics">
-          <div class="metric"><div class="metric-row"><span id="metric1Name">Projection angle</span><span id="metric1Value">—</span></div><div class="bar"><i id="metric1Bar"></i></div></div>
-          <div class="metric"><div class="metric-row"><span id="metric2Name">Arm drive</span><span id="metric2Value">—</span></div><div class="bar"><i id="metric2Bar"></i></div></div>
-          <div class="metric"><div class="metric-row"><span id="metric3Name">Leg extension</span><span id="metric3Value">—</span></div><div class="bar"><i id="metric3Bar"></i></div></div>
-        </div>
-        <button class="review-sheet-button" id="openReviewSheet" type="button">See full rep review</button>
-        <p class="disclaimer">Scores are estimates from what this camera can see, not a verdict on ability or an injury check. Side-on, full-body clips are most reliable. Your coach&rsquo;s word comes first.</p>
-      </aside>
-    </section>
-        </div>
 <div class="panel ai-summary" id="aiSummary" hidden>
           <h3>Your results</h3>
           <div id="aiSummaryBody"></div>
@@ -351,7 +272,7 @@
     </section>
     </section>
       <footer class="app-footer">
-        <span>Track Analyzer <span id="appVersion">v2.1.1</span></span>
+        <span>Track Analyzer <span id="appVersion">v2.1.2</span></span>
         <button id="whatsNewBtn" type="button">What&rsquo;s New</button>
         <button id="checkUpdatesBtn" type="button">Check for updates</button>
         <span id="updateCheckStatus" aria-live="polite"></span>
@@ -389,7 +310,7 @@
     <div class="sheet-grabber" aria-hidden="true"></div>
     <div class="review-dialog-inner">
       <div class="review-dialog-head"><h2 id="whatsNewTitle">What&rsquo;s New</h2><button class="sheet-close" id="closeWhatsNew" type="button" aria-label="Close What&rsquo;s New">×</button></div>
-      <p id="whatsNewCurrent">You are running v2.1.1</p>
+      <p id="whatsNewCurrent">You are running v2.1.2</p>
       <div id="whatsNewList"></div>
     </div>
   </dialog>
