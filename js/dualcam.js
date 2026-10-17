@@ -1,4 +1,4 @@
-/* Track Analyzer — Two-camera + one-time photo access (v2.1.6)
+/* Track Analyzer — Two-camera + one-time photo access (v2.1.7)
  *
  * Two features in one file, kept separate from app.js so the existing
  * analyzer keeps working untouched:
@@ -36,6 +36,10 @@
  *    a cached v2.1.4 build there was no dual rig in the code at all.
  *    v2.1.6 fixes all of that: rigs on both feeds, status lines that say
  *    what is actually happening, and no silent failure.
+ *    v2.1.7 — the rig only draws joints the camera actually sees (no head
+ *    blob on the back, no spiderweb hands); status lines are per-feed
+ *    and truthful; hand signs really read from BOTH feeds with hold
+ *    grace; hands run on a bigger frame so they are seen at arm's length.
  *    Each camera can switch (front / back / any webcam) and can be
  *    turned off and back on.
  */
@@ -141,7 +145,15 @@ var D = {
   localLabel: 'Camera 1', remoteLabel: 'Camera 2',
   camOff: false, camDeviceId: null, remoteCamOff: false,
   rigStarted: false,
+  /* v2.1.7: per-feed rig status, so the line can say which camera the
+   * rig is actually on. A feed only counts as "on" when its own rig
+   * reports ok/smooth — never from a stale global flag. */
+  rigStatusByKey: {},
   gestureTimer: null, gestureHoldKind: '', gestureHoldCount: 0,
+  /* v2.1.7: hold grace — one missed tick (dropped frame) does not reset
+   * the ~1s hold timer; it takes 4 missed ticks in a row to give up. */
+  gestureMissCount: 0,
+  gestureHoldCam: '',
   recorder: null, chunks: [], localBlob: null, remoteBlob: null,
   recording: false, recStartedAt: 0, recTimer: null,
   duration: 10,
@@ -659,32 +671,50 @@ function dualRemoteCanvas(){
 }
 function dualOwnKey(){ return D.role === 'join' ? 'dual-cam2' : 'dual-cam1'; }
 function dualRemoteKey(){ return D.role === 'join' ? 'dual-cam1' : 'dual-cam2'; }
-function setDualRigStatus(kind){
-  var msgs = {
-    starting: 'Starting skeleton…',
-    ok: 'Skeleton on — rig follows you on both cameras.',
-    smooth: 'Skeleton running in smooth mode.',
-    poseFail: "Skeleton couldn't load — check your connection and reload.",
-    handsFail: "Hand tracking didn't load — hand signs won't work. Check your connection and reload."
-  };
-  var msg = msgs[kind] || '';
+/* v2.1.7: per-feed rig status. kind is that feed's own latest report
+ * (its rig calls back with its key). The line is computed from what the
+ * feeds actually report: "Skeleton on" appears only when at least one
+ * feed's rig is drawing, and names which camera(s). "Couldn't load"
+ * appears only when NO feed is on and one has genuinely failed. A call
+ * with no key (legacy / global) applies to both feeds. */
+function setDualRigStatus(kind, key){
+  if(key) D.rigStatusByKey[key] = kind;
+  else { D.rigStatusByKey['dual-cam1'] = kind; D.rigStatusByKey['dual-cam2'] = kind; }
+  var okFeeds = [], smoothFeeds = [], anyPoseFail = false, anyHandsFail = false, anyStarting = false;
+  ['dual-cam1', 'dual-cam2'].forEach(function(k){
+    var s = D.rigStatusByKey[k] || '';
+    if(s === 'ok') okFeeds.push(k);
+    else if(s === 'smooth') smoothFeeds.push(k);
+    else if(s === 'poseFail') anyPoseFail = true;
+    else if(s === 'handsFail') anyHandsFail = true;
+    else if(s === 'starting') anyStarting = true;
+  });
+  function camLabel(k){ return k === 'dual-cam1' ? 'Camera 1' : 'Camera 2'; }
+  var msg = '';
+  if(okFeeds.length === 2) msg = 'Skeleton on — rig follows you on both cameras.';
+  else if(okFeeds.length === 1) msg = 'Skeleton on — rig follows you on ' + camLabel(okFeeds[0]) + '.';
+  else if(smoothFeeds.length > 0) msg = 'Skeleton running in smooth mode.';
+  else if(anyPoseFail) msg = "Skeleton couldn't load — check your connection and reload.";
+  else if(anyHandsFail) msg = "Hand tracking didn't load — hand signs won't work. Check your connection and reload.";
+  else if(anyStarting) msg = 'Starting skeleton…';
   setText('dualRigStatus', msg);
   setText('dualJoinRigStatus', msg);
 }
-function setDualGestureStatus(kind){
+function setDualGestureStatus(kind, camLabel){
+  var prefix = camLabel ? camLabel + ': ' : '';
   var msgs = {
-    holdStart: '✋ 1 finger — starting recording… (keep holding)',
-    holdStop: '✌️ 2 fingers — stopping recording… (keep holding)',
+    holdStart: prefix + '✋ 1 finger — starting recording… (keep holding)',
+    holdStop: prefix + '✌️ 2 fingers — stopping recording… (keep holding)',
     noFace: 'Face not visible — look at a camera.',
     noHand: 'No hand seen — hold up a hand where a camera can see it.',
-    handSeen: 'I see your hand — hold 1 finger to start recording.',
+    handSeen: prefix + 'I see your hand — hold 1 finger to start recording.',
     recording: '● Recording… hold up 2 fingers to stop.'
   };
   var msg = msgs[kind] || '';
   setText('dualGestureStatus', msg);
   setText('dualJoinGestureStatus', msg);
 }
-function dualRigStatusCb(kind){ setDualRigStatus(kind); }
+function dualRigStatusCb(kind, key){ setDualRigStatus(kind, key); }
 function registerDualFeed(key){
   if(!window.TrackRig) return;
   var isOwn = key === dualOwnKey();
@@ -723,25 +753,51 @@ function dualGestureStop(){
 }
 function dualGestureTick(){
   if(!D.role || !window.TrackRig) return;
-  var best = null, handSeen = false, faceSeen = false;
+  var best = null, handSeen = false, faceSeen = false, handSeenKey = '';
+  var seenCounts = [];
   ['dual-cam1', 'dual-cam2'].forEach(function(key){
     var g = window.TrackRig.getGesture(key);
     if(!g || !g.fresh) return;
-    if(g.handSeen) handSeen = true;
+    if(g.handSeen){ handSeen = true; if(!handSeenKey) handSeenKey = key; seenCounts.push(g.count); }
     if(g.faceSeen) faceSeen = true;
-    if(g.frontal && (g.count === 1 || g.count === 2) && !best) best = { count: g.count, key: key };
+    /* v2.1.7: a hand sign counts when the face is seen OR the pose is
+     * frontal. The old code required frontal only — a hand held up
+     * beside the face (or a noisy nose landmark) killed the sign even
+     * though the hand was plainly visible. Both feeds are sampled
+     * every tick; whichever camera sees the sign drives it. */
+    if((g.frontal || g.faceSeen) && (g.count === 1 || g.count === 2) && !best) best = { count: g.count, key: key };
   });
+  function camLabel(key){ return key === 'dual-cam1' ? 'Camera 1' : 'Camera 2'; }
   var want = '';
   if(best && best.count === 1 && !D.recording) want = 'start';
   else if(best && best.count === 2 && D.recording) want = 'stop';
-  if(want && want === D.gestureHoldKind) D.gestureHoldCount++;
-  else { D.gestureHoldKind = want; D.gestureHoldCount = want ? 1 : 0; }
-  if(want === 'start'){
-    setDualGestureStatus('holdStart');
-    if(D.gestureHoldCount >= 10){ D.gestureHoldKind = ''; D.gestureHoldCount = 0; dualGestureStart(); }
-  } else if(want === 'stop'){
-    setDualGestureStatus('holdStop');
-    if(D.gestureHoldCount >= 10){ D.gestureHoldKind = ''; D.gestureHoldCount = 0; dualGestureStop(); }
+  if(want){
+    D.gestureMissCount = 0;
+    D.gestureHoldCam = camLabel(best.key);
+    if(want === D.gestureHoldKind) D.gestureHoldCount++;
+    else { D.gestureHoldKind = want; D.gestureHoldCount = 1; }
+  } else if(D.gestureHoldKind){
+    /* A hand seen showing a DIFFERENT sign cancels the hold at once
+     * (the user changed their hand — not a dropped frame). Only a
+     * hand seen with NO readable count, or no hand at all, gets grace. */
+    var need = D.gestureHoldKind === 'start' ? 1 : 2;
+    var contradicted = seenCounts.some(function(c){ return c >= 0 && c !== need; });
+    if(contradicted){ D.gestureHoldKind = ''; D.gestureHoldCount = 0; D.gestureMissCount = 0; }
+    else {
+      /* v2.1.7 hold grace: one dropped frame does not reset the hold.
+       * Keep counting after up to 3 missed ticks; only then give up. */
+      D.gestureMissCount++;
+      if(D.gestureMissCount > 3){ D.gestureHoldKind = ''; D.gestureHoldCount = 0; D.gestureMissCount = 0; }
+    }
+  }
+  /* A hold in progress (or inside its grace gap) keeps showing the hold
+   * line — the status must not flicker away on one dropped frame. */
+  if(D.gestureHoldKind === 'start'){
+    setDualGestureStatus('holdStart', D.gestureHoldCam || '');
+    if(D.gestureHoldCount >= 10){ D.gestureHoldKind = ''; D.gestureHoldCount = 0; D.gestureMissCount = 0; dualGestureStart(); }
+  } else if(D.gestureHoldKind === 'stop'){
+    setDualGestureStatus('holdStop', D.gestureHoldCam || '');
+    if(D.gestureHoldCount >= 10){ D.gestureHoldKind = ''; D.gestureHoldCount = 0; D.gestureMissCount = 0; dualGestureStop(); }
   } else if(D.recording){
     setDualGestureStatus('recording');
   } else if(!faceSeen){
@@ -749,17 +805,17 @@ function dualGestureTick(){
   } else if(!handSeen){
     setDualGestureStatus('noHand');
   } else {
-    setDualGestureStatus('handSeen');
+    setDualGestureStatus('handSeen', handSeenKey ? camLabel(handSeenKey) : '');
   }
 }
 function startDualGestures(){
   if(D.gestureTimer) return;
-  D.gestureHoldKind = ''; D.gestureHoldCount = 0;
+  D.gestureHoldKind = ''; D.gestureHoldCount = 0; D.gestureMissCount = 0; D.gestureHoldCam = '';
   D.gestureTimer = setInterval(dualGestureTick, 120);
 }
 function stopDualGestures(){
   clearInterval(D.gestureTimer); D.gestureTimer = null;
-  D.gestureHoldKind = ''; D.gestureHoldCount = 0;
+  D.gestureHoldKind = ''; D.gestureHoldCount = 0; D.gestureMissCount = 0; D.gestureHoldCam = '';
   setDualGestureStatus('');
 }
 
