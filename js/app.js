@@ -142,7 +142,7 @@ var content={
       function resetVideo(){
         if(videoTimer)clearTimeout(videoTimer);videoTimer=null;videoIssue='';
         document.getElementById('videoIdle').hidden=false;
-        document.getElementById('videoIdle').textContent='Complete a clear rep. A matching coaching video will load after the analyzer sees a stable movement pattern.';
+        document.getElementById('videoIdle').textContent='Finish a clear rep. A matching coaching video will load after the analyzer sees a steady movement pattern.';
         document.getElementById('videoLoading').hidden=true;
         document.getElementById('videoList').hidden=true;
         document.getElementById('videoList').innerHTML='';
@@ -170,7 +170,7 @@ var content={
         scoreValue.textContent='—'; scoreRing.style.background='conic-gradient(var(--accent-2) 0deg,var(--panel-2) 0deg)';
         analysisState.textContent='Start the camera or upload a clip'; coachHeadline.textContent='Set the camera first';watchFix.hidden=true;
         coachCopy.textContent='The score is not loading in the background. It begins only after the camera or an uploaded clip is playing and your full body is visible.';
-        setProgress(0,'Waiting to analyze','Your score appears after 24 clear pose frames and one complete movement—not while the camera is off.','waiting');
+        setProgress(0,'Waiting to check','Your score appears after 24 clear frames and one full move \u2014 not while the camera is off.','waiting');
         metricEls.forEach(function(m){m.value.textContent='—';m.bar.style.width='0%';});
       }
 
@@ -203,10 +203,10 @@ var content={
       })});
 
       var screenCopy={
-        analyze:['Analyze','Live sprint mechanics and coaching'],
+        ai:['AI Analyzer','Live coaching, two cameras, photo check, and your results \u2014 one screen'],
         photos:['Photos','Compare two positions with skeletons and angle checks'],
-        side:['Side View','Profile tracking tuned for acceleration and sprint form'],
-        guide:['Guide','Technique cues, drills, and the exact fix video']
+        side:['Side View','Side-on tracking for starts and sprint form'],
+        guide:['Guide','Technique cues, drills, and the video for each fix']
       };
       var viewSwitching=false,pendingView=null;
       function activateView(view){
@@ -240,6 +240,9 @@ var content={
           document.querySelectorAll('.mode').forEach(function(b){b.setAttribute('aria-pressed',b.dataset.mode==='side'?'true':'false');});
           mode='side';renderMode();
         }
+        if(view==='side'){
+          setTimeout(function(){ var cs=document.getElementById('classicSection'); if(cs) cs.scrollIntoView({behavior:'smooth',block:'start'}); }, 500);
+        }
         document.querySelector('.page').scrollTop=0;
       }
       document.querySelectorAll('.nav-item,.tab-item').forEach(function(item){item.addEventListener('click',function(){activateView(item.dataset.view);});});
@@ -261,8 +264,8 @@ var content={
       function initPose(){
         if(pose)return true;
         if(!window.Pose){
-          statusPill.textContent='Analyzer could not start';
-          setProgress(0,'Pose model unavailable','Reload the app, then try the camera again. The score cannot appear until the on-device model is ready.','error');
+          statusPill.textContent='Analyzer didn\u2019t start \u2014 tap to try again';
+          setProgress(0,'Analyzer didn\u2019t start','Reload the app, then try the camera again. No score until the analyzer is running.','error');
           return false;
         }
         pose=new Pose({locateFile:function(file){return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/'+file;}});
@@ -281,7 +284,7 @@ var content={
 
       async function startCamera(){
         try{
-          stopSource();resetCoach();setProgress(6,'Opening camera…','Allow camera access, then keep your full body inside the guide.','working');showPoseLoader('Opening camera…');
+          stopSource();resetCoach();setProgress(6,'Opening camera\u2026','Allow camera access, then keep your full body inside the guide.','working');showPoseLoader('Opening camera…');
           if(!initPose())throw new Error('Analyzer model unavailable.');
           if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('Camera access is not supported here.');
           stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:facing,width:{ideal:1280},height:{ideal:720}}});
@@ -289,16 +292,16 @@ var content={
           video.style.transform=facing==='user'?'scaleX(-1)':'none';
           fitVideoFrame();
           empty.classList.add('hidden');setCoachIdle(false);statusPill.textContent='Warming up analyzer…';statusPill.classList.add('live');
-          setProgress(12,'Warming up pose model…','This first step can take a moment. Keep your full body visible while the model starts.','working');showPoseLoader('Warming up pose model…');
+          setProgress(12,'Warming up analyzer\u2026','This first step can take a moment. Keep your full body visible while the analyzer starts.','working');showPoseLoader('Warming up analyzer\u2026');
           document.getElementById('cameraToggle').setAttribute('aria-label','Stop camera');
           runLoop();
         }catch(err){
           var modelError=err&&err.message==='Analyzer model unavailable.';
-          hidePoseLoader();statusPill.textContent=modelError?'Analyzer unavailable':'Camera unavailable';statusPill.classList.remove('live');
+          hidePoseLoader();statusPill.textContent=modelError?'Analyzer didn\u2019t start \u2014 tap to try again':'Camera didn\u2019t start \u2014 tap to try again';statusPill.classList.remove('live');
           empty.classList.remove('hidden');setCoachIdle(true);
-          document.querySelector('.camera-empty h2').textContent=modelError?'Analyzer did not load':'Camera needs permission';
-          document.querySelector('.camera-empty p').textContent=modelError?'Reload the app and try again. You can also upload a clip after the analyzer starts.':'Allow camera access in your browser, or upload a video clip instead.';
-          setProgress(0,modelError?'Pose model unavailable':'Camera access needed',modelError?'Reload the app, then try again. No score can be calculated without the model.':'Allow camera permission or upload a saved video clip.','error');
+          document.querySelector('.camera-empty h2').textContent=modelError?'Analyzer didn\u2019t start':'Camera didn\u2019t start';
+          document.querySelector('.camera-empty p').textContent=modelError?'Reload the app and try again. You can also upload a clip after the analyzer starts.':'Allow camera access, or upload a video clip instead.';
+          setProgress(0,modelError?'Analyzer didn\u2019t start':'Camera access needed',modelError?'Reload the app, then try again. No score without the analyzer running.':'Allow camera access or upload a saved video clip.','error');
         }
       }
 
@@ -319,12 +322,12 @@ var content={
       }
 
       async function runLoop(){
-        if(!pose){statusPill.textContent='Pose model unavailable';setProgress(0,'Pose model unavailable','Reload the app and try again.','error');return;}
+        if(!pose){statusPill.textContent='Analyzer didn\u2019t start \u2014 tap to try again';setProgress(0,'Analyzer didn\u2019t start','Reload the app and try again.','error');return;}
         async function tick(){
           if(!processing && video.readyState>=2 && !video.paused){
             processing=true;
             try{await pose.send({image:video});}
-            catch(e){statusPill.textContent='Analysis paused';setProgress(0,'Analysis paused','The pose model stopped before a score could be calculated. Reload the app and try again.','error');}
+            catch(e){statusPill.textContent='Analysis paused';setProgress(0,'Analysis paused','The analyzer stopped before a score could be worked out. Reload the app and try again.','error');}
             processing=false;
           }
           if(!video.paused && !video.ended) loopId=requestAnimationFrame(tick);
@@ -339,20 +342,20 @@ var content={
       document.getElementById('cameraToggle').addEventListener('click',function(){stream||objectUrl?stopAndReset():startCamera()});
       document.getElementById('flipCamera').addEventListener('click',function(){facing=facing==='user'?'environment':'user';if(stream)startCamera();});
       document.getElementById('slowReview').addEventListener('click',function(){
-        if(!objectUrl){statusPill.textContent='Upload a clip for slow review';return;}
+        if(!objectUrl){statusPill.textContent='Upload a clip to use slow review';return;}
         var slow=video.playbackRate===1;video.playbackRate=slow?.35:1;
         this.setAttribute('aria-pressed',slow?'true':'false');
-        statusPill.textContent=slow?'Slow review · 0.35×':'Analyzing clip · 1×';
+        statusPill.textContent=slow?'Slow review':'Checking clip';
         if(video.paused&&!video.ended)video.play();
       });
       document.getElementById('fileInput').addEventListener('change',function(e){
         var file=e.target.files&&e.target.files[0];if(!file)return;
         stopSource();resetCoach();
-        if(!initPose()){statusPill.textContent='Analyzer unavailable';return;}
+        if(!initPose()){statusPill.textContent='Analyzer didn\u2019t start \u2014 tap to try again';return;}
         setProgress(8,'Opening clip…','Preparing the video for on-device pose analysis.','working');showPoseLoader('Opening clip…');
         objectUrl=URL.createObjectURL(file);video.src=objectUrl;video.loop=false;video.playbackRate=1;video.style.transform='none';featureWindow=[];history=[];resetVideo();
         video.addEventListener('loadedmetadata',fitVideoFrame,{once:true});
-        video.play().then(function(){fitVideoFrame();empty.classList.add('hidden');setCoachIdle(false);statusPill.textContent='Warming up analyzer…';statusPill.classList.add('live');setProgress(12,'Warming up pose model…','Keep the whole athlete visible while the first frames are checked.','working');runLoop();}).catch(function(){statusPill.textContent='Could not open clip';setProgress(0,'Clip could not open','Choose a supported video file and try again.','error');});
+        video.play().then(function(){fitVideoFrame();empty.classList.add('hidden');setCoachIdle(false);statusPill.textContent='Warming up analyzer…';statusPill.classList.add('live');setProgress(12,'Warming up analyzer\u2026','Keep your whole body visible while the first frames are checked.','working');runLoop();}).catch(function(){statusPill.textContent='That clip didn\u2019t open \u2014 try another video';setProgress(0,'That clip didn\u2019t open','Choose a supported video file and try again.','error');});
       });
 
       document.querySelectorAll('.photo-input').forEach(function(input){input.addEventListener('change',function(e){
@@ -363,11 +366,11 @@ var content={
         // applied to the second photo's card. Queue instead of overlapping.
         if(photoRequest){readout.textContent='Still analyzing the last photo — one moment, then pick again.';input.value='';return;}
         stopSource();empty.classList.remove('hidden');statusPill.textContent='Photo analysis';statusPill.classList.remove('live');resetCoach();
-        if(!initPose()){readout.textContent='The pose model could not start. Reload and try again.';return;}
+        if(!initPose()){readout.textContent='The analyzer didn\u2019t start. Reload and try again.';return;}
         if(photoUrls[slot])URL.revokeObjectURL(photoUrls[slot]);photoUrls[slot]=URL.createObjectURL(file);img.src=photoUrls[slot];img.alt='Athlete form photo '+(slot===0?'A':'B');
-        readout.textContent='Reading the side-view skeleton and measuring angles…';showPoseLoader('Analyzing photo…');
-        img.onerror=function(){hidePoseLoader();photoRequest=null;readout.textContent='That image could not be opened. Try a different photo file.';};
-        img.onload=function(){card.querySelector('.photo-placeholder').hidden=true;img.hidden=true;photoRequest={slot:slot,img:img,card:card};pose.send({image:img}).catch(function(){readout.textContent='This photo could not be analyzed. Try a clear, full-body side view.';photoRequest=null;});};
+        readout.textContent='Reading your shape and measuring angles\u2026';showPoseLoader('Checking photo\u2026');
+        img.onerror=function(){hidePoseLoader();photoRequest=null;readout.textContent='That photo didn\u2019t open. Try a different photo.';};
+        img.onload=function(){card.querySelector('.photo-placeholder').hidden=true;img.hidden=true;photoRequest={slot:slot,img:img,card:card};pose.send({image:img}).catch(function(){readout.textContent='That photo didn\u2019t work. Try a clear, full-body side view.';photoRequest=null;});};
       });});
 
       function angle(a,b,c){
@@ -484,8 +487,8 @@ var content={
         if(!(stream||objectUrl))return;
         var label=intentLabels[inst];
         if(!label){
-          if(inst==='partial')setIntentPill('Partial body - step back',true);
-          else setIntentPill('Waiting for athlete',true);
+          if(inst==='partial')setIntentPill('Part of your body is out of frame \u2014 step back',true);
+          else setIntentPill('Waiting for you',true);
           return;
         }
         var tips=(intentTips[mode]||intentTips.sprint)[inst];
@@ -507,7 +510,7 @@ var content={
       }
       function noteNoAthlete(){
         intentState.current='none';intentState.stable='none';intentState.moveHist=[];
-        if(stream||objectUrl)setIntentPill('Waiting for athlete',true);
+        if(stream||objectUrl)setIntentPill('Waiting for you',true);
       }
       function resetIntent(){
         intentState.current='none';intentState.stable='none';intentState.moveHist=[];intentState.tipIdx=0;intentState.lastBubble='';
@@ -516,22 +519,22 @@ var content={
 
       function analyze(lm){
         var f=extractFeatures(lm);if(!f){
-          featureWindow=[];lostFrames++;analysisState.textContent='Step back—shoulders, hips, knees and ankles must stay visible';
+          featureWindow=[];lostFrames++;analysisState.textContent='Step back \u2014 shoulders, hips, knees and ankles must stay visible';
           setProgress(16,'Full body not visible','Step back until shoulders, hips, knees, and ankles are all inside the frame.','working');
-          if(objectUrl&&video.playbackRate===1&&lostFrames>=10){video.playbackRate=.35;document.getElementById('slowReview').setAttribute('aria-pressed','true');statusPill.textContent='Auto slow review · 0.35×';}
+          if(objectUrl&&video.playbackRate===1&&lostFrames>=10){video.playbackRate=.35;document.getElementById('slowReview').setAttribute('aria-pressed','true');statusPill.textContent='Auto slow review';}
           return null;
         }
         lostFrames=0;featureWindow.push(f);if(featureWindow.length>36)featureWindow.shift();
         if(featureWindow.length<24){
           var frameProgress=18+(featureWindow.length/24)*48;
-          analysisState.textContent='Reading clear pose frames · '+featureWindow.length+'/24';
-          setProgress(frameProgress,'Reading your movement…',featureWindow.length+' of 24 clear pose frames captured. Keep your whole body visible.','working');
+          analysisState.textContent='Reading clear frames \u00b7 '+featureWindow.length+'/24';
+          setProgress(frameProgress,'Reading your movement\u2026',featureWindow.length+' of 24 clear frames captured. Keep your whole body visible.','working');
           return null;
         }
         var torso=median(featureWindow.map(function(x){return x.torso}));
         var motion=Math.max(range(featureWindow.map(function(x){return x.centerX})),range(featureWindow.map(function(x){return x.kneeY})))/torso;
         var armExcursion=Math.max(range(featureWindow.map(function(x){return x.wristLY})),range(featureWindow.map(function(x){return x.wristRY})))/torso;
-        if((mode==='arms'?armExcursion:Math.max(motion,armExcursion))<.18){analysisState.textContent='Ready—move through one complete rep';setProgress(72,'Pose locked—do the rep','The model can see you. Complete the selected movement so it has enough change to score.','working');return null;}
+        if((mode==='arms'?armExcursion:Math.max(motion,armExcursion))<.18){analysisState.textContent='Ready \u2014 move through one full rep';setProgress(72,'Locked on \u2014 do the rep','The camera can see you. Do the move so it has enough change to score.','working');return null;}
         var lean=median(featureWindow.map(function(x){return x.lean}));
         var elbow=median(featureWindow.map(function(x){return x.elbow}));
         var thigh=Math.min.apply(null,featureWindow.map(function(x){return x.thigh}));
@@ -545,7 +548,7 @@ var content={
         var frontView=median(featureWindow.map(function(x){return x.sideRatio}))>.58;
         var metrics,headline,copy,issue;
         if(mode==='block'){
-          if(frontView){analysisState.textContent='Turn side-on so block angles can be measured';setProgress(76,'Side view needed','Turn the phone or your body side-on so the block angles can be measured accurately.','working');return null;}
+          if(frontView){analysisState.textContent='Turn side-on so block angles can be measured';setProgress(76,'Side view needed','Turn the phone or your body side-on so the angles can be measured.','working');return null;}
           var peakLean=Math.max.apply(null,featureWindow.map(function(x){return x.lean}));
           var first=featureWindow[0],rearIsLeft=(first.ankleLx*first.facing)<(first.ankleRx*first.facing);
           var initialRearKnee=rearIsLeft?first.kneeL:first.kneeR;
@@ -571,7 +574,7 @@ var content={
           else if(metrics[2]===null||metrics[1]<=metrics[2]){issue='armSplit';headline='Build more hand separation';copy='The wrists show a small vertical separation. One hand should attack forward while the opposite elbow drives back.';}
           else{issue='rearPush';headline='Finish the rear-block push';copy='The rear leg leaves before it reaches a long extension through block clearance.';}
         }else if(mode==='side'){
-          if(frontView){analysisState.textContent='Turn fully side-on for sagittal scoring';setProgress(76,'Profile view needed','Place the phone square to the lane so the shoulders and hips overlap in profile.','working');return null;}
+          if(frontView){analysisState.textContent='Turn fully side-on so angles can be measured';setProgress(76,'Side view needed','Place the phone square to the lane so the shoulders and hips line up from the side.','working');return null;}
           // Phase-aware trunk scoring: a tall, near-vertical trunk is CORRECT at
           // max velocity but a fault (early rise) during acceleration. Median lean
           // across the window separates the two phases (<18 deg = max velocity).
@@ -641,7 +644,7 @@ var content={
         score=Math.round(score/history.length);for(var j=0;j<3;j++)metrics[j]=counts[j]?Math.round(metrics[j]/counts[j]):null;
         scoreValue.textContent=score+'%';scoreRing.style.background='conic-gradient(var(--accent-2) '+(score*3.6)+'deg,var(--panel-2) 0deg)';
         statusPill.textContent=objectUrl?(video.playbackRate===1?'Clip scored · 1×':'Clip scored · 0.35×'):'Live score ready';
-        setProgress(100,'Score ready','The percentages now reflect the visible 2D movement window. Repeat the rep to confirm the same result.','ready');
+        setProgress(100,'Score ready','The scores now reflect the visible movement window. Repeat the rep to confirm the same result.','ready');
         var availableMetrics=metrics.filter(function(v){return v!==null});
         var allStrong=availableMetrics.length>1&&availableMetrics.every(function(v){return v>=80});
         analysisState.textContent=allStrong?'Strong visible match · '+featureWindow.length+' frames':score>=60?'Solid base · '+featureWindow.length+' frames':'One clear review point · '+featureWindow.length+' frames';
@@ -662,11 +665,11 @@ var content={
       function handlePhotoResults(results,request){
         var card=request.card,img=request.img,pcanvas=card.querySelector('canvas'),pctx=pcanvas.getContext('2d'),readout=card.querySelector('.photo-readout');
         pcanvas.width=img.naturalWidth||1280;pcanvas.height=img.naturalHeight||960;pctx.clearRect(0,0,pcanvas.width,pcanvas.height);pctx.drawImage(img,0,0,pcanvas.width,pcanvas.height);
-        if(!results.poseLandmarks){hidePoseLoader();readout.innerHTML='<strong>No full pose found.</strong> Retake this from the side with the athlete visible from head to both feet.';return;}
+        if(!results.poseLandmarks){hidePoseLoader();readout.innerHTML='<strong>Couldn\u2019t see your full body in that photo.</strong> Retake it from the side with head to both feet visible.';return;}
         if(window.drawConnectors&&window.POSE_CONNECTIONS)drawConnectors(pctx,results.poseLandmarks,POSE_CONNECTIONS,{color:'#5ed5aa',lineWidth:Math.max(3,pcanvas.width/260)});
         if(window.drawLandmarks)drawLandmarks(pctx,results.poseLandmarks,{color:'#ff7040',fillColor:'#ffffff',lineWidth:2,radius:Math.max(3,pcanvas.width/320)});
         var lm=results.poseLandmarks,f=extractFeatures(lm);
-        if(!f){hidePoseLoader();readout.innerHTML='<strong>Not enough joints are visible.</strong> Retake with shoulders, hips, knees, and ankles all in frame.';return;}
+        if(!f){hidePoseLoader();readout.innerHTML='<strong>Couldn\u2019t see enough of your body.</strong> Retake with shoulders, hips, knees, and ankles all in frame.';return;}
         var knees=[Math.round(f.kneeL),Math.round(f.kneeR)].sort(function(a,b){return a-b}),trunk=Math.round(f.lean),armL=Math.round(f.elbowL),armR=Math.round(f.elbowR);
         var shinL=Math.round(Math.atan2(Math.abs(lm[27].x-lm[25].x),Math.abs(lm[27].y-lm[25].y))*180/Math.PI);
         var shinR=Math.round(Math.atan2(Math.abs(lm[28].x-lm[26].x),Math.abs(lm[28].y-lm[26].y))*180/Math.PI);
@@ -717,11 +720,11 @@ var content={
           if(window.drawConnectors&&window.POSE_CONNECTIONS)drawConnectors(ctx,results.poseLandmarks,POSE_CONNECTIONS,{color:'#54e1ac',lineWidth:5});
           if(window.drawLandmarks)drawLandmarks(ctx,results.poseLandmarks,{color:'#ff7040',fillColor:'#ffffff',lineWidth:2,radius:4});
           updateIntent(results.poseLandmarks);var a=analyze(results.poseLandmarks);if(a)updateCoach(a);
-        }else{featureWindow=[];noteNoAthlete();analysisState.textContent='No athlete detected';setProgress(12,'Looking for an athlete','Move into frame and make sure your whole body is visible from head to ankles.','working');}
+        }else{featureWindow=[];noteNoAthlete();analysisState.textContent='No athlete in frame';setProgress(12,'Looking for you','Move into frame and make sure your whole body is visible from head to ankles.','working');}
         ctx.restore();
       }
 
       renderMode();
       if(window.Pose){statusPill.textContent='Ready · camera off';}
-      else{statusPill.textContent='Analyzer could not start';setProgress(0,'Pose model unavailable','Reload the app, then try again. No score can be calculated without the model.','error');}
+      else{statusPill.textContent='Analyzer didn\u2019t start \u2014 tap to try again';setProgress(0,'Analyzer didn\u2019t start','Reload the app, then try again. No score without the analyzer running.','error');}
     })();
