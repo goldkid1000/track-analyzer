@@ -9,9 +9,17 @@
  */
 (function(){
 'use strict';
-var VERSION = '2.1.2';
+var VERSION = '2.1.3';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: '2.1.3', date: '2026-10-17', notes: [
+    'Three tabs now: AI Analyzer, AI Photo, Guide. The Side View tab is gone — its side-view tip lives in the AI Analyzer.',
+    'When an analysis finishes, AI Photo and Guide get a red “New” badge, and the AI Analyzer shows an “Analysis done” note. Opening a tab clears its badge.',
+    'Guide now shows “Your latest fix” from the run you just finished, at the top.',
+    'AI Photo is connected to the AI Analyzer: latest run (reps, top fixes, best/worst frames), pointing markers on photos (green checks / red fix mark), and “What looks good” + “Work on” lists in plain words.',
+    'Your form vs Pro form — watch the run: a 2D animated demo on a runway in AI Photo. Your character runs with your measured angles, the pro with ideal angles, callout shows your actual top fix. 2D drawing — not real 3D, not your real video. Play / Pause / Replay included.',
+    'Knowledge base grown from 26 to 40 entries: finish & lean, sprint hurdles, 400m hurdles, 4×100m, 4×400m, pole vault basics, safe jump landings, shot put glide + rotation, hammer basics, javelin approach, 800m, 1500m / mile, 5000m.'
+  ]},
   { version: '2.1.2', date: '2026-10-17', notes: [
     'Rep check merged into AI Analyzer: the separate block is gone. One “What to check” pick sets both the live coaching and the rep check. One camera, one Start / Stop flow, one score + one fix.',
     'Live skeleton on the camera: a flat 2D drawing on top of the preview while you record — problem joint in red, good joints in green. Never fake 3D.',
