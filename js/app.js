@@ -1,43 +1,59 @@
+/* Track Analyzer — classic rep-check engine (v2.1.2, merged into AI Analyzer)
+ *
+ * The rep check that used to live in its own screen is now part of the
+ * AI Analyzer: one movement picker ("What to check") drives BOTH this
+ * engine and the AI Analyzer's coaching, and this engine's per-rep score
+ * + one fix feeds the AI Analyzer's live panel. There is no second
+ * camera, no second coach panel, no second flow.
+ *
+ * What this file owns:
+ *  - the 5 movements (Block start, Side-angle sprint, A-skip, Arm action,
+ *    Sprint form) + their cue lists for the Guide tab
+ *  - the rep analysis: windowed pose features -> score, metrics, one fix
+ *    (cue + drill), fix video, asymmetry check
+ *  - the two-photo form check (Photos tab)
+ *  - tab switching + the full-rep-review dialog
+ *
+ * It never touches a camera. The AI Analyzer (js/ai-analyzer.js) owns the
+ * single camera + pose loop and calls TrackClassic.analyzeClassic(landmarks)
+ * once per pose result.
+ */
 (function(){
-      'use strict';
-      var video=document.getElementById('sourceVideo'), canvas=document.getElementById('outputCanvas'), ctx=canvas.getContext('2d');
-      var empty=document.getElementById('cameraEmpty'), statusPill=document.getElementById('statusPill');
-      var mode='block', stream=null, facing='user', pose=null, processing=false, loopId=null, history=[], featureWindow=[], objectUrl=null;
-      var stableHeadline='',stableCount=0,videoTimer=null,videoIssue='',latestAnalysis=null,latestScore=0,latestMetrics=null,lostFrames=0;
-      var repReviewCount=0,lastCoachSentence='',photoRequest=null,photoUrls=[null,null];
-      var scoreValue=document.getElementById('scoreValue'), scoreRing=document.getElementById('scoreRing'),watchFix=document.getElementById('watchFix');
-      var analysisState=document.getElementById('analysisState'), coachHeadline=document.getElementById('coachHeadline'), coachCopy=document.getElementById('coachCopy');
-      var metricEls=[
-        {name:document.getElementById('metric1Name'),value:document.getElementById('metric1Value'),bar:document.getElementById('metric1Bar')},
-        {name:document.getElementById('metric2Name'),value:document.getElementById('metric2Value'),bar:document.getElementById('metric2Bar')},
-        {name:document.getElementById('metric3Name'),value:document.getElementById('metric3Value'),bar:document.getElementById('metric3Bar')}
-      ];
-      var analysisProgress=document.getElementById('analysisProgress'),analysisProgressLabel=document.getElementById('analysisProgressLabel');
-      var analysisProgressPercent=document.getElementById('analysisProgressPercent'),analysisProgressBar=document.getElementById('analysisProgressBar'),analysisProgressDetail=document.getElementById('analysisProgressDetail');
-      var coachPanel=document.getElementById('coachPanel'),intentPill=document.getElementById('intentPill'),intentText=document.getElementById('intentText'),intentBubbles=document.getElementById('intentBubbles');
-      function setCoachIdle(on){coachPanel.classList.toggle('idle',!!on);}
-      function setIntentPill(text,warn){intentText.textContent=text;intentPill.hidden=false;intentPill.classList.toggle('warn',!!warn);}
-      function hideIntentPill(){intentPill.hidden=true;}
+'use strict';
+var mode = 'block';
+var featureWindow = [];
+var repReviewCount = 0, lastCoachSentence = '';
+var latestClassic = null;
+var pendingPhoto = null, photoBusy = false, photoPose = null, photoUrls = [null, null];
 
-      function setProgress(percent,label,detail,state){
-        percent=clamp(Math.round(percent),0,100);
-        analysisProgress.dataset.state=state||'working';analysisProgressLabel.textContent=label;
-        analysisProgressPercent.textContent=percent+'%';analysisProgressBar.style.width=percent+'%';
-        analysisProgressDetail.textContent=detail;
-      }
+/* Stubs for names the extracted rep analysis still references. The old
+ * camera/coach panel is gone, so progress + pill writes are no-ops. */
+var objectUrl = null, lostFrames = 0;
+var video = null;
+var statusStub = { textContent: '', classList: { add: function(){}, remove: function(){} } };
+var analysisStub = { textContent: '' };
+function setProgress(){}
+function hidePoseNote(){}
 
-      
-      var poseLoader=document.getElementById('poseLoader'),poseLoaderText=document.getElementById('poseLoaderText');
-      var poseLoaderShown=false;
-      function showPoseLoader(text){
-        if(poseLoaderText&&text)poseLoaderText.textContent=text;
-        if(poseLoader){poseLoader.hidden=false;poseLoader.classList.add('on');}
-        poseLoaderShown=true;
-      }
-      function hidePoseLoader(){
-        if(poseLoader){poseLoader.classList.remove('on');poseLoader.hidden=true;}
-        poseLoaderShown=false;
-      }
+function clamp(v, min, max){ return Math.max(min, Math.min(max, v)); }
+function angle(a, b, c){
+  var ab = { x: a.x - b.x, y: a.y - b.y }, cb = { x: c.x - b.x, y: c.y - b.y };
+  var dot = ab.x * cb.x + ab.y * cb.y, den = Math.hypot(ab.x, ab.y) * Math.hypot(cb.x, cb.y);
+  if(!den) return 0;
+  return Math.acos(Math.max(-1, Math.min(1, dot / den))) * 180 / Math.PI;
+}
+function avg(a, b){ return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, visibility: Math.min(a.visibility || 1, b.visibility || 1) }; }
+function closeness(v, target, tolerance){ return clamp(100 - Math.abs(v - target) / tolerance * 100, 0, 100); }
+function visible(lm, ids){ return ids.every(function(i){ return lm[i] && (lm[i].visibility === undefined || lm[i].visibility > 0.58); }); }
+function bandScore(v, min, max, falloff){
+  if(v >= min && v <= max) return 100;
+  return clamp(100 - (v < min ? min - v : v - max) / falloff * 100, 0, 100);
+}
+function floorScore(v, min, falloff){ return v >= min ? 100 : clamp(100 - (min - v) / falloff * 100, 0, 100); }
+function ceilingScore(v, max, falloff){ return v <= max ? 100 : clamp(100 - (v - max) / falloff * 100, 0, 100); }
+function median(values){ var a = values.slice().sort(function(x, y){ return x - y; }); return a[Math.floor(a.length / 2)]; }
+function range(values){ return Math.max.apply(null, values) - Math.min.apply(null, values); }
+
 
 var content={
         block:{title:'Block start cues',empty:'Ready for a block start',desc:'Set the phone square to your lane from the side. Include your set position and first two steps.',metrics:['Forward projection','Hand separation','Rear-leg extension'],cues:[
@@ -78,7 +94,7 @@ var content={
         ]}
       };
 
-      var fixVideos={
+var fixVideos={
         projection:['Falling starts for forward projection','Falling-start drill','https://www.youtube.com/results?search_query=sprint+falling+starts+drill+forward+projection'],
         armSplit:['Arm separation out of the blocks','Rip-the-hands-apart drill','https://www.youtube.com/results?search_query=sprint+block+start+arm+action+rip+hands+apart'],
         rearPush:['Rear-leg extension from the blocks','Block push drill','https://www.youtube.com/results?search_query=sprint+block+start+rear+leg+extension+drill'],
@@ -102,7 +118,7 @@ var content={
         underHip:['Foot strike under the hips','A-run drill','https://www.youtube.com/results?search_query=sprint+foot+strike+under+hips+a-run+drill']
       };
 
-      var coachFix={
+var coachFix={
         projection:{fix:'You are coming up before you finish pushing back.',cue:'Push the track away and keep the line moving forward.',drill:'3 × 10 m falling starts'},
         armSplit:{fix:'The hands are not separating enough at clearance.',cue:'Rip the hands apart.',drill:'2 × 10 seated arm punches, then 3 block exits'},
         rearPush:{fix:'The rear leg is leaving the block before it finishes the push.',cue:'Finish long through the back block.',drill:'3 × 2 paused block clearances'},
@@ -126,273 +142,7 @@ var content={
         underHip:{fix:'The foot is landing ahead of the hip and creating a brake.',cue:'Quick feet under the hips.',drill:'3 × 20 m A-runs'}
       };
 
-      function renderMode(){
-        var c=content[mode];
-        document.getElementById('cueTitle').textContent=c.title;
-        document.querySelector('.camera-empty h2').textContent=c.empty;
-        document.querySelector('.camera-empty p').textContent=c.desc;
-        for(var i=0;i<3;i++) metricEls[i].name.textContent=c.metrics[i];
-        document.getElementById('cueList').innerHTML=c.cues.map(function(x,i){return '<div class="cue"><div class="cue-num">0'+(i+1)+'</div><div><h3>'+x[0]+'</h3><p>'+x[1]+'</p></div></div>';}).join('');
-        document.getElementById('sideGuide').hidden=mode!=='side';
-        document.getElementById('frameGuide').setAttribute('data-view',mode==='side'?'side':'standard');
-        if(pose)pose.setOptions({modelComplexity:mode==='side'?2:1,smoothLandmarks:true,enableSegmentation:false,minDetectionConfidence:mode==='side'?.5:.55,minTrackingConfidence:mode==='side'?.5:.55});
-        history=[];featureWindow=[];stableHeadline='';stableCount=0;repReviewCount=0;latestAnalysis=null;latestMetrics=null;resetVideo();resetCoach();resetIntent();
-      }
-
-      function resetVideo(){
-        if(videoTimer)clearTimeout(videoTimer);videoTimer=null;videoIssue='';
-        document.getElementById('videoIdle').hidden=false;
-        document.getElementById('videoIdle').textContent='Finish a clear rep. A matching coaching video will load after the analyzer sees a steady movement pattern.';
-        document.getElementById('videoLoading').hidden=true;
-        document.getElementById('videoList').hidden=true;
-        document.getElementById('videoList').innerHTML='';
-        watchFix.hidden=true;
-      }
-
-      function queueFixVideo(issue){
-        if(!issue||videoIssue===issue||!fixVideos[issue])return;
-        videoIssue=issue;if(videoTimer)clearTimeout(videoTimer);
-        document.getElementById('videoIdle').hidden=true;
-        document.getElementById('videoList').hidden=true;
-        document.getElementById('videoLoading').hidden=false;
-        videoTimer=setTimeout(function(){
-          if(videoIssue!==issue)return;
-          var v=fixVideos[issue];
-          document.getElementById('videoLoading').hidden=true;
-          var list=document.getElementById('videoList');
-          list.innerHTML='<a class="video" href="'+v[2]+'" target="_blank" rel="noopener"><div class="thumb"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></div><div><strong>Watch: how to fix this</strong><span>'+v[0]+' · '+v[1]+'</span></div></a>';
-          list.hidden=false;
-          watchFix.href=v[2];watchFix.hidden=false;
-        },1400);
-      }
-
-      function resetCoach(){
-        scoreValue.textContent='—'; scoreRing.style.background='conic-gradient(var(--accent-2) 0deg,var(--panel-2) 0deg)';
-        analysisState.textContent='Start the camera or upload a clip'; coachHeadline.textContent='Set the camera first';watchFix.hidden=true;
-        coachCopy.textContent='The score is not loading in the background. It begins only after the camera or an uploaded clip is playing and your full body is visible.';
-        setProgress(0,'Waiting to check','Your score appears after 24 clear frames and one full move \u2014 not while the camera is off.','waiting');
-        metricEls.forEach(function(m){m.value.textContent='—';m.bar.style.width='0%';});
-      }
-
-      function buildCoachReview(issue,metrics,asym){
-        var strongest=[];
-        metrics.forEach(function(v,i){if(v!==null)strongest.push({i:i,v:v});});
-        strongest.sort(function(a,b){return b.v-a.v;});
-        var goodOne=strongest[0]?metricEls[strongest[0].i].name.textContent.toLowerCase():'body position';
-        var goodTwo=strongest[1]&&strongest[1].v>=70?metricEls[strongest[1].i].name.textContent.toLowerCase():'';
-        var openings=['That rep has real shape: ','Good work there—','You gave yourself something useful to build on: ','That is moving in the right direction: '];
-        var joins=[' is your cleanest piece', ' looks controlled', ' is holding together', ' is the strongest part of the rep'];
-        var fix=coachFix[issue]||coachFix.projection;
-        var praise=openings[repReviewCount%openings.length]+goodOne+joins[repReviewCount%joins.length]+(goodTwo?' and '+goodTwo+' is solid too':'')+'.';
-        if(praise===lastCoachSentence)praise=openings[(repReviewCount+1)%openings.length]+goodOne+' is working well.';
-        lastCoachSentence=praise;repReviewCount++;
-        var out=praise+' One thing: '+fix.fix+' Cue: “'+fix.cue+'” Drill: '+fix.drill+'.';
-        // Left/right asymmetry: peak knee extension and median elbow angle are
-        // compared across the whole window, so a normal stride cycle (one leg
-        // flexed while the other extends) does not trigger it. Only a
-        // sustained side-to-side gap is reported, and only as a check — not
-        // an injury assessment.
-        if(asym&&asym.type==='knee')out+=' Asymmetry check: your '+asym.lagging+' leg finishes about '+asym.diff+'° less extended than your '+asym.strong+' leg. Add single-leg work on the '+asym.lagging+' side and re-check — if it persists, show your coach.';
-        else if(asym&&asym.type==='elbow')out+=' Asymmetry check: your '+asym.open+' elbow averages about '+asym.diff+'° more open than your '+asym.closed+' elbow. Mirror the arms in seated arm swings and re-check.';
-        return out;
-      }
-
-      document.querySelectorAll('.mode').forEach(function(btn){btn.addEventListener('click',function(){
-        document.querySelectorAll('.mode').forEach(function(b){b.setAttribute('aria-pressed','false')});
-        btn.setAttribute('aria-pressed','true');mode=btn.dataset.mode;renderMode();
-      })});
-
-      var screenCopy={
-        ai:['AI Analyzer','Live coaching, two cameras, photo check, and your results \u2014 one screen'],
-        photos:['Photos','Compare two positions with skeletons and angle checks'],
-        side:['Side View','Side-on tracking for starts and sprint form'],
-        guide:['Guide','Technique cues, drills, and the video for each fix']
-      };
-      var viewSwitching=false,pendingView=null;
-      function activateView(view){
-        if(!screenCopy[view])return;
-        // Never drop a tap: a second tap during the 130ms+340ms transition
-        // used to be silently ignored, so quick tab taps lost navigation.
-        // Last tap wins — it is queued and applied when the transition ends.
-        if(viewSwitching){pendingView=view;return;}
-        if(document.body.dataset.activeView===view){pendingView=null;return;}
-        viewSwitching=true;
-        var page=document.querySelector('.page');
-        page.classList.add('view-leaving');
-        setTimeout(function(){
-          document.body.dataset.activeView=view;
-          page.classList.remove('view-leaving');
-          page.classList.add('view-entering');
-          var cards=document.querySelectorAll('.view-section .panel,.view-section .coach,.view-section .camera-card');
-          for(var i=0;i<cards.length;i++){
-            if(cards[i].offsetParent===null)continue;
-            cards[i].style.animationDelay=Math.min(i*60,280)+'ms';
-            cards[i].classList.remove('stagger-in');
-            void cards[i].offsetWidth;
-            cards[i].classList.add('stagger-in');
-          }
-          setTimeout(function(){page.classList.remove('view-entering');viewSwitching=false;if(pendingView&&pendingView!==document.body.dataset.activeView){var pv=pendingView;pendingView=null;activateView(pv);}else pendingView=null;},340);
-        },130);
-        document.getElementById('screenTitle').textContent=screenCopy[view][0];
-        document.getElementById('screenSubtitle').textContent=screenCopy[view][1];
-        document.querySelectorAll('[data-view]').forEach(function(item){item.setAttribute('aria-current',item.dataset.view===view?'page':'false');});
-        if(view==='side'&&mode!=='side'){
-          document.querySelectorAll('.mode').forEach(function(b){b.setAttribute('aria-pressed',b.dataset.mode==='side'?'true':'false');});
-          mode='side';renderMode();
-        }
-        if(view==='side'){
-          setTimeout(function(){ var cs=document.getElementById('classicSection'); if(cs) cs.scrollIntoView({behavior:'smooth',block:'start'}); }, 500);
-        }
-        document.querySelector('.page').scrollTop=0;
-      }
-      document.querySelectorAll('.nav-item,.tab-item').forEach(function(item){item.addEventListener('click',function(){activateView(item.dataset.view);});});
-
-      var reviewDialog=document.getElementById('reviewDialog');
-      function syncReviewSheet(){
-        document.getElementById('sheetScore').textContent=scoreValue.textContent;
-        document.getElementById('sheetHeadline').textContent=coachHeadline.textContent;
-        document.getElementById('sheetCopy').textContent=coachCopy.textContent;
-        document.getElementById('sheetMetrics').innerHTML=metricEls.map(function(m){return '<div class="sheet-metric"><span>'+m.name.textContent+'</span><span>'+m.value.textContent+'</span></div>';}).join('');
-      }
-      document.getElementById('openReviewSheet').addEventListener('click',function(){
-        syncReviewSheet();
-        if(reviewDialog.showModal)reviewDialog.showModal();else reviewDialog.setAttribute('open','');
-      });
-      document.getElementById('closeReviewSheet').addEventListener('click',function(){if(reviewDialog.close)reviewDialog.close();else reviewDialog.removeAttribute('open');});
-      reviewDialog.addEventListener('click',function(e){if(e.target===reviewDialog){if(reviewDialog.close)reviewDialog.close();else reviewDialog.removeAttribute('open');}});
-
-      function initPose(){
-        if(pose)return true;
-        if(!window.Pose){
-          statusPill.textContent='Analyzer didn\u2019t start \u2014 tap to try again';
-          setProgress(0,'Analyzer didn\u2019t start','Reload the app, then try the camera again. No score until the analyzer is running.','error');
-          return false;
-        }
-        pose=new Pose({locateFile:function(file){return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/'+file;}});
-        pose.setOptions({modelComplexity:1,smoothLandmarks:true,enableSegmentation:false,minDetectionConfidence:.55,minTrackingConfidence:.55});
-        pose.onResults(onResults);
-        return true;
-      }
-
-      function fitVideoFrame(){
-        if(!video.videoWidth||!video.videoHeight)return;
-        var ratio=video.videoWidth/video.videoHeight;
-        var card=document.getElementById('cameraCard');
-        card.style.setProperty('--source-ratio',ratio);
-        card.setAttribute('data-orientation',ratio>=1?'landscape':'portrait');
-      }
-
-      async function startCamera(){
-        try{
-          stopSource();resetCoach();setProgress(6,'Opening camera\u2026','Allow camera access, then keep your full body inside the guide.','working');showPoseLoader('Opening camera…');
-          if(!initPose())throw new Error('Analyzer model unavailable.');
-          if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('Camera access is not supported here.');
-          stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:facing,width:{ideal:1280},height:{ideal:720}}});
-          video.removeAttribute('src');video.srcObject=stream;video.loop=false;video.playbackRate=1;featureWindow=[];history=[];resetVideo();await video.play();
-          video.style.transform=facing==='user'?'scaleX(-1)':'none';
-          fitVideoFrame();
-          empty.classList.add('hidden');setCoachIdle(false);statusPill.textContent='Warming up analyzer…';statusPill.classList.add('live');
-          setProgress(12,'Warming up analyzer\u2026','This first step can take a moment. Keep your full body visible while the analyzer starts.','working');showPoseLoader('Warming up analyzer\u2026');
-          document.getElementById('cameraToggle').setAttribute('aria-label','Stop camera');
-          runLoop();
-        }catch(err){
-          var modelError=err&&err.message==='Analyzer model unavailable.';
-          hidePoseLoader();statusPill.textContent=modelError?'Analyzer didn\u2019t start \u2014 tap to try again':'Camera didn\u2019t start \u2014 tap to try again';statusPill.classList.remove('live');
-          empty.classList.remove('hidden');setCoachIdle(true);
-          document.querySelector('.camera-empty h2').textContent=modelError?'Analyzer didn\u2019t start':'Camera didn\u2019t start';
-          document.querySelector('.camera-empty p').textContent=modelError?'Reload the app and try again. You can also upload a clip after the analyzer starts.':'Allow camera access, or upload a video clip instead.';
-          setProgress(0,modelError?'Analyzer didn\u2019t start':'Camera access needed',modelError?'Reload the app, then try again. No score without the analyzer running.':'Allow camera access or upload a saved video clip.','error');
-        }
-      }
-
-      function stopSource(){hidePoseLoader();
-        if(loopId) cancelAnimationFrame(loopId);loopId=null;
-        if(stream){stream.getTracks().forEach(function(t){t.stop()});stream=null;}
-        video.pause();video.srcObject=null;video.playbackRate=1;
-        if(objectUrl){URL.revokeObjectURL(objectUrl);objectUrl=null;}video.removeAttribute('src');
-        document.getElementById('slowReview').setAttribute('aria-pressed','false');
-        ctx.clearRect(0,0,canvas.width,canvas.height);featureWindow=[];history=[];lostFrames=0;
-        stableHeadline='';stableCount=0;latestAnalysis=null;latestMetrics=null;latestScore=0;
-        resetVideo();resetIntent();
-      }
-
-      function stopAndReset(){
-        stopSource();empty.classList.remove('hidden');setCoachIdle(true);statusPill.textContent='Camera off';statusPill.classList.remove('live');
-        document.getElementById('cameraToggle').setAttribute('aria-label','Start camera');resetCoach();
-      }
-
-      async function runLoop(){
-        if(!pose){statusPill.textContent='Analyzer didn\u2019t start \u2014 tap to try again';setProgress(0,'Analyzer didn\u2019t start','Reload the app and try again.','error');return;}
-        async function tick(){
-          if(!processing && video.readyState>=2 && !video.paused){
-            processing=true;
-            try{await pose.send({image:video});}
-            catch(e){statusPill.textContent='Analysis paused';setProgress(0,'Analysis paused','The analyzer stopped before a score could be worked out. Reload the app and try again.','error');}
-            processing=false;
-          }
-          if(!video.paused && !video.ended) loopId=requestAnimationFrame(tick);
-          else if(video.ended) statusPill.textContent='Clip complete';
-        }
-        tick();
-      }
-
-      document.getElementById('startCameraTop').addEventListener('click',startCamera);
-      document.getElementById('uploadClip').addEventListener('click',function(){document.getElementById('fileInput').click();});
-      document.getElementById('uploadClipTop').addEventListener('click',function(){document.getElementById('fileInput').click();});
-      document.getElementById('cameraToggle').addEventListener('click',function(){stream||objectUrl?stopAndReset():startCamera()});
-      document.getElementById('flipCamera').addEventListener('click',function(){facing=facing==='user'?'environment':'user';if(stream)startCamera();});
-      document.getElementById('slowReview').addEventListener('click',function(){
-        if(!objectUrl){statusPill.textContent='Upload a clip to use slow review';return;}
-        var slow=video.playbackRate===1;video.playbackRate=slow?.35:1;
-        this.setAttribute('aria-pressed',slow?'true':'false');
-        statusPill.textContent=slow?'Slow review':'Checking clip';
-        if(video.paused&&!video.ended)video.play();
-      });
-      document.getElementById('fileInput').addEventListener('change',function(e){
-        var file=e.target.files&&e.target.files[0];if(!file)return;
-        stopSource();resetCoach();
-        if(!initPose()){statusPill.textContent='Analyzer didn\u2019t start \u2014 tap to try again';return;}
-        setProgress(8,'Opening clip…','Preparing the video for on-device pose analysis.','working');showPoseLoader('Opening clip…');
-        objectUrl=URL.createObjectURL(file);video.src=objectUrl;video.loop=false;video.playbackRate=1;video.style.transform='none';featureWindow=[];history=[];resetVideo();
-        video.addEventListener('loadedmetadata',fitVideoFrame,{once:true});
-        video.play().then(function(){fitVideoFrame();empty.classList.add('hidden');setCoachIdle(false);statusPill.textContent='Warming up analyzer…';statusPill.classList.add('live');setProgress(12,'Warming up analyzer\u2026','Keep your whole body visible while the first frames are checked.','working');runLoop();}).catch(function(){statusPill.textContent='That clip didn\u2019t open \u2014 try another video';setProgress(0,'That clip didn\u2019t open','Choose a supported video file and try again.','error');});
-      });
-
-      document.querySelectorAll('.photo-input').forEach(function(input){input.addEventListener('change',function(e){
-        var file=e.target.files&&e.target.files[0];if(!file)return;
-        var slot=Number(input.dataset.slot),card=document.querySelector('[data-photo-slot="'+slot+'"]'),img=card.querySelector('img'),readout=card.querySelector('.photo-readout');
-        // Guard the photo race: onResults has no per-photo token, so a second
-        // pick while one is in flight would get the first photo's landmarks
-        // applied to the second photo's card. Queue instead of overlapping.
-        if(photoRequest){readout.textContent='Still analyzing the last photo — one moment, then pick again.';input.value='';return;}
-        stopSource();empty.classList.remove('hidden');statusPill.textContent='Photo analysis';statusPill.classList.remove('live');resetCoach();
-        if(!initPose()){readout.textContent='The analyzer didn\u2019t start. Reload and try again.';return;}
-        if(photoUrls[slot])URL.revokeObjectURL(photoUrls[slot]);photoUrls[slot]=URL.createObjectURL(file);img.src=photoUrls[slot];img.alt='Athlete form photo '+(slot===0?'A':'B');
-        readout.textContent='Reading your shape and measuring angles\u2026';showPoseLoader('Checking photo\u2026');
-        img.onerror=function(){hidePoseLoader();photoRequest=null;readout.textContent='That photo didn\u2019t open. Try a different photo.';};
-        img.onload=function(){card.querySelector('.photo-placeholder').hidden=true;img.hidden=true;photoRequest={slot:slot,img:img,card:card};pose.send({image:img}).catch(function(){readout.textContent='That photo didn\u2019t work. Try a clear, full-body side view.';photoRequest=null;});};
-      });});
-
-      function angle(a,b,c){
-        var ab={x:a.x-b.x,y:a.y-b.y},cb={x:c.x-b.x,y:c.y-b.y};
-        var dot=ab.x*cb.x+ab.y*cb.y,den=Math.hypot(ab.x,ab.y)*Math.hypot(cb.x,cb.y);
-        if(!den)return 0;return Math.acos(Math.max(-1,Math.min(1,dot/den)))*180/Math.PI;
-      }
-      function avg(a,b){return {x:(a.x+b.x)/2,y:(a.y+b.y)/2,visibility:Math.min(a.visibility||1,b.visibility||1)}}
-      function clamp(v,min,max){return Math.max(min,Math.min(max,v))}
-      function closeness(v,target,tolerance){return clamp(100-Math.abs(v-target)/tolerance*100,0,100)}
-      function visible(lm,ids){return ids.every(function(i){return lm[i]&&(lm[i].visibility===undefined||lm[i].visibility>.58)})}
-
-      function bandScore(v,min,max,falloff){
-        if(v>=min&&v<=max)return 100;
-        return clamp(100-(v<min?min-v:v-max)/falloff*100,0,100);
-      }
-      function floorScore(v,min,falloff){return v>=min?100:clamp(100-(min-v)/falloff*100,0,100)}
-      function ceilingScore(v,max,falloff){return v<=max?100:clamp(100-(v-max)/falloff*100,0,100)}
-      function median(values){var a=values.slice().sort(function(x,y){return x-y});return a[Math.floor(a.length/2)]}
-      function range(values){return Math.max.apply(null,values)-Math.min.apply(null,values)}
-
-      function extractFeatures(lm){
+function extractFeatures(lm){
         var ids=[11,12,13,14,15,16,23,24,25,26,27,28];
         if(!visible(lm,ids))return null;
         var shoulder=avg(lm[11],lm[12]),hip=avg(lm[23],lm[24]);
@@ -422,119 +172,24 @@ var content={
         };
       }
 
-      /* ---------- proactive intent detection (pose-based, no voice) ---------- */
-      var intentTips={
-        block:{
-          set:['Hips 3-6 in above shoulders, shoulders stacked over the hands.','Eyes down - keep the head neutral, don\u2019t peek at the lane.','Front knee near 90\u00b0, rear knee 120-135\u00b0, both feet loaded.'],
-          ready:['Set the power foot one lower-leg length from the line.','One breath in - then explode out. Don\u2019t rush the gun.','Plan to stay low through the first 10 meters.'],
-          moving:['Rip the hands apart - one punches forward, one drives back.','Push the track away; keep one long line from head to heel.','Punch the rear leg through low and fast.']
-        },
-        side:{
-          set:['Walk back and settle into your drive posture.','Decide your first three steps before you run.','Tall hips, lean from the ankles - not the waist.'],
-          ready:['Eyes down the lane, one cue in mind.','First steps: push back into the track, don\u2019t reach.','Relax the jaw and shoulders before you go.'],
-          moving:['Piston-like leg action - down and back under the hips.','Earn your height gradually; don\u2019t pop up early.','Knee forward, toe up, strike beneath you.']
-        },
-        askip:{
-          set:['Stand tall, ribs stacked over hips.','Find your rhythm before the first skip.','Relaxed shoulders - the arms set the tempo.'],
-          ready:['Thigh toward parallel, strike down under the hip.','Short ground contacts - think hot ground.','Keep the bounce in the ankles, not the knees.'],
-          moving:['Punch the knee forward with the toe up.','Match the arms to the skip - hip to lip.','Stay tall; don\u2019t lean back to lift the knee.']
-        },
-        arms:{
-          set:['Stand side-on so the camera sees both shoulders.','Loosen the jaw and drop the shoulders.','Hands relaxed - no fists.'],
-          ready:['Think \u201chip to lip\u201d before the first rep.','Elbows drive back, not across the body.','Loose shoulders let the arms swing big.'],
-          moving:['Drive the arms backward with loose hands.','Hands travel on two straight rails - no crossing.','Let the arms set the rhythm for the legs.']
-        },
-        sprint:{
-          set:['Walk into the lane and find tall posture.','Hips tall, head quiet, shoulders low.','Pick one cue - posture, arms, or foot strike.'],
-          ready:['Push, then rise - earn your height gradually.','Quick feet under the hips from step one.','Stay loose; tension kills speed.'],
-          moving:['Run tall through the hips, head quiet.','Down and back with the foot - no reaching ahead.','Drop the shoulders and unclench the jaw.']
-        }
-      };
-      var intentState={current:'none',since:0,stable:'none',tipIdx:0,moveHist:[],lastBubble:''};
-      var intentLabels={
-        set:['Setting up','Looks like a set position - here is your focus:'],
-        ready:['Standing by','You look ready - one thing before you go:'],
-        moving:['Moving','You are moving - I will score this rep:']
-      };
-      function modeName(){var names={block:'block start',side:'side sprint',askip:'A-skip',arms:'arm action',sprint:'sprint form'};return names[mode]||mode;}
-      function classifyIntent(lm,f){
-        if(!f)return 'partial';
-        var hipX=(lm[23].x+lm[24].x)/2;
-        intentState.moveHist.push(hipX);
-        if(intentState.moveHist.length>10)intentState.moveHist.shift();
-        if(intentState.moveHist.length>=6){
-          var r=Math.max.apply(null,intentState.moveHist)-Math.min.apply(null,intentState.moveHist);
-          if(r>0.12)return 'moving';
-        }
-        var kneeBent=Math.min(f.kneeL,f.kneeR)<135;
-        if(f.hipY>0.52&&kneeBent)return 'set';
-        return 'ready';
-      }
-      function showIntentBubble(label,tip){
-        var text=label+' '+tip;
-        if(text===intentState.lastBubble)return;
-        intentState.lastBubble=text;
-        var b=document.createElement('div');
-        b.className='intent-bubble';
-        var strong=document.createElement('strong');strong.textContent=label+' ';
-        b.appendChild(strong);
-        b.appendChild(document.createTextNode(tip));
-        intentBubbles.appendChild(b);
-        while(intentBubbles.children.length>3)intentBubbles.removeChild(intentBubbles.firstChild);
-        setTimeout(function(){b.classList.add('out');setTimeout(function(){if(b.parentNode)b.parentNode.removeChild(b);},350);},5000);
-      }
-      function onStableIntent(inst){
-        if(!(stream||objectUrl))return;
-        var label=intentLabels[inst];
-        if(!label){
-          if(inst==='partial')setIntentPill('Part of your body is out of frame \u2014 step back',true);
-          else setIntentPill('Waiting for you',true);
-          return;
-        }
-        var tips=(intentTips[mode]||intentTips.sprint)[inst];
-        var tip=tips[intentState.tipIdx%tips.length];
-        intentState.tipIdx++;
-        setIntentPill(label[0]+' \u00b7 '+modeName(),false);
-        showIntentBubble(label[1],tip);
-      }
-      function updateIntent(lm){
-        var f=null;
-        try{f=extractFeatures(lm);}catch(e){f=null;}
-        var inst=classifyIntent(lm,f);
-        var now=Date.now();
-        if(inst!==intentState.current){intentState.current=inst;intentState.since=now;}
-        else if(inst!==intentState.stable&&now-intentState.since>1000){
-          intentState.stable=inst;
-          onStableIntent(inst);
-        }
-      }
-      function noteNoAthlete(){
-        intentState.current='none';intentState.stable='none';intentState.moveHist=[];
-        if(stream||objectUrl)setIntentPill('Waiting for you',true);
-      }
-      function resetIntent(){
-        intentState.current='none';intentState.stable='none';intentState.moveHist=[];intentState.tipIdx=0;intentState.lastBubble='';
-        intentBubbles.innerHTML='';hideIntentPill();
-      }
-
-      function analyze(lm){
+function analyze(lm){
         var f=extractFeatures(lm);if(!f){
-          featureWindow=[];lostFrames++;analysisState.textContent='Step back \u2014 shoulders, hips, knees and ankles must stay visible';
+          featureWindow=[];lostFrames++;analysisStub.textContent='Step back \u2014 shoulders, hips, knees and ankles must stay visible';
           setProgress(16,'Full body not visible','Step back until shoulders, hips, knees, and ankles are all inside the frame.','working');
-          if(objectUrl&&video.playbackRate===1&&lostFrames>=10){video.playbackRate=.35;document.getElementById('slowReview').setAttribute('aria-pressed','true');statusPill.textContent='Auto slow review';}
+          if(objectUrl&&video.playbackRate===1&&lostFrames>=10){video.playbackRate=.35;statusStub.textContent='Auto slow review';}
           return null;
         }
         lostFrames=0;featureWindow.push(f);if(featureWindow.length>36)featureWindow.shift();
         if(featureWindow.length<24){
           var frameProgress=18+(featureWindow.length/24)*48;
-          analysisState.textContent='Reading clear frames \u00b7 '+featureWindow.length+'/24';
+          analysisStub.textContent='Reading clear frames \u00b7 '+featureWindow.length+'/24';
           setProgress(frameProgress,'Reading your movement\u2026',featureWindow.length+' of 24 clear frames captured. Keep your whole body visible.','working');
           return null;
         }
         var torso=median(featureWindow.map(function(x){return x.torso}));
         var motion=Math.max(range(featureWindow.map(function(x){return x.centerX})),range(featureWindow.map(function(x){return x.kneeY})))/torso;
         var armExcursion=Math.max(range(featureWindow.map(function(x){return x.wristLY})),range(featureWindow.map(function(x){return x.wristRY})))/torso;
-        if((mode==='arms'?armExcursion:Math.max(motion,armExcursion))<.18){analysisState.textContent='Ready \u2014 move through one full rep';setProgress(72,'Locked on \u2014 do the rep','The camera can see you. Do the move so it has enough change to score.','working');return null;}
+        if((mode==='arms'?armExcursion:Math.max(motion,armExcursion))<.18){analysisStub.textContent='Ready \u2014 move through one full rep';setProgress(72,'Locked on \u2014 do the rep','The camera can see you. Do the move so it has enough change to score.','working');return null;}
         var lean=median(featureWindow.map(function(x){return x.lean}));
         var elbow=median(featureWindow.map(function(x){return x.elbow}));
         var thigh=Math.min.apply(null,featureWindow.map(function(x){return x.thigh}));
@@ -548,7 +203,7 @@ var content={
         var frontView=median(featureWindow.map(function(x){return x.sideRatio}))>.58;
         var metrics,headline,copy,issue;
         if(mode==='block'){
-          if(frontView){analysisState.textContent='Turn side-on so block angles can be measured';setProgress(76,'Side view needed','Turn the phone or your body side-on so the angles can be measured.','working');return null;}
+          if(frontView){analysisStub.textContent='Turn side-on so block angles can be measured';setProgress(76,'Side view needed','Turn the phone or your body side-on so the angles can be measured.','working');return null;}
           var peakLean=Math.max.apply(null,featureWindow.map(function(x){return x.lean}));
           var first=featureWindow[0],rearIsLeft=(first.ankleLx*first.facing)<(first.ankleRx*first.facing);
           var initialRearKnee=rearIsLeft?first.kneeL:first.kneeR;
@@ -560,7 +215,7 @@ var content={
           var startCenter=firstSix.reduce(function(sum,x){return sum+x.centerX},0)/firstSix.length;
           var finishCenter=lastSix.reduce(function(sum,x){return sum+x.centerX},0)/lastSix.length;
           var hasClearancePhase=startRange<.09&&Math.abs(finishCenter-startCenter)/torso>.22&&initialRearKnee<145;
-          if(!hasClearancePhase){analysisState.textContent='Include the set position and first two steps';setProgress(82,'Need the full block start','Begin with a still set position, then include the first two steps in the same clip or camera view.','working');return null;}
+          if(!hasClearancePhase){analysisStub.textContent='Include the set position and first two steps';setProgress(82,'Need the full block start','Begin with a still set position, then include the first two steps in the same clip or camera view.','working');return null;}
           metrics=[bandScore(peakLean,28,55,25),floorScore(armSplit,.65,.5),floorScore(rearExtension,150,35)];
           if(initialFrontKnee<75||initialFrontKnee>108){issue='frontKnee';headline='Set the front knee near 90°';copy='Move the front block until the knee is close to a right angle with the full foot loaded.';}
           else if(initialRearKnee<112||initialRearKnee>143){issue='rearKnee';headline='Set the rear knee at 120–135°';copy='Adjust the rear pedal until that knee sits inside the power range.';}
@@ -574,7 +229,7 @@ var content={
           else if(metrics[2]===null||metrics[1]<=metrics[2]){issue='armSplit';headline='Build more hand separation';copy='The wrists show a small vertical separation. One hand should attack forward while the opposite elbow drives back.';}
           else{issue='rearPush';headline='Finish the rear-block push';copy='The rear leg leaves before it reaches a long extension through block clearance.';}
         }else if(mode==='side'){
-          if(frontView){analysisState.textContent='Turn fully side-on so angles can be measured';setProgress(76,'Side view needed','Place the phone square to the lane so the shoulders and hips line up from the side.','working');return null;}
+          if(frontView){analysisStub.textContent='Turn fully side-on so angles can be measured';setProgress(76,'Side view needed','Place the phone square to the lane so the shoulders and hips line up from the side.','working');return null;}
           // Phase-aware trunk scoring: a tall, near-vertical trunk is CORRECT at
           // max velocity but a fault (early rise) during acceleration. Median lean
           // across the window separates the two phases (<18 deg = max velocity).
@@ -637,39 +292,14 @@ var content={
         return {metrics:metrics,score:available.reduce(function(sum,v){return sum+v},0)/available.length,headline:headline,copy:copy,issue:issue,asym:asym};
       }
 
-      function updateCoach(a){
-        history.push(a);if(history.length>6)history.shift();
-        var metrics=[0,0,0],counts=[0,0,0],score=0;
-        history.forEach(function(x){score+=x.score;for(var i=0;i<3;i++)if(x.metrics[i]!==null){metrics[i]+=x.metrics[i];counts[i]++;}});
-        score=Math.round(score/history.length);for(var j=0;j<3;j++)metrics[j]=counts[j]?Math.round(metrics[j]/counts[j]):null;
-        scoreValue.textContent=score+'%';scoreRing.style.background='conic-gradient(var(--accent-2) '+(score*3.6)+'deg,var(--panel-2) 0deg)';
-        statusPill.textContent=objectUrl?(video.playbackRate===1?'Clip scored · 1×':'Clip scored · 0.35×'):'Live score ready';
-        setProgress(100,'Score ready','The scores now reflect the visible movement window. Repeat the rep to confirm the same result.','ready');
-        var availableMetrics=metrics.filter(function(v){return v!==null});
-        var allStrong=availableMetrics.length>1&&availableMetrics.every(function(v){return v>=80});
-        analysisState.textContent=allStrong?'Strong visible match · '+featureWindow.length+' frames':score>=60?'Solid base · '+featureWindow.length+' frames':'One clear review point · '+featureWindow.length+' frames';
-        var feedback={issue:a.issue,headline:a.headline,copy:a.copy};
-        feedback.review=(latestAnalysis&&latestAnalysis.issue===feedback.issue&&stableCount%90!==0)?latestAnalysis.review:buildCoachReview(feedback.issue,metrics,a.asym);
-        coachHeadline.textContent=feedback.headline;coachCopy.textContent=feedback.review;
-        metricEls.forEach(function(m,i){
-          if(metrics[i]===null){m.value.textContent=(mode==='block'&&i===2)?'Clearance not captured':'Side view needed';m.bar.style.width='0%';m.bar.style.background='var(--line)';}
-          else{m.value.textContent=metrics[i]+'%';m.bar.style.width=metrics[i]+'%';m.bar.style.background=metrics[i]>=75?'var(--good)':metrics[i]>=50?'var(--accent)':'var(--warn)';}
-        });
-        latestAnalysis=feedback;latestScore=score;latestMetrics=metrics.slice();
-        if(stableHeadline===feedback.issue)stableCount++;else{resetVideo();stableHeadline=feedback.issue;stableCount=1;}
-        if(stableCount>=8&&videoIssue!==feedback.issue)queueFixVideo(feedback.issue);
-        
-        if(reviewDialog.open)syncReviewSheet();
-      }
-
-      function handlePhotoResults(results,request){
+function handlePhotoResults(results,request){
         var card=request.card,img=request.img,pcanvas=card.querySelector('canvas'),pctx=pcanvas.getContext('2d'),readout=card.querySelector('.photo-readout');
         pcanvas.width=img.naturalWidth||1280;pcanvas.height=img.naturalHeight||960;pctx.clearRect(0,0,pcanvas.width,pcanvas.height);pctx.drawImage(img,0,0,pcanvas.width,pcanvas.height);
-        if(!results.poseLandmarks){hidePoseLoader();readout.innerHTML='<strong>Couldn\u2019t see your full body in that photo.</strong> Retake it from the side with head to both feet visible.';return;}
+        if(!results.poseLandmarks){hidePoseNote();readout.innerHTML='<strong>Couldn\u2019t see your full body in that photo.</strong> Retake it from the side with head to both feet visible.';return;}
         if(window.drawConnectors&&window.POSE_CONNECTIONS)drawConnectors(pctx,results.poseLandmarks,POSE_CONNECTIONS,{color:'#5ed5aa',lineWidth:Math.max(3,pcanvas.width/260)});
         if(window.drawLandmarks)drawLandmarks(pctx,results.poseLandmarks,{color:'#ff7040',fillColor:'#ffffff',lineWidth:2,radius:Math.max(3,pcanvas.width/320)});
         var lm=results.poseLandmarks,f=extractFeatures(lm);
-        if(!f){hidePoseLoader();readout.innerHTML='<strong>Couldn\u2019t see enough of your body.</strong> Retake with shoulders, hips, knees, and ankles all in frame.';return;}
+        if(!f){hidePoseNote();readout.innerHTML='<strong>Couldn\u2019t see enough of your body.</strong> Retake with shoulders, hips, knees, and ankles all in frame.';return;}
         var knees=[Math.round(f.kneeL),Math.round(f.kneeR)].sort(function(a,b){return a-b}),trunk=Math.round(f.lean),armL=Math.round(f.elbowL),armR=Math.round(f.elbowR);
         var shinL=Math.round(Math.atan2(Math.abs(lm[27].x-lm[25].x),Math.abs(lm[27].y-lm[25].y))*180/Math.PI);
         var shinR=Math.round(Math.atan2(Math.abs(lm[28].x-lm[26].x),Math.abs(lm[28].y-lm[26].y))*180/Math.PI);
@@ -703,7 +333,7 @@ var content={
           else if(f.thighSeparation<60)issue='thighSeparation';
           else issue='sprintPosture';
         }
-        hidePoseLoader();var fix=coachFix[issue],v=fixVideos[issue];
+        hidePoseNote();var fix=coachFix[issue],v=fixVideos[issue];
         var scale=Math.max(1,pcanvas.width/900),pad=12*scale,lineH=25*scale,font=Math.round(17*scale)+'px Barlow';
         function callout(y,color,label,text){pctx.font=font;var shown=text.length>58?text.slice(0,56)+'…':text,w=Math.min(pcanvas.width-pad*2,pctx.measureText(label+'  '+shown).width+pad*2);pctx.fillStyle=color;pctx.fillRect(pad,y,w,lineH+pad);pctx.fillStyle='#07100c';pctx.fillText(label+'  '+shown,pad*2,y+lineH);}
         callout(pad,'#5ed5aa','GOOD',good[0]);
@@ -711,20 +341,193 @@ var content={
         readout.innerHTML='<strong class="good">GOOD:</strong> '+good.slice(0,2).join('; ')+'.<br><strong class="fix">ONE FIX:</strong> '+fix.fix+' <strong>Cue:</strong> “'+fix.cue+'” <strong>Drill:</strong> '+fix.drill+'.<div class="angle-list"><span>Trunk '+trunk+'°</span><span>Knees '+knees[0]+'° / '+knees[1]+'°</span><span>Shins '+shinL+'° / '+shinR+'°</span><span>Arms '+armL+'° / '+armR+'°</span></div><a class="watch-fix" href="'+v[2]+'" target="_blank" rel="noopener">Watch: how to fix this</a>';
       }
 
-      function onResults(results){
-        if(photoRequest){var request=photoRequest;photoRequest=null;handlePhotoResults(results,request);return;}
-        var w=video.videoWidth||1280,h=video.videoHeight||720;if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}
-        ctx.save();ctx.clearRect(0,0,w,h);
-        if(facing==='user'&&stream){ctx.translate(w,0);ctx.scale(-1,1)}
-        if(results.poseLandmarks){if(poseLoaderShown)hidePoseLoader();
-          if(window.drawConnectors&&window.POSE_CONNECTIONS)drawConnectors(ctx,results.poseLandmarks,POSE_CONNECTIONS,{color:'#54e1ac',lineWidth:5});
-          if(window.drawLandmarks)drawLandmarks(ctx,results.poseLandmarks,{color:'#ff7040',fillColor:'#ffffff',lineWidth:2,radius:4});
-          updateIntent(results.poseLandmarks);var a=analyze(results.poseLandmarks);if(a)updateCoach(a);
-        }else{featureWindow=[];noteNoAthlete();analysisState.textContent='No athlete in frame';setProgress(12,'Looking for you','Move into frame and make sure your whole body is visible from head to ankles.','working');}
-        ctx.restore();
-      }
 
-      renderMode();
-      if(window.Pose){statusPill.textContent='Ready · camera off';}
-      else{statusPill.textContent='Analyzer didn\u2019t start \u2014 tap to try again';setProgress(0,'Analyzer didn\u2019t start','Reload the app, then try again. No score without the analyzer running.','error');}
-    })();
+/* ---- One fix per rep: praise the strongest metric, then one fix ---- */
+function buildCoachReview(issue, metrics, asym){
+  var names = content[mode].metrics;
+  var best = 0, bestV = -1;
+  for(var i = 0; i < metrics.length; i++){
+    if(metrics[i] !== null && metrics[i] > bestV){ bestV = metrics[i]; best = i; }
+  }
+  var goodText = 'Strongest: ' + (names[best] || 'body position').toLowerCase() + '.';
+  var openings = ['That rep has real shape: ', 'Good work there — ', 'You gave yourself something useful to build on: ', 'That is moving in the right direction: '];
+  var fix = coachFix[issue] || coachFix.projection;
+  var praise = openings[repReviewCount % openings.length] + (names[best] || 'body position').toLowerCase() + ' is holding together.';
+  if(praise === lastCoachSentence) praise = openings[(repReviewCount + 1) % openings.length] + (names[best] || 'body position').toLowerCase() + ' is working well.';
+  lastCoachSentence = praise; repReviewCount++;
+  var out = praise + ' One thing: ' + fix.fix + ' Cue: “' + fix.cue + '” Drill: ' + fix.drill + '.';
+  if(asym && asym.type === 'knee') out += ' Asymmetry check: your ' + asym.lagging + ' leg finishes about ' + asym.diff + '° less extended than your ' + asym.strong + ' leg. Add single-leg work on the ' + asym.lagging + ' side and re-check — if it persists, show your coach.';
+  else if(asym && asym.type === 'elbow') out += ' Asymmetry check: your ' + asym.open + ' elbow averages about ' + asym.diff + '° more open than your ' + asym.closed + ' elbow. Mirror the arms in seated arm swings and re-check.';
+  return { goodText: goodText, review: out, fix: fix };
+}
+
+/* Run one pose frame through the rep check. Returns null until a full
+ * movement window is ready (24 clear frames + real motion), otherwise the
+ * rep result that the AI Analyzer shows in its live panel. */
+function analyzeClassic(lm){
+  var a = analyze(lm);
+  if(!a) return null;
+  var fb = buildCoachReview(a.issue, a.metrics, a.asym);
+  latestClassic = {
+    score: Math.round(a.score), metrics: a.metrics, metricNames: content[mode].metrics.slice(),
+    headline: a.headline, copy: a.copy, review: fb.review, goodText: fb.goodText,
+    issue: a.issue, asym: a.asym, fix: fb.fix, mode: mode
+  };
+  try{ window.__trackLastClassic = latestClassic; }catch(e){}
+  return latestClassic;
+}
+
+function renderGuide(){
+  var c = content[mode];
+  var title = document.getElementById('cueTitle');
+  if(title) title.textContent = c.title;
+  var list = document.getElementById('cueList');
+  if(list) list.innerHTML = c.cues.map(function(x, i){
+    return '<div class="cue"><div class="cue-num">0' + (i + 1) + '</div><div><h3>' + x[0] + '</h3><p>' + x[1] + '</p></div></div>';
+  }).join('');
+}
+
+/* One movement selection drives both engines. Called by the AI Analyzer's
+ * "What to check" picker (and by the Side View tab). */
+function setMode(m){
+  if(!content[m]) return;
+  mode = m; featureWindow = []; latestClassic = null;
+  try{ window.__trackLastClassic = null; }catch(e){}
+  document.querySelectorAll('.mode').forEach(function(b){ b.setAttribute('aria-pressed', b.dataset.mode === m ? 'true' : 'false'); });
+  renderGuide();
+}
+
+/* ---- Two-photo form check (Photos tab) ---- */
+function ensurePhotoPose(){
+  if(photoPose) return true;
+  if(!window.Pose) return false;
+  photoPose = new Pose({ locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/' + f; } });
+  photoPose.setOptions({ modelComplexity: 1, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.55, minTrackingConfidence: 0.55 });
+  photoPose.onResults(function(results){
+    if(!pendingPhoto) return;
+    var req = pendingPhoto; pendingPhoto = null; photoBusy = false;
+    handlePhotoResults(results, req);
+  });
+  return true;
+}
+function bindPhotos(){
+  document.querySelectorAll('.photo-input').forEach(function(input){
+    input.addEventListener('change', function(){
+      var file = input.files && input.files[0]; if(!file) return;
+      var slot = Number(input.dataset.slot);
+      var card = document.querySelector('[data-photo-slot="' + slot + '"]');
+      if(!card) return;
+      var img = card.querySelector('img'), readout = card.querySelector('.photo-readout');
+      if(photoBusy){ readout.textContent = 'Still analyzing the last photo — one moment, then pick again.'; input.value = ''; return; }
+      if(!ensurePhotoPose()){ readout.textContent = 'The analyzer didn’t start. Reload and try again.'; return; }
+      if(photoUrls[slot]) URL.revokeObjectURL(photoUrls[slot]);
+      photoUrls[slot] = URL.createObjectURL(file);
+      img.src = photoUrls[slot]; img.alt = 'Athlete form photo ' + (slot === 0 ? 'A' : 'B');
+      readout.textContent = 'Reading your shape and measuring angles…';
+      img.onerror = function(){ photoBusy = false; pendingPhoto = null; readout.textContent = 'That photo didn’t open. Try a different photo.'; };
+      img.onload = function(){
+        card.querySelector('.photo-placeholder').hidden = true; img.hidden = true;
+        photoBusy = true; pendingPhoto = { slot: slot, img: img, card: card };
+        photoPose.send({ image: img }).catch(function(){
+          readout.textContent = 'That photo didn’t work. Try a clear, full-body side view.'; photoBusy = false; pendingPhoto = null;
+        });
+      };
+    });
+  });
+}
+
+/* ---- Tab switching + full-rep-review dialog ---- */
+var screenCopy = {
+  ai: ['AI Analyzer', 'Live coaching, two cameras, photo check, and your results — one screen'],
+  photos: ['Photos', 'Compare two positions with skeletons and angle checks'],
+  side: ['Side View', 'Side-on tracking for starts and sprint form'],
+  guide: ['Guide', 'Technique cues, drills, and the video for each fix']
+};
+var viewSwitching = false, pendingView = null;
+function activateView(view){
+  if(!screenCopy[view]) return;
+  if(viewSwitching){ pendingView = view; return; }
+  if(document.body.dataset.activeView === view){ pendingView = null; return; }
+  viewSwitching = true;
+  var page = document.querySelector('.page');
+  page.classList.add('view-leaving');
+  setTimeout(function(){
+    document.body.dataset.activeView = view;
+    page.classList.remove('view-leaving');
+    page.classList.add('view-entering');
+    var cards = document.querySelectorAll('.view-section .panel,.view-section .coach,.view-section .camera-card');
+    for(var i = 0; i < cards.length; i++){
+      if(cards[i].offsetParent === null) continue;
+      cards[i].style.animationDelay = Math.min(i * 60, 280) + 'ms';
+      cards[i].classList.remove('stagger-in');
+      void cards[i].offsetWidth;
+      cards[i].classList.add('stagger-in');
+    }
+    setTimeout(function(){
+      page.classList.remove('view-entering'); viewSwitching = false;
+      if(pendingView && pendingView !== document.body.dataset.activeView){ var pv = pendingView; pendingView = null; activateView(pv); }
+      else pendingView = null;
+    }, 340);
+  }, 130);
+  document.getElementById('screenTitle').textContent = screenCopy[view][0];
+  document.getElementById('screenSubtitle').textContent = screenCopy[view][1];
+  document.querySelectorAll('[data-view]').forEach(function(item){ item.setAttribute('aria-current', item.dataset.view === view ? 'page' : 'false'); });
+  if(view === 'side'){
+    setMode('side');
+    if(window.TrackAI && window.TrackAI.setClassicMode) window.TrackAI.setClassicMode('side');
+  }
+  document.querySelector('.page').scrollTop = 0;
+}
+function bindChrome(){
+  document.querySelectorAll('.nav-item,.tab-item').forEach(function(item){
+    item.addEventListener('click', function(){ activateView(item.dataset.view); });
+  });
+  var reviewDialog = document.getElementById('reviewDialog');
+  var openBtn = document.getElementById('openReviewSheet');
+  if(openBtn && reviewDialog) openBtn.addEventListener('click', function(){
+    var latest = latestClassic;
+    if(!latest && window.TrackAI && window.TrackAI.getLastClassic) latest = window.TrackAI.getLastClassic();
+    var scoreEl = document.getElementById('sheetScore');
+    var headEl = document.getElementById('sheetHeadline');
+    var copyEl = document.getElementById('sheetCopy');
+    var metricsEl = document.getElementById('sheetMetrics');
+    if(latest){
+      if(scoreEl) scoreEl.textContent = latest.score + '%';
+      if(headEl) headEl.textContent = latest.headline;
+      if(copyEl) copyEl.textContent = latest.review;
+      if(metricsEl) metricsEl.innerHTML = latest.metrics.map(function(v, i){
+        return '<div class="sheet-metric"><span>' + (latest.metricNames[i] || '') + '</span><span>' + (v === null ? '—' : v + '%') + '</span></div>';
+      }).join('');
+    } else {
+      if(scoreEl) scoreEl.textContent = '—';
+      if(headEl) headEl.textContent = 'Complete a rep first';
+      if(copyEl) copyEl.textContent = 'Your full coaching review will appear here after a clear movement sample.';
+      if(metricsEl) metricsEl.innerHTML = '';
+    }
+    if(reviewDialog.showModal) reviewDialog.showModal(); else reviewDialog.setAttribute('open', '');
+  });
+  var closeBtn = document.getElementById('closeReviewSheet');
+  if(closeBtn && reviewDialog) closeBtn.addEventListener('click', function(){
+    if(reviewDialog.close) reviewDialog.close(); else reviewDialog.removeAttribute('open');
+  });
+  if(reviewDialog) reviewDialog.addEventListener('click', function(e){
+    if(e.target === reviewDialog){ if(reviewDialog.close) reviewDialog.close(); else reviewDialog.removeAttribute('open'); }
+  });
+}
+
+window.TrackClassic = {
+  setMode: setMode,
+  getMode: function(){ return mode; },
+  analyzeClassic: analyzeClassic,
+  analyze: analyze,
+  extractFeatures: extractFeatures,
+  content: content,
+  fixVideos: fixVideos,
+  coachFix: coachFix,
+  getLatest: function(){ return latestClassic; }
+};
+
+setMode('block');
+bindPhotos();
+bindChrome();
+})();
