@@ -1,14 +1,15 @@
-/* Track Analyzer — classic rep-check engine (v2.1.2, merged into AI Analyzer)
+/* Track Analyzer — classic rep-check engine (v2.1.4, merged into AI Analyzer)
  *
  * The rep check that used to live in its own screen is now part of the
- * AI Analyzer: one movement picker ("What to check") drives BOTH this
- * engine and the AI Analyzer's coaching, and this engine's per-rep score
- * + one fix feeds the AI Analyzer's live panel. There is no second
- * camera, no second coach panel, no second flow.
+ * AI Analyzer: the AI auto-detects the movement, and one Block Starts
+ * toggle (off = auto-detect everything, on = block starts) drives BOTH
+ * this engine and the AI Analyzer's coaching. This engine's per-rep
+ * score + one fix feeds the AI Analyzer's live panel. There is no
+ * second camera, no second coach panel, no second flow.
  *
  * What this file owns:
- *  - the 5 movements (Block start, Side-angle sprint, A-skip, Arm action,
- *    Sprint form) + their cue lists for the Guide tab
+ *  - the Block Starts toggle state + cue lists for the Guide tab
+ *    (block-start cues when the toggle is on, sprint cues when off)
  *  - the rep analysis: windowed pose features -> score, metrics, one fix
  *    (cue + drill), fix video, asymmetry check
  *  - the two-photo form check (AI Photo tab)
@@ -20,7 +21,7 @@
  */
 (function(){
 'use strict';
-var mode = 'block';
+var blockStartsOn = false;
 var featureWindow = [];
 var repReviewCount = 0, lastCoachSentence = '';
 var latestClassic = null;
@@ -61,28 +62,6 @@ var content={
           ['Leave as one long line','Drive the hips forward—not up—with head, trunk, hips, and extended rear leg connected. Keep the lead arm long and high and the head down through early acceleration.'],
           ['Run out, do not jump','Punch the rear leg through low and fast. Keep the first contacts under the hips with negative shin angles.']
         ],videos:[]},
-        side:{title:'Side-angle sprint cues',empty:'Side view is the money view',desc:'Place the phone square to the lane, 10–15 feet away. Run across frame with your full body visible.',metrics:['Trunk angle','Thigh separation','Shin & hip line'],cues:[
-          ['Project at roughly 45°','Early in acceleration, keep a straight body line and push back into the track with piston-like action.'],
-          ['Knee forward, not up','Separate the thighs without reaching. Keep the ankle dorsiflexed and strike under the hips.'],
-          ['Earn your height','Let the torso rise gradually while the hips stay tall—do not stand up on the first steps.']
-        ],videos:[]},
-        askip:{title:'A-skip cues',empty:'Ready for A-skips',desc:'Face mostly sideways so the analyzer can see your hip, knee, ankle, and posture.',metrics:['Thigh position','Tall posture','Knee recovery'],cues:[
-          ['Punch forward, not up','Bring the thigh toward parallel without leaning back.'],
-          ['Strike down under the hip','Keep contacts quick and avoid reaching the foot forward.'],
-          ['Stay stacked and tall','Keep ribs over hips with relaxed shoulders.']
-        ],videos:[
-          ['Build the rhythm first','Aggressive Arm Action','https://www.youtube.com/watch?v=u4OHTWAevug'],
-          ['Match arms to the skip','Seated Arm Swing Drill','https://www.youtube.com/watch?v=9w8fQVxggsA']
-        ]},
-        arms:{title:'Arm action cues',empty:'Ready for arm action',desc:'Stand side-on or run past the phone with shoulders, elbows, and hands fully visible.',metrics:['Elbow shape','Hand travel','Straight track'],cues:[
-          ['Hip to lip','Let the hand travel from the hip toward lip height while the loose shoulder drives it.'],
-          ['Drive back, not across','Send the elbow behind you; keep hands from crossing your midline.'],
-          ['Relax the hands','Loose jaw, low shoulders, and open hands preserve speed late in the rep.']
-        ],videos:[
-          ['Mechanics breakdown','Effective Arm Swing','https://www.youtube.com/watch?v=-p4yG2RqfOg'],
-          ['Build the pattern','Seated Arm Swing Drill','https://www.youtube.com/watch?v=9w8fQVxggsA'],
-          ['Connect rhythm to speed','Aggressive Arm Action','https://www.youtube.com/watch?v=u4OHTWAevug']
-        ]},
         sprint:{title:'Sprint form cues',empty:'Ready for sprint form',desc:'Place the phone 10–15 feet away, landscape, and run across the full frame.',metrics:['Posture','Thigh position','Arm travel'],cues:[
           ['Push, then rise','Accelerate with a forward projection before moving to tall sprint posture.'],
           ['Attack under the hips','Think down and back; avoid reaching your foot in front.'],
@@ -189,7 +168,7 @@ function analyze(lm){
         var torso=median(featureWindow.map(function(x){return x.torso}));
         var motion=Math.max(range(featureWindow.map(function(x){return x.centerX})),range(featureWindow.map(function(x){return x.kneeY})))/torso;
         var armExcursion=Math.max(range(featureWindow.map(function(x){return x.wristLY})),range(featureWindow.map(function(x){return x.wristRY})))/torso;
-        if((mode==='arms'?armExcursion:Math.max(motion,armExcursion))<.18){analysisStub.textContent='Ready \u2014 move through one full rep';setProgress(72,'Locked on \u2014 do the rep','The camera can see you. Do the move so it has enough change to score.','working');return null;}
+        if(Math.max(motion,armExcursion)<.18){analysisStub.textContent='Ready \u2014 move through one full rep';setProgress(72,'Locked on \u2014 do the rep','The camera can see you. Do the move so it has enough change to score.','working');return null;}
         var lean=median(featureWindow.map(function(x){return x.lean}));
         var elbow=median(featureWindow.map(function(x){return x.elbow}));
         var thigh=Math.min.apply(null,featureWindow.map(function(x){return x.thigh}));
@@ -202,7 +181,7 @@ function analyze(lm){
         var crossRate=featureWindow.reduce(function(sum,x){return sum+x.crossing},0)/featureWindow.length;
         var frontView=median(featureWindow.map(function(x){return x.sideRatio}))>.58;
         var metrics,headline,copy,issue;
-        if(mode==='block'){
+        if(blockStartsOn){
           if(frontView){analysisStub.textContent='Turn side-on so block angles can be measured';setProgress(76,'Side view needed','Turn the phone or your body side-on so the angles can be measured.','working');return null;}
           var peakLean=Math.max.apply(null,featureWindow.map(function(x){return x.lean}));
           var first=featureWindow[0],rearIsLeft=(first.ankleLx*first.facing)<(first.ankleRx*first.facing);
@@ -228,42 +207,6 @@ function analyze(lm){
           else if(shinReach>.18){issue='shinAngle';headline='Keep the first shin angles negative';copy='The lower leg is reaching ahead at contact. Put the foot down under the hips and push back.';}
           else if(metrics[2]===null||metrics[1]<=metrics[2]){issue='armSplit';headline='Build more hand separation';copy='The wrists show a small vertical separation. One hand should attack forward while the opposite elbow drives back.';}
           else{issue='rearPush';headline='Finish the rear-block push';copy='The rear leg leaves before it reaches a long extension through block clearance.';}
-        }else if(mode==='side'){
-          if(frontView){analysisStub.textContent='Turn fully side-on so angles can be measured';setProgress(76,'Side view needed','Place the phone square to the lane so the shoulders and hips line up from the side.','working');return null;}
-          // Phase-aware trunk scoring: a tall, near-vertical trunk is CORRECT at
-          // max velocity but a fault (early rise) during acceleration. Median lean
-          // across the window separates the two phases (<18 deg = max velocity).
-          // NOTE: hipLift here is (shoulder.y-hip.y)/torso, so an upright trunk
-          // gives hipLift near -1; -hipLift (= cos(lean) when the shoulder is
-          // above the hip) is the tall-posture term. floorScore(hipLift,...)
-          // would score every upright rep 0, which is what it did before.
-          var isMaxV=lean<18;
-          var trunkScore=isMaxV?bandScore(lean,4,16,12):bandScore(lean,18,52,22);
-          metrics=[trunkScore,bandScore(thighSeparation,70,125,60),Math.round((ceilingScore(shinReach,.12,.35)+floorScore(-hipLift,.55,.45))/2)];
-          if(metrics[0]<=metrics[1]&&metrics[0]<=metrics[2]){
-            if(isMaxV){issue='sprintPosture';headline='Keep the hips traveling tall';copy='The hip line drops during the stride instead of staying tall with a quiet head.';}
-            else{issue=lean<28?'earlyRise':'foldedHips';headline=lean<28?'Earn your height':'Hold one long drive line';copy=lean<28?'The torso comes tall before the push is finished.':'The trunk and hips lose their connected line during the drive phase.';}
-          }
-          else if(metrics[1]<=metrics[2]){issue='thighSeparation';headline='Create more thigh separation';copy='The legs are cycling close together instead of pushing back while the free knee punches forward.';}
-          else if(shinReach>.12){issue='underHip';headline='Put the foot down under you';copy='The shin and foot reach ahead of the hip at contact, which adds braking.';}
-          else{issue='sprintPosture';headline='Keep the hips traveling tall';copy='The hip line drops during the drive pattern instead of rising gradually with the torso.';}
-        }else if(mode==='askip'){
-          metrics=[frontView?null:ceilingScore(thigh,24,30),ceilingScore(lean,14,20),bandScore(minKnee,55,105,45)];
-          if(metrics[0]!==null&&metrics[0]<=metrics[1]&&metrics[0]<=metrics[2]){issue='kneeForward';headline='Review thigh position';copy='The forward thigh does not reach a near-horizontal position in this side-view sample. Stay tall and bring the thigh forward without leaning back.'}
-          else if(metrics[1]<=metrics[2]){issue='tallPosture';headline='Stack ribs over hips';copy='The torso leans beyond the tall-posture range. Keep the head quiet, ribs over hips, and shoulders low.'}
-          else{
-            issue='footRecovery';
-            if(minKnee>105){headline='Recover under the hip';copy='The swing leg stays long in this sample. Fold it compactly, then strike down beneath the hip.'}
-            else{headline='Keep the recovery compact';copy='The swing leg folds very tightly in this sample. Keep the heel under the hip without pulling it excessively high.'}
-          }
-        }else if(mode==='arms'){
-          metrics=[bandScore(elbow,70,120,55),floorScore(armExcursion,.55,.55),frontView?ceilingScore(crossRate,.12,.45):null];
-          if(metrics[0]<=metrics[1]&&(metrics[2]===null||metrics[0]<=metrics[2])){
-            issue='elbowShape';headline='Hold the elbow shape';
-            copy=elbow>120?'The elbows open into a long lever in this window. Keep the arm compact as it drives back.':'The elbows stay tightly folded in this window. Let the hands travel while keeping a relaxed bend.';
-          }
-          else if(metrics[2]===null||metrics[1]<=metrics[2]){issue='backDrive';headline='Make the swing bigger';copy='The hands travel through a short range. Drive from hip to lip and attack backward from a loose shoulder.'}
-          else{issue='straightTrack';headline='Keep the hands on rails';copy='From this front-facing view, the wrists cross the torso centerline repeatedly. Send the hands front to back so force stays in the lane.'}
         }else{
           metrics=[ceilingScore(lean,16,22),frontView?null:ceilingScore(thigh,26,34),floorScore(armExcursion,.5,.55)];
           if(metrics[0]<=(metrics[1]===null?100:metrics[1])&&metrics[0]<=metrics[2]){issue='sprintPosture';headline='Keep posture connected';copy='The torso drifts outside a tall sprint range in this sample. Hold a long line through head, ribs, and hips.'}
@@ -271,12 +214,12 @@ function analyze(lm){
           else{issue='armRhythm';headline='Let the arms set rhythm';copy='The hands show limited travel during the window. Drive the elbows back with relaxed hands as fatigue builds.'}
         }
         // NEW: left/right asymmetry across the window (peak extension + median elbow).
-        // Only in cyclic modes (sprint / side / A-skip), where both legs cycle
+        // Only in auto (sprint) mode, where both legs cycle
         // through flexion and extension. In block mode the legs have different
         // jobs (rear extends once, front has not yet) and in arms mode the legs
         // may not cycle at all, so a peak gap there would be a false positive.
         var asym=null;
-        if(mode==='sprint'||mode==='side'||mode==='askip'){
+        if(!blockStartsOn){
         var kneeExtL=Math.max.apply(null,featureWindow.map(function(x){return x.kneeL}));
         var kneeExtR=Math.max.apply(null,featureWindow.map(function(x){return x.kneeR}));
         var kneeGap=kneeExtL-kneeExtR;
@@ -410,7 +353,7 @@ function handlePhotoResults(results,request){
 
 /* ---- One fix per rep: praise the strongest metric, then one fix ---- */
 function buildCoachReview(issue, metrics, asym){
-  var names = content[mode].metrics;
+  var names = content[blockStartsOn ? 'block' : 'sprint'].metrics;
   var best = 0, bestV = -1;
   for(var i = 0; i < metrics.length; i++){
     if(metrics[i] !== null && metrics[i] > bestV){ bestV = metrics[i]; best = i; }
@@ -435,16 +378,16 @@ function analyzeClassic(lm){
   if(!a) return null;
   var fb = buildCoachReview(a.issue, a.metrics, a.asym);
   latestClassic = {
-    score: Math.round(a.score), metrics: a.metrics, metricNames: content[mode].metrics.slice(),
+    score: Math.round(a.score), metrics: a.metrics, metricNames: content[blockStartsOn ? 'block' : 'sprint'].metrics.slice(),
     headline: a.headline, copy: a.copy, review: fb.review, goodText: fb.goodText,
-    issue: a.issue, asym: a.asym, fix: fb.fix, mode: mode
+    issue: a.issue, asym: a.asym, fix: fb.fix, mode: blockStartsOn ? 'block' : 'sprint', blockStarts: blockStartsOn
   };
   try{ window.__trackLastClassic = latestClassic; }catch(e){}
   return latestClassic;
 }
 
 function renderGuide(){
-  var c = content[mode];
+  var c = content[blockStartsOn ? 'block' : 'sprint'];
   var title = document.getElementById('cueTitle');
   if(title) title.textContent = c.title;
   var list = document.getElementById('cueList');
@@ -453,13 +396,11 @@ function renderGuide(){
   }).join('');
 }
 
-/* One movement selection drives both engines. Called by the AI Analyzer's
- * "What to check" picker. */
-function setMode(m){
-  if(!content[m]) return;
-  mode = m; featureWindow = []; latestClassic = null;
+/* One Block Starts toggle drives both engines. Called by the AI Analyzer's
+ * toggle. Takes effect for the next rep — no restart needed. */
+function setBlockStarts(on){
+  blockStartsOn = !!on; featureWindow = []; latestClassic = null;
   try{ window.__trackLastClassic = null; }catch(e){}
-  document.querySelectorAll('.mode').forEach(function(b){ b.setAttribute('aria-pressed', b.dataset.mode === m ? 'true' : 'false'); });
   renderGuide();
 }
 
@@ -582,8 +523,8 @@ function bindChrome(){
 
 window.TrackPhoto = { handlePhotoResults: handlePhotoResults, photoMissingJoints: photoMissingJoints, drawPhotoMarker: drawPhotoMarker };
 window.TrackClassic = {
-  setMode: setMode,
-  getMode: function(){ return mode; },
+  setBlockStarts: setBlockStarts,
+  getBlockStarts: function(){ return blockStartsOn; },
   analyzeClassic: analyzeClassic,
   analyze: analyze,
   extractFeatures: extractFeatures,
@@ -593,7 +534,7 @@ window.TrackClassic = {
   getLatest: function(){ return latestClassic; }
 };
 
-setMode('block');
+setBlockStarts(false);
 bindPhotos();
 bindChrome();
 })();
