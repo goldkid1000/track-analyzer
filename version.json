@@ -1,1 +1,6 @@
-{"notes":"AI Analyzer tab + Dual-Angle two-camera analysis + one-time photo access + update system.","notify":true,"updated":"2026-10-17","version":"2.1.0"}
+{
+  "version": "2.1.1",
+  "updated": "2026-10-17",
+  "notify": true,
+  "notes": "One AI Analyzer screen (Analyze + two cameras moved in) + gestures + deep check + videos to watch + skeleton drawings + simpler words."
+}
