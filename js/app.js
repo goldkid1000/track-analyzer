@@ -1,4 +1,4 @@
-/* Track Analyzer — classic rep-check engine (v2.1.4, merged into AI Analyzer)
+/* Track Analyzer — classic rep-check engine (v2.1.5, merged into AI Analyzer)
  *
  * The rep check that used to live in its own screen is now part of the
  * AI Analyzer: the AI auto-detects the movement, and one Block Starts
