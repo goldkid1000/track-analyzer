@@ -1,4 +1,4 @@
-/* Track Analyzer — update system (v2.1.8)
+/* Track Analyzer — update system (v2.1.9)
  *
  * Tenno Vault-style: visible version, What's New panel, Check for updates,
  * and an update banner. The banner fires ONLY when version.json reports a
@@ -29,12 +29,24 @@
  * face (any finger counts, same rule both); rig needs real torso
  * anchors and vanishes with the body; rig snaps to latest landmarks,
  * no smoothing lag.
+ *
+ * v2.1.9 — two cameras: ONLY the main camera (Camera 1) starts/stops
+ * recording (Camera 2 signs no longer cancel Camera 1's hold); rig
+ * step-down throttle removed (no more 'smooth mode' lag); voice
+ * speaks on iPhone (toggle-on confirmation unlocks speech audio);
+ * 'Waiting for Camera 2…' clears once Camera 2 connects.
  */
 (function(){
 'use strict';
-var VERSION = '2.1.8';
+var VERSION = '2.1.9';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: '2.1.9', date: '2026-10-17', notes: [
+    'Two cameras: ONLY the main camera (Camera 1) starts and stops recording now. Camera 2 never starts or stops — its hand signs used to cancel Camera 1’s hold, because the other hand hanging at your side reads as a different sign and reset the hold before it could fire. Hold 1 finger up to Camera 1 to start, 2 fingers to stop. The Camera 2 screen says the main camera controls recording.',
+    'The rig is no longer throttled in two-camera mode: the old step-down cut each camera to about 2 fresh poses per second on slower phones, which read as a laggy rig. Inference now runs at full rate on both cameras, and “smooth mode” is gone — a rig that draws just says it’s on.',
+    'Voice now speaks on iPhone: turning Voice coaching on says “Voice coaching on” out loud, which proves voice works and unlocks the phone’s speech audio. The old code cancelled speech right before speaking, which iOS silently swallowed, so the start/stop announcements never sounded.',
+    'The “Waiting for Camera 2…” line now disappears the moment Camera 2 connects, instead of sitting there under a live Camera 2 feed.'
+  ]},
   { version: '2.1.8', date: '2026-10-17', notes: [
     'Camera starts OFF. Opening the app or the AI Analyzer tab never starts the camera or asks for permission — the preview shows “Camera off — turn it on to start” until you tap “Camera: on”. Stopping a recording turns the camera off too, and the button tells the truth.',
     'Black preview fixed at the real broken step: the video used to be told to play while its panel was still hidden, and that failed play was silently swallowed, so the preview stayed black forever under a “Watching” line. Play now retries once the panel is visible, and if the preview is still black 2 seconds later the status line says so and tells you to toggle the camera off and on.',

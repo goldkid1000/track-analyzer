@@ -1,4 +1,4 @@
-/* Track Analyzer — smooth rig engine (v2.1.7)
+/* Track Analyzer — rig engine (v2.1.9)
  *
  * v2.1.7 fixes (from Giel's 22s screen recording of v2.1.6 dual mode):
  * - Visibility gating: only joints the model actually sees get drawn.
@@ -30,24 +30,25 @@
  * full pose (all 33 landmarks the camera can see) PLUS both hands with
  * every finger joint (21 landmarks per hand).
  *
- * SMOOTHNESS (hard requirement): inference is decoupled from drawing.
- * Pose/hands inference runs at a CAPPED rate on a DOWNSCALED frame
- * (~320px wide — pose/hands don't need full resolution), one feed at a
- * time, alternating between cameras — never two full-rate pipelines.
- * Drawing runs on requestAnimationFrame at display rate, with landmark
- * positions INTERPOLATED toward the latest inference result, so the rig
- * glides instead of jumping. Light exponential smoothing kills jitter.
+ * TIMING: inference is decoupled from drawing. Pose/hands inference
+ * runs at a CAPPED rate on a DOWNSCALED frame (~320px wide —
+ * pose/hands don't need full resolution), one feed at a time,
+ * alternating between cameras — never two full-rate pipelines. The
+ * draw loop runs on requestAnimationFrame and SNAPS to the latest
+ * inference result every frame (k=1, no interpolation, no grace) —
+ * v2.1.8 killed the glide; v2.1.9 also killed the step-down throttle
+ * below, which used to cut each feed to ~2 fresh poses/sec on slow
+ * phones and read as lag. The in-flight guard (inferBusy) is the only
+ * throttle now: a new inference never starts while one is running,
+ * so the pipeline can never pile up.
  * The draw loop allocates nothing per frame (preallocated stores,
  * fixed bone lists, no Object.keys, one clearRect per canvas).
- * If inference stays slow, the engine automatically steps down a gear
- * (slower inference rate, smaller input) and says so in plain words:
- * "Skeleton running in smooth mode."
  *
  * If pose/hands can't load (CDN blocked), the engine reports it through
  * each rig's onStatus callback instead of silently drawing nothing:
  * 'poseFail' = skeleton couldn't load, 'handsFail' = pose works but
- * hand tracking didn't load (no hand signs), 'smooth' = stepped-down
- * mode, 'ok' = running normally.
+ * hand tracking didn't load (no hand signs), 'ok' = running normally.
+ * ('smooth' is an old stepped-down report — treated as 'ok'.)
  */
 (function(){
 'use strict';
@@ -64,12 +65,6 @@ var HAND_BONES = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],
   [13,17],[17,18],[18,19],[19,20],[0,17]];
 var FINGER_PAIRS = [[4,3],[8,6],[12,10],[16,14],[20,18]]; // [tip, pip]
 
-function now(){
-  try{
-    if(typeof performance !== 'undefined' && performance.now) return performance.now();
-  }catch(e){}
-  return Date.now();
-}
 /* Pure interpolation step: moves cur toward target by fraction k.
  * Never overshoots (0 < k < 1). Used by the draw loop AND the tests. */
 function lerpStep(cur, target, k){
@@ -296,8 +291,6 @@ var inferTimer = null;
 var inferIdx = 0;
 var inferBusy = false;
 var quality = { interval: 140, inputWidth: 320, steppedDown: false };
-var inferEma = 0;
-var slowStreak = 0;
 var poseInst = null, handsInst = null, handsPromise = null;
 var poseFailCount = 0, handsFailed = false, poseGotResult = false;
 var poseWatchdog = null;
@@ -630,7 +623,6 @@ function runInference(rig){
   if(inferBusy) return Promise.resolve();
   if(!rig.video || rig.video.readyState < 2) return Promise.resolve();
   inferBusy = true;
-  var t0 = now();
   var chain = Promise.resolve();
   return chain.then(function(){
     var pose = ensurePose();
@@ -713,22 +705,14 @@ function runInference(rig){
        * could never say the skeleton was on. */
       if(rig.hasTarget){
         poseFailCount = 0;
-        rig.setStatus(quality.steppedDown ? 'smooth' : 'ok');
+        rig.setStatus('ok');
       }
     }
-    var ms = now() - t0;
-    inferEma = inferEma ? (inferEma * 0.7 + ms * 0.3) : ms;
-    if(inferEma > 150){
-      slowStreak++;
-      if(slowStreak >= 5 && !quality.steppedDown){
-        quality.steppedDown = true;
-        quality.interval = 260;
-        quality.inputWidth = 256;
-        notifyAll('smooth');
-      }
-    } else {
-      slowStreak = 0;
-    }
+    /* v2.1.9: NO step-down. The old code cut the inference interval to
+     * 260ms + 256px input after 5 slow inferences — on a phone running
+     * two feeds that left each feed at ~2 fresh poses/sec, which read
+     * as a laggy rig. The inferBusy guard is the only throttle:
+     * inference never overlaps itself, so it can't pile up. */
   }).catch(function(){
     /* v2.1.7: failures are recoverable and only reported when sustained
      * AND no rig is drawing. One transient error no longer latches

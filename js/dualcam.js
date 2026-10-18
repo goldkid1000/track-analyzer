@@ -339,6 +339,7 @@ function onRemoteStream(stream){
   attachStream($('dualRemoteVideo'), stream);
   attachStream($('dualJoinRemoteVideo'), stream);
   dualStatus('Camera 2 connected ✓ — both cameras are live.');
+  showEl($('dualWaitLine'), false); // the "Waiting for Camera 2…" line is done once Camera 2 is here
   showEl($('dualRecordRow'), true);
   showEl($('dualJoinRecordNote'), true);
   startDualRig(); startDualGestures(); // remote feed just arrived — its rig starts now (either role)
@@ -371,13 +372,13 @@ function setupPeerConn(conn){
     }
   });
   conn.on('data', onMessage);
-  conn.on('close', function(){ dualStatus('Camera 2 disconnected.'); });
+  conn.on('close', function(){ dualStatus('Camera 2 disconnected.'); showEl($('dualWaitLine'), true); });
 }
 function setupManualDC(dc){
   D.dc = dc;
   dc.onopen = function(){ sendMsg({ type: 'hello', role: D.role, label: D.localLabel }); };
   dc.onmessage = function(e){ try{ onMessage(JSON.parse(e.data)); }catch(err){} };
-  dc.onclose = function(){ dualStatus('Camera 2 disconnected.'); };
+  dc.onclose = function(){ dualStatus('Camera 2 disconnected.'); showEl($('dualWaitLine'), true); };
 }
 function onMessage(msg){
   if(!msg || !msg.type) return;
@@ -397,14 +398,12 @@ function onMessage(msg){
     registerDualFeed(dualRemoteKey());
     dualStatus('Camera 2 is back on.');
   }
-  else if(msg.type === 'start'){ startRecording(msg.duration || 10); }
-  else if(msg.type === 'stop'){ stopRecording('the other camera stopped'); }
-  // Hand sign seen on the OTHER device: it asks the host (Camera 1) to
-  // start/stop, because the host drives recording for both cameras.
-  // The host's hostRecord/stopRecording then fans the real
-  // start/stop out to both sides — so the other device records too.
-  else if(msg.type === 'want-start'){ if(D.role === 'host') hostRecord(); }
-  else if(msg.type === 'want-stop'){ if(D.role === 'host') stopRecording('hand sign'); }
+  /* v2.1.9: ONLY the host (Camera 1) starts/stops recording. Start/stop
+   * messages are the host's fan-out to the joiner — the host never
+   * obeys one from the other side, and the joiner never sends one.
+   * (Old hand-sign requests from the other device are ignored.) */
+  else if(msg.type === 'start'){ if(D.role === 'join') startRecording(msg.duration || 10); }
+  else if(msg.type === 'stop'){ if(D.role === 'join') stopRecording('the other camera stopped'); }
   else if(msg.type === 'analysis'){ D.remoteAnalysis = msg.summary; maybeRenderVerdict(); }
   else if(msg.type === 'clip-meta'){ D.clipExpected = msg.chunks || 0; D.clipGot = 0; D.clipParts = {}; setText('dualTransfer', 'Receiving Camera 2 clip\u2026 0%'); }
   else if(msg.type === 'clip-chunk'){ D.clipParts[msg.index] = msg.data; D.clipGot++; if(D.clipExpected) setText('dualTransfer', 'Receiving Camera 2 clip\u2026 ' + Math.round(D.clipGot / D.clipExpected * 100) + '%'); }
@@ -651,16 +650,18 @@ function stopPoseWatch(){ clearInterval(D.watchTimer); D.watchTimer = null; }
  * all three: rigs on BOTH feeds, started as soon as each feed is live,
  * and status lines that say what is actually happening.
  *
- * Both rigs run through the shared smooth rig engine (js/rig.js):
- * full pose (all 33 landmarks) PLUS both hands with every finger joint,
- * drawn ON the person in each video, interpolated on
- * requestAnimationFrame so the rig glides instead of jumping. The engine
- * runs ONE pose+hands pipeline at a capped rate, alternating between
- * the two feeds — never two full-rate pipelines that lag the preview.
- * Hand signs are read from BOTH feeds too: whichever camera sees the
- * hand drives start/stop (1 finger held ~1s = start, 2 fingers held
- * ~1s = stop + deep check, same exact announcements as the single
- * camera). */
+ * Both rigs run through the shared rig engine (js/rig.js): full pose
+ * (all 33 landmarks) PLUS both hands with every finger joint, drawn ON
+ * the person in each video, snapped to the latest inference every
+ * frame — no interpolation glide. The engine runs ONE pose+hands
+ * pipeline at a capped rate, alternating between the two feeds —
+ * never two full-rate pipelines that lag the preview.
+ * Hand signs are read from the HOST's Camera 1 feed ONLY (v2.1.9):
+ * 1 finger held ~1s = start, 2 fingers held ~1s = stop + deep check,
+ * same exact announcements as the single camera. Camera 2 never
+ * starts/stops — its signs used to cancel Camera 1's hold (the other
+ * hand hanging at your side reads as a different sign), so the hold
+ * never fired. */
 function dualOwnVideo(){
   return D.role === 'join' ? $('dualJoinLocalVideo') : $('dualLocalVideo');
 }
@@ -684,11 +685,12 @@ function dualRemoteKey(){ return D.role === 'join' ? 'dual-cam1' : 'dual-cam2'; 
 function setDualRigStatus(kind, key){
   if(key) D.rigStatusByKey[key] = kind;
   else { D.rigStatusByKey['dual-cam1'] = kind; D.rigStatusByKey['dual-cam2'] = kind; }
-  var okFeeds = [], smoothFeeds = [], anyPoseFail = false, anyHandsFail = false, anyStarting = false;
+  var okFeeds = [], anyPoseFail = false, anyHandsFail = false, anyStarting = false;
   ['dual-cam1', 'dual-cam2'].forEach(function(k){
     var s = D.rigStatusByKey[k] || '';
-    if(s === 'ok') okFeeds.push(k);
-    else if(s === 'smooth') smoothFeeds.push(k);
+    /* v2.1.9: 'smooth' counts as on — the engine no longer steps down,
+     * so a 'smooth' report (old build or stale state) just means drawing. */
+    if(s === 'ok' || s === 'smooth') okFeeds.push(k);
     else if(s === 'poseFail') anyPoseFail = true;
     else if(s === 'handsFail') anyHandsFail = true;
     else if(s === 'starting') anyStarting = true;
@@ -697,7 +699,6 @@ function setDualRigStatus(kind, key){
   var msg = '';
   if(okFeeds.length === 2) msg = 'Skeleton on — rig follows you on both cameras.';
   else if(okFeeds.length === 1) msg = 'Skeleton on — rig follows you on ' + camLabel(okFeeds[0]) + '.';
-  else if(smoothFeeds.length > 0) msg = 'Skeleton running in smooth mode.';
   else if(anyPoseFail) msg = "Skeleton couldn't load — check your connection and reload.";
   else if(anyHandsFail) msg = "Hand tracking didn't load — hand signs won't work. Check your connection and reload.";
   else if(anyStarting) msg = 'Starting skeleton…';
@@ -709,6 +710,7 @@ function setDualGestureStatus(kind, camLabel){
   var msgs = {
     holdStart: prefix + '✋ 1 finger — starting recording… (keep holding)',
     holdStop: prefix + '✌️ 2 fingers — stopping recording… (keep holding)',
+    joinerIdle: 'Main camera controls recording — hold this camera steady on your side.',
     noFace: 'Face not visible — look at a camera.',
     noHand: 'No hand seen — hold up a hand where a camera can see it.',
     handSeen: prefix + 'I see your hand — hold 1 finger to start recording.',
@@ -745,48 +747,51 @@ function stopDualRig(){
   setDualRigStatus('');
 }
 function dualGestureStart(){
-  // This device saw a 1-finger hold. The host drives recording: the
-  // host starts both cameras; the joiner ASKS the host to start, and
-  // the host's start fans back out to the joiner — so it records too.
-  if(D.role === 'host') hostRecord();
-  else sendMsg({ type: 'want-start' });
+  /* v2.1.9: ONLY the host's own Camera 1 signs start/stop. The joiner
+   * never gets here (its gesture tick returns early), and this guard is
+   * the backstop. The host's start fans out to the joiner. */
+  if(D.role !== 'host') return;
+  hostRecord();
 }
 function dualGestureStop(){
-  if(D.role === 'host') stopRecording('hand sign');
-  else sendMsg({ type: 'want-stop' });
+  if(D.role !== 'host') return;
+  stopRecording('hand sign');
 }
 function dualGestureTick(){
   if(!D.role || !window.TrackRig) return;
-  var best = null, handSeen = false, faceSeen = false, handSeenKey = '';
-  var seenCounts = [];
-  ['dual-cam1', 'dual-cam2'].forEach(function(key){
-    var g = window.TrackRig.getGesture(key);
-    if(!g || !g.fresh) return;
-    if(g.handSeen){ handSeen = true; if(!handSeenKey) handSeenKey = key; seenCounts.push(g.count); }
-    if(g.faceSeen) faceSeen = true;
-    /* v2.1.8: the finger sign IS the trigger — any extended finger
-     * counts (same rule for start and stop), and the face is NOT
-     * required. The old code needed face-seen OR frontal, so a hand
-     * held up with the face turned or out of frame never fired.
-     * Both feeds are sampled every tick; whichever camera sees the
-     * sign drives it. */
-    if((g.count === 1 || g.count === 2) && !best) best = { count: g.count, key: key };
-  });
-  function camLabel(key){ return key === 'dual-cam1' ? 'Camera 1' : 'Camera 2'; }
+  /* v2.1.9: ONLY the main camera (Camera 1, on the host device) starts
+   * and stops recording. The joiner (Camera 2) never processes signs —
+   * its tick just shows the idle line and returns, so it can never send
+   * a start/stop request.
+   *
+   * Why host-only: with both feeds sampled, the OTHER feed kept
+   * cancelling the hold — e.g. Camera 1 sees 1 finger, but Camera 2
+   * sees the other hand hanging at your side (0 or 5 fingers), and the
+   * old "different sign cancels the hold" rule reset the ~1s hold
+   * before it could fire. One feed, one verdict, no cross-feed fight. */
+  if(D.role !== 'host'){
+    setDualGestureStatus('joinerIdle');
+    return;
+  }
+  var key = dualOwnKey(); // on the host this is always 'dual-cam1'
+  var g = window.TrackRig.getGesture(key);
+  var handSeen = !!(g && g.fresh && g.handSeen);
+  var seenCount = (g && g.fresh) ? g.count : -1;
   var want = '';
-  if(best && best.count === 1 && !D.recording) want = 'start';
-  else if(best && best.count === 2 && D.recording) want = 'stop';
+  if(g && g.fresh && g.count === 1 && !D.recording) want = 'start';
+  else if(g && g.fresh && g.count === 2 && D.recording) want = 'stop';
   if(want){
     D.gestureMissCount = 0;
-    D.gestureHoldCam = camLabel(best.key);
+    D.gestureHoldCam = 'Camera 1';
     if(want === D.gestureHoldKind) D.gestureHoldCount++;
     else { D.gestureHoldKind = want; D.gestureHoldCount = 1; }
   } else if(D.gestureHoldKind){
-    /* A hand seen showing a DIFFERENT sign cancels the hold at once
-     * (the user changed their hand — not a dropped frame). Only a
-     * hand seen with NO readable count, or no hand at all, gets grace. */
+    /* A hand seen on Camera 1 showing a DIFFERENT sign cancels the hold
+     * at once (the user changed their hand — not a dropped frame).
+     * Only a hand seen with NO readable count, or no hand at all,
+     * gets grace. */
     var need = D.gestureHoldKind === 'start' ? 1 : 2;
-    var contradicted = seenCounts.some(function(c){ return c >= 0 && c !== need; });
+    var contradicted = handSeen && seenCount >= 0 && seenCount !== need;
     if(contradicted){ D.gestureHoldKind = ''; D.gestureHoldCount = 0; D.gestureMissCount = 0; }
     else {
       /* v2.1.7 hold grace: one dropped frame does not reset the hold.
@@ -807,7 +812,7 @@ function dualGestureTick(){
     setDualGestureStatus('recording');
   } else if(handSeen){
     // Face not required — a hand sign alone starts/stops recording.
-    setDualGestureStatus('handSeen', handSeenKey ? camLabel(handSeenKey) : '');
+    setDualGestureStatus('handSeen', 'Camera 1');
   } else {
     setDualGestureStatus('noHand');
   }
@@ -1064,6 +1069,7 @@ function dualTeardown(){
   stopDualGestures();
   // Fresh state for the next session: cameras back on, placeholders away.
   D.role = null;
+  showEl($('dualWaitLine'), true); // next session waits for Camera 2 again
   D.camOff = false; D.remoteCamOff = false;
   ['dualCamToggleBtn', 'dualJoinCamToggleBtn'].forEach(function(id){
     var btn = $(id);
@@ -1128,7 +1134,7 @@ window.TrackDual = {
   },
   setCamera: setDualCamera, switchCamera: switchDualCamera,
   startSkeleton: startDualRig, stopSkeleton: stopDualRig,
-  _test: { gestureTick: dualGestureTick, setRigStatus: setDualRigStatus, setGestureStatus: setDualGestureStatus },
+  _test: { gestureTick: dualGestureTick, setRigStatus: setDualRigStatus, setGestureStatus: setDualGestureStatus, setRole: function(r){ D.role = r; } },
   isCamOff: function(){ return D.camOff; }
 };
 })();

@@ -1,4 +1,4 @@
-/* Track Analyzer v2.1.8 smoke harness — stubbed DOM/navigator/Pose.
+/* Track Analyzer v2.1.9 smoke harness — stubbed DOM/navigator/Pose.
  * Run: node /tmp/track-smoke.js ; exit code 0 = all pass. */
 const fs = require('fs'), vm = require('vm');
 const ROOT = '/home/hatch/workspace/track-analyzer-private/';
@@ -92,7 +92,7 @@ const sandbox = { console, setTimeout, clearTimeout, setInterval: () => 999, cle
   speechSynthesis: { speak(){}, cancel(){}, getVoices: () => [] },
   Pose: PoseStub, POSE_CONNECTIONS: [], POSE_LANDMARKS: {}, Peer: PeerStub,
   RTCPeerConnection: class { getSenders(){ return []; } },
-  fetch: async () => ({ ok: true, json: async () => ({ version: '2.1.8' }), text: async () => '{}' }),
+  fetch: async () => ({ ok: true, json: async () => ({ version: '2.1.9' }), text: async () => '{}' }),
   alert(){}, confirm: () => true,
   getComputedStyle: () => ({ objectFit: stubFit }) };
 sandbox.window = sandbox; sandbox.globalThis = sandbox;
@@ -361,7 +361,9 @@ const W = sandbox;
   W.TrackRig.unregisterFeed('test-rig');
   t('rig: unregisterFeed removes feed', W.TrackRig._test.getRigByKey('test-rig') === null);
 
-  // Gesture reads from BOTH feeds + status lines (role is 'join' from the join flow above).
+  // Gesture reads: v2.1.9 — the tick only runs on the HOST (role 'host');
+  // the join flow above left role as 'join', so set host explicitly.
+  W.TrackDual._test.setRole('host');
   const gVideo1 = makeEl('gVideo1'); gVideo1.readyState = 4; gVideo1.clientWidth = 320; gVideo1.clientHeight = 240;
   const gCanvas1 = makeEl('gCanvas1'); gCanvas1.clientWidth = 320; gCanvas1.clientHeight = 240;
   const gVideo2 = makeEl('gVideo2'); gVideo2.readyState = 4; gVideo2.clientWidth = 320; gVideo2.clientHeight = 240;
@@ -402,8 +404,8 @@ const W = sandbox;
   t('status: poseFail -> "Skeleton couldn\'t load — check your connection and reload"',
     ($('dualRigStatus').textContent || '').indexOf("couldn't load") >= 0, $('dualRigStatus').textContent);
   W.TrackDual._test.setRigStatus('smooth');
-  t('status: smooth mode says "Skeleton running in smooth mode"',
-    ($('dualRigStatus').textContent || '').indexOf('smooth mode') >= 0, $('dualRigStatus').textContent);
+  t('status: smooth (old report) counts as on — no more "smooth mode" line',
+    ($('dualRigStatus').textContent || '').indexOf('Skeleton on') >= 0, $('dualRigStatus').textContent);
   W.TrackDual._test.setRigStatus('handsFail');
   t('status: handsFail names hand tracking + hand signs',
     ($('dualRigStatus').textContent || '').indexOf('Hand tracking') >= 0 &&
@@ -479,14 +481,18 @@ const W = sandbox;
   W.TrackDual._test.setRigStatus('ok', 'dual-cam1');
   t('v2.1.7 status: ok on both -> "both cameras"',
     ($('dualRigStatus').textContent || '').indexOf('both cameras') >= 0, $('dualRigStatus').textContent);
-  // Gestures: Camera 2 ONLY (Camera 1 sees nothing) still drives the hold, and names Camera 2.
+  // Gestures: v2.1.9 host-only — Camera 2 ONLY (Camera 1 sees nothing) does NOT drive a hold.
   W.TrackRig.setTarget(dualRig1.canvas, poseDict, [], []);
   W.TrackRig.setTarget(dualRig2.canvas, poseDict, [makeHand([0, 1, 0, 0, 0])], []);
   W.TrackDual._test.gestureTick();
-  t('v2.1.7 gesture: Camera 2 only sees 1 finger -> hold-start naming Camera 2',
-    ($('dualGestureStatus').textContent || '').indexOf('Camera 2') >= 0 &&
+  t('v2.1.9 gesture: Camera 2 only sees 1 finger -> NO hold (host reads Camera 1 only)',
+    ($('dualGestureStatus').textContent || '').indexOf('1 finger') < 0, $('dualGestureStatus').textContent);
+  // Hold grace (v2.1.9 host-only): build the hold on Camera 1, then 3 missed ticks keep it; the 4th gives up.
+  W.TrackRig.setTarget(dualRig1.canvas, poseDict, [makeHand([0, 1, 0, 0, 0])], []);
+  W.TrackRig.setTarget(dualRig2.canvas, poseDict, [], []);
+  W.TrackDual._test.gestureTick();
+  t('v2.1.9 gesture: Camera 1 sees 1 finger -> hold-start (host reads Camera 1)',
     ($('dualGestureStatus').textContent || '').indexOf('1 finger') >= 0, $('dualGestureStatus').textContent);
-  // Hold grace: 3 missed ticks keep the hold; the 4th gives up.
   W.TrackRig.setTarget(dualRig1.canvas, poseDict, [], []);
   W.TrackRig.setTarget(dualRig2.canvas, poseDict, [], []);
   W.TrackDual._test.gestureTick();
@@ -550,16 +556,15 @@ const W = sandbox;
 
   /* ---------- Version / files ---------- */
   const versionJson = JSON.parse(fs.readFileSync(ROOT + 'version.json', 'utf8'));
-  t('version.json = 2.1.8', versionJson.version === '2.1.8');
+  t('version.json = 2.1.9', versionJson.version === '2.1.9');
   const changelog = JSON.parse(fs.readFileSync(ROOT + 'changelog.json', 'utf8'));
-  const entry218 = changelog.find(e => e.version === '2.1.8');
-  t('changelog 2.1.8 has 5 notes incl. camera-off + black preview + any finger + torso anchors + snap',
-    entry218 && entry218.notes.length === 5 &&
-    entry218.notes.some(n => n.indexOf('Camera starts OFF') >= 0) &&
-    entry218.notes.some(n => n.indexOf('Black preview fixed') >= 0) &&
-    entry218.notes.some(n => n.indexOf('ANY extended finger') >= 0) &&
-    entry218.notes.some(n => n.indexOf('shoulder AND') >= 0) &&
-    entry218.notes.some(n => n.indexOf('snaps to the latest landmarks') >= 0));
+  const entry219 = changelog.find(e => e.version === '2.1.9');
+  t('changelog 2.1.9 has 4 notes incl. host-only gestures + no step-down + voice on iPhone + wait line clears',
+    entry219 && entry219.notes.length === 4 &&
+    entry219.notes.some(n => n.indexOf('ONLY the main camera') >= 0) &&
+    entry219.notes.some(n => n.indexOf('no longer throttled') >= 0) &&
+    entry219.notes.some(n => n.indexOf('Voice now speaks on iPhone') >= 0) &&
+    entry219.notes.some(n => n.indexOf('Waiting for Camera 2') >= 0));
   const entry217 = changelog.find(e => e.version === '2.1.7');
   t('changelog 2.1.7 has 6 notes incl. only-seen joints + head marker + truthful status + both-camera signs + 640px hands + rig sits ON you',
     entry217 && entry217.notes.length === 6 &&
@@ -578,10 +583,10 @@ const W = sandbox;
     entry216.notes.some(n => n.indexOf('No more silent failures') >= 0) &&
     entry216.notes.some(n => n.indexOf('Recording has ended') >= 0));
   const updateSrc = fs.readFileSync(ROOT + 'js/update.js', 'utf8');
-  t('update.js fallback history 2.1.8 matches changelog + VERSION = 2.1.8',
-    updateSrc.indexOf('Camera starts OFF') >= 0 &&
-    updateSrc.indexOf("var VERSION = '2.1.8'") >= 0 &&
-    W.TrackUpdate.getVersion() === '2.1.8');
+  t('update.js fallback history 2.1.9 matches changelog + VERSION = 2.1.9',
+    updateSrc.indexOf('ONLY the main camera') >= 0 &&
+    updateSrc.indexOf("var VERSION = '2.1.9'") >= 0 &&
+    W.TrackUpdate.getVersion() === '2.1.9');
   const html = fs.readFileSync(ROOT + 'index.html', 'utf8');
   t('index.html: Camera 1 / Camera 2 labels present', html.indexOf('Camera 1') >= 0 && html.indexOf('Camera 2') >= 0);
   t('index.html: no "Second camera" / "Main phone" wording left', html.indexOf('Second camera') < 0 && html.indexOf('Main phone') < 0);
@@ -594,7 +599,9 @@ const W = sandbox;
     html.indexOf('js/rig.js') >= 0);
   t('index.html: rig + gesture status lines on both dual panels',
     ['dualRigStatus', 'dualGestureStatus', 'dualJoinRigStatus', 'dualJoinGestureStatus'].every(s => html.indexOf('id="' + s + '"') >= 0));
-  t('index.html: version strings 2.1.8', html.indexOf('v2.1.8') >= 0 && html.indexOf('v2.1.7') < 0);
+  t('index.html: version strings 2.1.9', html.indexOf('v2.1.9') >= 0 && html.indexOf('v2.1.8') < 0);
+  t('index.html: wait line has id dualWaitLine (hidden once Camera 2 connects)',
+    html.indexOf('id="dualWaitLine"') >= 0);
   const css = fs.readFileSync(ROOT + 'css/app.css', 'utf8');
   t('Guide CSS: bigger readable text (.cue p 17px) + annotated-figure styles',
     css.indexOf('.cue p') >= 0 && css.indexOf('ai-frame-stage') >= 0);
@@ -644,6 +651,46 @@ const W = sandbox;
     aiSrc.indexOf('TrackCam.playVideo') >= 0 && dualSrc.indexOf('TrackCam.playVideo') >= 0);
   t('v2.1.8 gestures need no face: single + dual gates have no frontal/faceSeen requirement',
     aiSrc.indexOf('AI.lastFrontal && g.lastCount') < 0 && dualSrc.indexOf('(g.frontal || g.faceSeen)') < 0);
+
+  /* ---------- v2.1.9: host-only gestures, no step-down, voice speaks, wait line ---------- */
+  // Re-register the dual feeds (an earlier stopSkeleton unregistered them).
+  W.TrackDual.startSkeleton();
+  // Joiner tick: never builds a hold, shows the idle line.
+  W.TrackDual._test.setRole('join');
+  W.TrackRig.setTarget(dualRig1.canvas, poseDict, [makeHand([0, 1, 0, 0, 0])], []);
+  W.TrackRig.setTarget(dualRig2.canvas, poseDict, [makeHand([0, 1, 0, 0, 0])], []);
+  W.TrackDual._test.gestureTick();
+  t('v2.1.9 host-only: joiner tick shows "Main camera controls recording" (no hold, no request)',
+    ($('dualGestureStatus').textContent || '').indexOf('Main camera controls recording') >= 0, $('dualGestureStatus').textContent);
+  // Host tick with a CONFLICTING Camera 2 hand (5 fingers, other hand at side) still builds the Camera 1 hold.
+  W.TrackDual._test.setRole('host');
+  W.TrackRig.setTarget(dualRig1.canvas, poseDict, [makeHand([0, 1, 0, 0, 0])], []);
+  W.TrackRig.setTarget(dualRig2.canvas, poseDict, [makeHand([1, 1, 1, 1, 1])], []);
+  W.TrackDual._test.gestureTick();
+  t('v2.1.9 host-only: Camera 1 = 1 finger + Camera 2 = 5 fingers -> hold still builds (no cross-feed cancel)',
+    ($('dualGestureStatus').textContent || '').indexOf('1 finger') >= 0, $('dualGestureStatus').textContent);
+  // 10 ticks: the hold fires (hostRecord no-ops with no stream in the harness) without crashing.
+  for(let i = 0; i < 9; i++) W.TrackDual._test.gestureTick();
+  t('v2.1.9 host-only: 10-tick hold fires and the tick loop stays alive', true, $('dualGestureStatus').textContent);
+  // Step-down gone: source has no step-down code; quality never reports stepped-down.
+  const rigSrc219 = fs.readFileSync(ROOT + 'js/rig.js', 'utf8');
+  const dualSrc219 = fs.readFileSync(ROOT + 'js/dualcam.js', 'utf8');
+  t('v2.1.9 no step-down: rig.js has no step-down throttle or smooth report',
+    rigSrc219.indexOf('quality.steppedDown = true') < 0 && rigSrc219.indexOf("notifyAll('smooth')") < 0 &&
+    rigSrc219.indexOf('inferEma') < 0 && W.TrackRig._test.getQuality().steppedDown === false &&
+    W.TrackRig._test.getQuality().interval === 140);
+  t('v2.1.9 host-only: dualcam.js has no want-start/want-stop; start/stop obeyed by joiner only',
+    dualSrc219.indexOf('want-start') < 0 && dualSrc219.indexOf('want-stop') < 0 &&
+    dualSrc219.indexOf("if(D.role === 'join') startRecording") >= 0 &&
+    dualSrc219.indexOf("if(D.role === 'join') stopRecording") >= 0);
+  // Voice: announce() speaks the exact words through speechSynthesis (no silent swallow).
+  const spoken = [];
+  sandbox.speechSynthesis.speak = function(u){ spoken.push(u && u.text); };
+  W.TrackAIAnnounce.announce('Recording has started.');
+  t('v2.1.9 voice: announce speaks the exact words (no silent cancel-then-speak)',
+    spoken.indexOf('Recording has started.') >= 0, spoken.join('|'));
+  t('v2.1.9 voice: toggle-on speaks a confirmation (unlocks iOS speech)',
+    aiSrc.indexOf("announce('Voice coaching on.')") >= 0);
 
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);

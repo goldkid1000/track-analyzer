@@ -114,18 +114,33 @@ function setBlockStarts(on){
     : 'Block starts: off — auto-detecting.';
   if(window.TrackClassic) window.TrackClassic.setBlockStarts(AI.blockStarts);
 }
+/* iOS Safari silences speechSynthesis when cancel() is followed at once
+ * by speak() — and the first speak() after page load needs a real user
+ * gesture to unlock audio at all. speakNow() resumes, and when
+ * something is already speaking it cancels and re-speaks after a short
+ * delay, so the new utterance survives instead of being swallowed. */
+function speakNow(text, rate){
+  if(!window.speechSynthesis) return;
+  try{
+    var synth = window.speechSynthesis;
+    try{ synth.resume(); }catch(e){}
+    var u = new SpeechSynthesisUtterance(text);
+    u.rate = rate || 1.0;
+    if(synth.speaking || synth.pending){
+      try{ synth.cancel(); }catch(e){}
+      setTimeout(function(){ try{ synth.resume(); synth.speak(u); }catch(e2){} }, 120);
+    } else {
+      synth.speak(u);
+    }
+  }catch(e){}
+}
 function speak(text){
   if(!AI.voice || !window.speechSynthesis) return;
   var now = Date.now();
   if(now < AI.announcingUntil) return; // never talk over a start/stop announcement
   if(now - AI.lastSpeak < 6000) return; // throttle: never nag
   AI.lastSpeak = now;
-  try{
-    window.speechSynthesis.cancel();
-    var u = new SpeechSynthesisUtterance(text);
-    u.rate = 1.05;
-    window.speechSynthesis.speak(u);
-  }catch(e){}
+  speakNow(text, 1.05);
 }
 /* Start/stop announcements: separate from voice coaching. They ALWAYS
  * speak — even when the voice-coaching toggle is off — bypass the 6s
@@ -137,12 +152,7 @@ function announce(text){
   var now = Date.now();
   AI.lastSpeak = now;
   AI.announcingUntil = now + 2500;
-  try{
-    window.speechSynthesis.cancel();
-    var u = new SpeechSynthesisUtterance(text);
-    u.rate = 1.0;
-    window.speechSynthesis.speak(u);
-  }catch(e){}
+  speakNow(text, 1.0);
 }
 
 /* ================= Notifications: AI Photo + Guide badges =================
@@ -2004,6 +2014,10 @@ function initAI(){
     voiceBtn.setAttribute('aria-pressed', AI.voice ? 'true' : 'false');
     voiceBtn.textContent = AI.voice ? 'Voice coaching: on' : 'Voice coaching: off';
     if(!AI.voice && window.speechSynthesis) try{ window.speechSynthesis.cancel(); }catch(e){}
+    /* Speak the confirmation inside this tap (a real user gesture):
+     * it proves voice works AND unlocks iOS speech audio, so the later
+     * start/stop announcements (fired from timers, not taps) speak too. */
+    if(AI.voice) announce('Voice coaching on.');
   });
   /* One Block Starts toggle: on = block starts, off = auto-detect. */
   var blockBtn = $('blockStartsToggle');
