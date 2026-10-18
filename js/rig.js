@@ -1,4 +1,20 @@
-/* Track Analyzer — rig engine (v2.1.9)
+/* Track Analyzer — rig engine (v2.2.0)
+ *
+ * v2.2.0 (from Giel's Oct 17 video: rig tangled over the face on
+ * close-up, rig floating on a black feed):
+ * - Smooth rig: the draw loop interpolates between the last two
+ *   inference results at the display refresh rate (up to 120Hz on
+ *   ProMotion), so the rig glides instead of jumping pose to pose.
+ *   Inference itself still runs at device speed — the rig redraws
+ *   between results. A huge jump snaps (teleport guard).
+ * - Stale rig: if no fresh inference lands in 600ms, the rig clears
+ *   instead of drawing a frozen pose over a black/frozen feed.
+ * - Close-up guard: hands only draw when the pose has torso anchors
+ *   (a shoulder AND a hip). On a face close-up the pose is gated off
+ *   but the hand model can still hallucinate a "hand" on the face —
+ *   drawing that alone was the tangled knot over the face.
+ * - Live fps: TrackRig.getFps() returns {draw, infer} — the rig
+ *   redraw rate and successful inferences in the last second.
  *
  * v2.1.7 fixes (from Giel's 22s screen recording of v2.1.6 dual mode):
  * - Visibility gating: only joints the model actually sees get drawn.
@@ -259,8 +275,17 @@ function Rig(opts){
   this.mode = opts.mode || 'draw'; // 'draw' (external inference) | 'infer' (engine runs Pose+Hands)
   this.onStatus = opts.onStatus || null;
   this.poseTarget = poseStore(); this.poseDisplay = poseStore();
+  /* v2.2.0 interpolation: the draw loop runs at the display refresh
+   * rate (up to 120Hz on ProMotion) and interpolates between the last
+   * two inference results, so the rig glides instead of jumping from
+   * pose to pose. prev = the previous target, targetT/prevT = when
+   * each target landed. Inference itself still runs at device speed
+   * (typically 15–30/sec per feed) — the rig redraws between results. */
+  this.posePrev = poseStore();
   this.handTarget = [handStore(), handStore()];
   this.handDisplay = [handStore(), handStore()];
+  this.handPrev = [handStore(), handStore()];
+  this.prevT = 0; this.targetT = 0;
   this.faultJoints = [];
   this.hasTarget = false;
   this.cleared = true;
@@ -287,6 +312,10 @@ var rigs = [];
 var rigByKey = {};
 var rafId = 0;
 var lastRafT = 0;
+/* v2.2.0 fps readout: draw = display refresh rate of the rig loop
+ * (EMA), infer = successful inferences in the last second, all feeds. */
+var drawEma = 0;
+var inferTimes = [];
 var inferTimer = null;
 var inferIdx = 0;
 var inferBusy = false;
@@ -318,6 +347,7 @@ function findRigByCanvas(canvas){
   return null;
 }
 function setTargetOnRig(rig, poseDict, hands, faultJoints){
+  snapshotPrev(rig);
   var poseAny = fillPoseFromDict(rig.poseTarget, poseDict);
   var handsArr = hands || [];
   var handAny = false;
@@ -326,7 +356,7 @@ function setTargetOnRig(rig, poseDict, hands, faultJoints){
   }
   rig.faultJoints = faultJoints || [];
   rig.hasTarget = poseAny || handAny;
-  if(rig.hasTarget) rig.lastTargetT = Date.now();
+  if(rig.hasTarget){ rig.lastTargetT = Date.now(); rig.targetT = rig.lastTargetT; }
   // Gesture info from this frame: frontal face + best hand count.
   var faceSeen = false, frontal = false;
   if(poseDict){
@@ -346,6 +376,99 @@ function advanceRig(rig, k){
   stepPoseStore(rig.poseDisplay, rig.poseTarget, k, n, 0);
   stepHandStore(rig.handDisplay[0], rig.handTarget[0], k, n, 0);
   stepHandStore(rig.handDisplay[1], rig.handTarget[1], k, n, 0);
+}
+/* v2.2.0: remember the previous target so the draw loop can
+ * interpolate between it and the new target. If the previous target
+ * is stale (>600ms old), mark prevT = 0 so the next draw snaps
+ * instead of smearing across the gap. */
+function snapshotPrev(rig){
+  var now = Date.now();
+  copyPoseStore(rig.posePrev, rig.poseTarget);
+  copyHandStore(rig.handPrev[0], rig.handTarget[0]);
+  copyHandStore(rig.handPrev[1], rig.handTarget[1]);
+  rig.prevT = (now - rig.targetT > 600 || !rig.targetT) ? 0 : rig.targetT;
+}
+function copyPoseStore(dst, src){
+  for(var i = 0; i < 33; i++){
+    dst.has[i] = src.has[i]; dst.x[i] = src.x[i]; dst.y[i] = src.y[i]; dst.v[i] = src.v[i];
+  }
+}
+function copyHandStore(dst, src){
+  for(var i = 0; i < 21; i++){
+    /* Hand stores have no .v (visibility) — pose stores do. */
+    dst.has[i] = src.has[i]; dst.x[i] = src.x[i]; dst.y[i] = src.y[i];
+  }
+}
+/* Interpolate one pose store: display = prev + (target - prev) * alpha.
+ * A joint that only exists in the target snaps in; a joint that only
+ * exists in the prev vanishes (grace 0, same as advanceRig). A huge
+ * jump (>0.35 of the frame) is a teleport (camera moved / new person),
+ * so snap instead of sliding across the screen. */
+function interpPoseStore(display, prev, target, alpha){
+  var maxDelta = 0;
+  for(var i = 0; i < 33; i++){
+    if(prev.has[i] && target.has[i]){
+      var d = Math.max(Math.abs(target.x[i] - prev.x[i]), Math.abs(target.y[i] - prev.y[i]));
+      if(d > maxDelta) maxDelta = d;
+    }
+  }
+  if(maxDelta > 0.35) alpha = 1;
+  for(i = 0; i < 33; i++){
+    if(!target.has[i]){ display.has[i] = 0; continue; }
+    if(prev.has[i] && alpha < 1){
+      display.x[i] = prev.x[i] + (target.x[i] - prev.x[i]) * alpha;
+      display.y[i] = prev.y[i] + (target.y[i] - prev.y[i]) * alpha;
+    } else {
+      display.x[i] = target.x[i]; display.y[i] = target.y[i];
+    }
+    display.v[i] = target.v[i]; display.has[i] = 1;
+  }
+}
+function interpHandStore(display, prev, target, alpha){
+  var maxDelta = 0;
+  for(var i = 0; i < 21; i++){
+    if(prev.has[i] && target.has[i]){
+      var d = Math.max(Math.abs(target.x[i] - prev.x[i]), Math.abs(target.y[i] - prev.y[i]));
+      if(d > maxDelta) maxDelta = d;
+    }
+  }
+  if(maxDelta > 0.35) alpha = 1;
+  for(i = 0; i < 21; i++){
+    if(!target.has[i]){ display.has[i] = 0; continue; }
+    if(prev.has[i] && alpha < 1){
+      display.x[i] = prev.x[i] + (target.x[i] - prev.x[i]) * alpha;
+      display.y[i] = prev.y[i] + (target.y[i] - prev.y[i]) * alpha;
+    } else {
+      display.x[i] = target.x[i]; display.y[i] = target.y[i];
+    }
+    display.has[i] = 1;
+  }
+}
+/* v2.2.0 draw-loop advance: interpolate between the last two inference
+ * results at the display refresh rate. If no fresh inference has
+ * landed in 600ms, the feed is frozen/black — clear the rig instead of
+ * drawing a stale pose floating on a black screen. */
+function advanceRigInterp(rig, nowMs){
+  if(!rig.hasTarget) return;
+  var now = nowMs === undefined ? Date.now() : nowMs;
+  if(rig.lastTargetT > 0 && now - rig.lastTargetT > 600){
+    rig.hasTarget = false;
+    clearPoseStore(rig.poseDisplay);
+    clearHandStore(rig.handDisplay[0]);
+    clearHandStore(rig.handDisplay[1]);
+    rig.prevT = 0;
+    return;
+  }
+  var span = rig.targetT - rig.prevT;
+  var alpha = 1;
+  if(rig.prevT && span > 0){
+    alpha = (now - rig.prevT) / span;
+    if(alpha < 0) alpha = 0;
+    if(alpha > 1) alpha = 1;
+  }
+  interpPoseStore(rig.poseDisplay, rig.posePrev, rig.poseTarget, alpha);
+  interpHandStore(rig.handDisplay[0], rig.handPrev[0], rig.handTarget[0], alpha);
+  interpHandStore(rig.handDisplay[1], rig.handPrev[1], rig.handTarget[1], alpha);
 }
 /* Where the video frame actually sits inside the canvas.
  * The video uses object-fit: contain (full frame visible, letterboxed),
@@ -443,6 +566,13 @@ function paintRig(rig){
   }
   // Hands: small dots + thin lines (they are small features — body-size
   // dots made 21 joints cram into clumps and spiderwebs).
+  // v2.2.0: hands only draw when the pose has torso anchors (a shoulder
+  // AND a hip). On a face close-up the pose is gated off but the hand
+  // model can still hallucinate a "hand" on the face — drawing that
+  // alone is the tangled knot over the face. No torso, no hands.
+  var poseDrawn = (rig.poseDisplay.has[11] || rig.poseDisplay.has[12]) &&
+    (rig.poseDisplay.has[23] || rig.poseDisplay.has[24]);
+  if(poseDrawn)
   for(var h = 0; h < 2; h++){
     var hd = rig.handDisplay[h];
     ctx.strokeStyle = 'rgba(53,208,255,0.9)'; ctx.lineWidth = 1.25; ctx.lineCap = 'round';
@@ -470,12 +600,12 @@ function frame(ts){
   lastRafT = ts;
   if(dt < 0) dt = 16;
   if(dt > 100) dt = 100;
-  // v2.1.8: NO smoothing — the display snaps to the latest inference
-  // every frame, so the rig sits exactly on the body instead of
-  // trailing behind it. (Old code eased toward the target.)
-  var k = 1;
+  /* v2.2.0: draw fps (EMA) + interpolate between the last two
+   * inference results at the display refresh rate, so the rig glides
+   * at up to 120Hz on ProMotion instead of jumping pose to pose. */
+  if(dt > 0) drawEma = drawEma ? drawEma * 0.95 + (1000 / dt) * 0.05 : 1000 / dt;
   for(var i = 0; i < rigs.length; i++){
-    advanceRig(rigs[i], k);
+    advanceRigInterp(rigs[i]);
     paintRig(rigs[i]);
   }
 }
@@ -669,6 +799,7 @@ function runInference(rig){
     });
   }).then(function(out){
     if(out){
+      snapshotPrev(rig);
       var poseAny = fillPoseFromArray(rig.poseTarget, out.poseLm);
       /* Keep only confident hands: handedness score >= 0.6 and wrist
        * in frame. Phantom hands draw nothing — no spiderwebs. */
@@ -687,7 +818,10 @@ function runInference(rig){
         if(fillHandFromArray(rig.handTarget[h], keptHands[h])) handAny = true;
       }
       rig.hasTarget = poseAny || handAny;
-      if(rig.hasTarget) rig.lastTargetT = Date.now();
+      if(rig.hasTarget){ rig.lastTargetT = Date.now(); rig.targetT = rig.lastTargetT; }
+      /* v2.2.0: inference rate for the fps readout. */
+      inferTimes.push(Date.now());
+      while(inferTimes.length && Date.now() - inferTimes[0] > 1000) inferTimes.shift();
       var faceSeen = rig.poseTarget.has[0] === 1;
       var frontal = isFrontalPose(out.poseLm);
       /* v2.1.7 gesture smoothing: a new finger count must appear in 2
@@ -794,13 +928,14 @@ window.TrackRig = {
   setHands: function(canvas, hands){
     var rig = findRigByCanvas(canvas);
     if(!rig) return;
+    snapshotPrev(rig);
     var handsArr = hands || [];
     var handAny = false;
     for(var h = 0; h < 2; h++){
       if(fillHandFromArray(rig.handTarget[h], handsArr[h])) handAny = true;
     }
     if(handAny) rig.hasTarget = true;
-    if(rig.hasTarget) rig.lastTargetT = Date.now();
+    if(rig.hasTarget){ rig.lastTargetT = Date.now(); rig.targetT = rig.lastTargetT; }
     rig.gesture.count = bestHandCount(handsArr);
     rig.gesture.handSeen = handsArr.length > 0;
   },
@@ -811,6 +946,10 @@ window.TrackRig = {
     clearPoseStore(rig.poseTarget);
     clearHandStore(rig.handTarget[0]);
     clearHandStore(rig.handTarget[1]);
+    clearPoseStore(rig.posePrev);
+    clearHandStore(rig.handPrev[0]);
+    clearHandStore(rig.handPrev[1]);
+    rig.prevT = 0; rig.targetT = 0;
     rig.gesture = { count: -1, frontal: false, handSeen: false, faceSeen: false };
   },
   getGesture: function(key){
@@ -832,8 +971,18 @@ window.TrackRig = {
     }
     return out;
   },
+  /* v2.2.0: live fps — draw = rig redraw rate (display refresh,
+   * up to 120Hz on ProMotion), infer = successful inferences in the
+   * last second, all feeds combined. */
+  getFps: function(){
+    return { draw: Math.round(drawEma || 0), infer: inferTimes.length };
+  },
   /* Test hooks (smoke tests only — the app never calls these on its own). */
   _test: {
+    advanceRigInterp: advanceRigInterp,
+    interpPoseStore: interpPoseStore,
+    interpHandStore: interpHandStore,
+    snapshotPrev: snapshotPrev,
     lerpStep: lerpStep,
     newPoseStore: poseStore,
     newHandStore: handStore,

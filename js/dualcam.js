@@ -1,4 +1,4 @@
-/* Track Analyzer — Two-camera + one-time photo access (v2.1.7)
+/* Track Analyzer — Two-camera + one-time photo access (v2.2.0)
  *
  * Two features in one file, kept separate from app.js so the existing
  * analyzer keeps working untouched:
@@ -19,11 +19,29 @@
  *    other joins with a 6-letter code (Camera 2). Signaling via the free
  *    PeerJS cloud (0.peerjs.com, no API key). If PeerJS is unreachable,
  *    manual copy-paste WebRTC signaling (offer/answer codes) is offered —
- *    never a dead end. Both cameras record in sync, auto-stop on duration
- *    / motion end / Stop, then a synced two-camera replay + a two-camera
- *    result. The two live views are plainly labeled Camera 1 and Camera 2.
+ *    never a dead end. Both cameras record in sync, then a synced
+ *    two-camera replay + a two-camera result. The two live views are
+ *    plainly labeled Camera 1 and Camera 2.
  *    Labelled "two camera views, not 3D" everywhere: two uncalibrated
  *    cameras cannot measure depth, and this app never fakes 3D numbers.
+ *
+ *    v2.2.0 (from Giel's Oct 17 video — joiner kept rolling, 0% verdict,
+ *    nothing in AI Photo, no stop control):
+ *    - NO clip-length cap, NO auto-stop when the pose leaves the frame.
+ *      Recording runs until the host taps Stop video, holds 2 fingers,
+ *      turns a camera off, or disconnects.
+ *    - Stop-sync: host Stop sends 'stop' + retries until the joiner
+ *      answers 'stopped'; the host sends a heartbeat while recording
+ *      and the joiner stops itself if it goes quiet; a closing
+ *      connection stops a running recording on either side.
+ *    - Honest verdicts: a clip with no clear full-body shape scores
+ *      null ("Couldn't score") instead of 0%; arm swings are detected
+ *      and scored (elbow / crossing / hand height) instead of reading
+ *      as "no reps".
+ *    - Replay: 0.25× / 0.5× / 1× speed + AI moments (worst/best frame)
+ *      that seek both clips + "Send best frame to AI Photo".
+ *      The best frame also auto-sends to AI Photo when both cameras
+ *      have reported. Scan-done voice + device notification on verdict.
  *
  *    v2.1.6 — the skeleton rig runs on BOTH feeds (Camera 1 AND Camera 2)
  *    through the shared smooth rig engine (js/rig.js): full pose + both
@@ -135,7 +153,10 @@ var DUAL_FIX = {
   straightTrack: { fix: 'The hands are crossing the midline.', cue: 'Run the hands on two straight rails.', drill: '2 × 20 m arm-action marches' },
   frontSide: { fix: 'The foot is reaching ahead of the hips.', cue: 'Quick feet under the hips.', drill: '3 × 20 m wickets at relaxed speed' },
   armRhythm: { fix: 'The arms are not giving the legs enough rhythm.', cue: 'Drive arms backward with loose hands.', drill: '2 × 20 m fast-arm buildups' },
-  earlyRise: { fix: 'The body is standing upright too early.', cue: 'Gradual raise — earn your height.', drill: '3 × 10 m falling starts' }
+  earlyRise: { fix: 'The body is standing upright too early.', cue: 'Gradual raise — earn your height.', drill: '3 × 10 m falling starts' },
+  /* v2.2.0: honest non-scores — these are NOT 0%. */
+  noShape: { fix: 'The camera couldn’t see your full body through most of this clip.', cue: 'Step back so head, hips, and feet all fit in frame.', drill: 'Retake with the full body in view' },
+  unavailable: { fix: 'The analyzer couldn’t run on this clip.', cue: 'Try again — keep the full body in frame.', drill: 'Retake with the full body in view' }
 };
 var D = {
   role: null, code: '', mode: 'peerjs',
@@ -155,13 +176,19 @@ var D = {
   gestureMissCount: 0,
   gestureHoldCam: '',
   recorder: null, chunks: [], localBlob: null, remoteBlob: null,
-  recording: false, recStartedAt: 0, recTimer: null,
-  duration: 10,
+  recording: false, recStartedAt: 0,
   watchPose: null, watchTimer: null, poseSeen: false, poseMissingSince: 0,
   calib: null, calibPending: false,
   localAnalysis: null, remoteAnalysis: null,
   clipExpected: 0, clipGot: 0, clipParts: {},
-  cameraReady: null
+  cameraReady: null,
+  /* v2.2.0 stop-sync: host Stop must reach the joiner even if the first
+   * 'stop' is lost (retry), and the joiner must stop on its own if the
+   * host goes quiet (heartbeat + watchdog) or the connection closes. */
+  stopRetry: null, stopTries: 0, stopAcked: false,
+  aliveTimer: null, aliveWatchTimer: null, lastAlive: 0,
+  photoSent: false, notified: false,
+  fpsTimer: null
 };
 function dualStatus(msg){ setText('dualStatus', msg); setText('dualJoinStatus', msg); }
 /* Start/stop announcements in two-camera mode: the same exact words as
@@ -372,13 +399,16 @@ function setupPeerConn(conn){
     }
   });
   conn.on('data', onMessage);
-  conn.on('close', function(){ dualStatus('Camera 2 disconnected.'); showEl($('dualWaitLine'), true); });
+  /* v2.2.0: a closing connection stops a running recording — before
+   * this, the joiner kept recording forever when the host's tab
+   * closed, because the close handler only set a status line. */
+  conn.on('close', function(){ if(D.recording) stopRecording('connection ended'); dualStatus('Camera 2 disconnected.'); showEl($('dualWaitLine'), true); });
 }
 function setupManualDC(dc){
   D.dc = dc;
   dc.onopen = function(){ sendMsg({ type: 'hello', role: D.role, label: D.localLabel }); };
   dc.onmessage = function(e){ try{ onMessage(JSON.parse(e.data)); }catch(err){} };
-  dc.onclose = function(){ dualStatus('Camera 2 disconnected.'); showEl($('dualWaitLine'), true); };
+  dc.onclose = function(){ if(D.recording) stopRecording('connection ended'); dualStatus('Camera 2 disconnected.'); showEl($('dualWaitLine'), true); };
 }
 function onMessage(msg){
   if(!msg || !msg.type) return;
@@ -401,9 +431,15 @@ function onMessage(msg){
   /* v2.1.9: ONLY the host (Camera 1) starts/stops recording. Start/stop
    * messages are the host's fan-out to the joiner — the host never
    * obeys one from the other side, and the joiner never sends one.
-   * (Old hand-sign requests from the other device are ignored.) */
-  else if(msg.type === 'start'){ if(D.role === 'join') startRecording(msg.duration || 10); }
-  else if(msg.type === 'stop'){ if(D.role === 'join') stopRecording('the other camera stopped'); }
+   * (Old hand-sign requests from the other device are ignored.)
+   * v2.2.0: the joiner answers every 'stop' with 'stopped' (even when
+   * it was already stopped), so the host knows the stop landed and
+   * stops retrying. 'rec-alive' is the host's recording heartbeat —
+   * the joiner's watchdog stops its own recorder if it goes quiet. */
+  else if(msg.type === 'start'){ if(D.role === 'join') startRecording(); }
+  else if(msg.type === 'stop'){ if(D.role === 'join'){ stopRecording('the other camera stopped'); sendMsg({ type: 'stopped' }); } }
+  else if(msg.type === 'stopped'){ if(D.role === 'host'){ D.stopAcked = true; clearTimeout(D.stopRetry); D.stopRetry = null; } }
+  else if(msg.type === 'rec-alive'){ if(D.role === 'join') D.lastAlive = Date.now(); }
   else if(msg.type === 'analysis'){ D.remoteAnalysis = msg.summary; maybeRenderVerdict(); }
   else if(msg.type === 'clip-meta'){ D.clipExpected = msg.chunks || 0; D.clipGot = 0; D.clipParts = {}; setText('dualTransfer', 'Receiving Camera 2 clip\u2026 0%'); }
   else if(msg.type === 'clip-chunk'){ D.clipParts[msg.index] = msg.data; D.clipGot++; if(D.clipExpected) setText('dualTransfer', 'Receiving Camera 2 clip\u2026 ' + Math.round(D.clipGot / D.clipExpected * 100) + '%'); }
@@ -547,11 +583,13 @@ function hostRecord(){
   // Recording waits for any camera that is off — never a black feed.
   if(D.camOff || !D.localStream){ dualStatus('Turn Camera 1 on first — recording waits until it is back on.'); return; }
   if(D.remoteCamOff){ dualStatus('Camera 2 is off — recording waits until it is back on.'); return; }
-  var sel = $('dualDuration'); if(sel) D.duration = parseInt(sel.value, 10) || 10;
-  sendMsg({ type: 'start', duration: D.duration });
-  startRecording(D.duration);
+  /* v2.2.0: NO clip-length cap. Recording runs until the host taps
+   * Stop video, holds 2 fingers, turns a camera off, or disconnects.
+   * The old 10s cap cut reps short and the duration picker is gone. */
+  sendMsg({ type: 'start' });
+  startRecording();
 }
-function startRecording(duration){
+function startRecording(){
   if(D.recording || !D.localStream) return;
   var mime = pickMime();
   D.chunks = []; D.localBlob = null; D.localAnalysis = null; D.remoteAnalysis = null;
@@ -560,12 +598,28 @@ function startRecording(duration){
   D.recorder.ondataavailable = function(e){ if(e.data && e.data.size) D.chunks.push(e.data); };
   D.recorder.onstop = onLocalStopped;
   D.recorder.start(250);
-  D.recording = true; D.recStartedAt = Date.now(); D.duration = duration || D.duration;
-  clearTimeout(D.recTimer);
-  D.recTimer = setTimeout(function(){ stopRecording('time is up'); }, D.duration * 1000);
+  D.recording = true; D.recStartedAt = Date.now();
+  /* v2.2.0 stop-sync: fresh state for this recording. The host sends a
+   * heartbeat while recording; the joiner stops itself if the heartbeat
+   * goes quiet (host tab frozen/crashed) or the connection closes. */
+  D.stopAcked = false; D.stopTries = 0;
+  clearTimeout(D.stopRetry); D.stopRetry = null;
+  clearInterval(D.aliveTimer); D.aliveTimer = null;
+  clearInterval(D.aliveWatchTimer); D.aliveWatchTimer = null;
+  D.photoSent = false; D.notified = false;
+  if(D.role === 'host'){
+    D.aliveTimer = setInterval(function(){
+      if(D.recording) sendMsg({ type: 'rec-alive' });
+    }, 2000);
+  } else {
+    D.lastAlive = Date.now();
+    D.aliveWatchTimer = setInterval(function(){
+      if(D.recording && Date.now() - D.lastAlive > 6000) stopRecording('lost contact with Camera 1');
+    }, 2000);
+  }
   startPoseWatch();
   announceDual('Recording has started.');
-  setText('dualRecState', 'Recording\u2026 ' + D.duration + 's max \u2014 stops on its own when the rep ends.');
+  setText('dualRecState', 'Recording… tap Stop video or hold 2 fingers to stop.');
   showEl($('dualStopBtn'), true);
   var rb = $('dualRecordBtn'); if(rb) rb.disabled = true;
 }
@@ -573,13 +627,30 @@ function stopRecording(reason, silent){
   if(!D.recording) return;
   D.recording = false;
   if(!silent) announceDual('Recording has ended.');
-  clearTimeout(D.recTimer); stopPoseWatch();
+  clearTimeout(D.stopRetry); D.stopRetry = null;
+  clearInterval(D.aliveTimer); D.aliveTimer = null;
+  clearInterval(D.aliveWatchTimer); D.aliveWatchTimer = null;
+  stopPoseWatch();
   try{ if(D.recorder && D.recorder.state !== 'inactive') D.recorder.stop(); }catch(e){}
   setText('dualRecState', 'Stopped (' + (reason || 'done') + ') — processing clip…');
   showEl($('dualStopBtn'), false);
   var rb = $('dualRecordBtn'); if(rb) rb.disabled = false;
   // Tell the other side to stop too (idempotent — a second stop is a no-op).
   sendMsg({ type: 'stop' });
+  /* v2.2.0: the joiner answers 'stopped'. If no answer lands in 1.5s,
+   * the 'stop' was probably lost — send it again, up to 2 retries. */
+  if(D.role === 'host'){
+    D.stopTries = 0;
+    (function scheduleRetry(){
+      D.stopRetry = setTimeout(function(){
+        if(D.stopAcked) return;
+        if(D.stopTries >= 2) return;
+        D.stopTries++;
+        sendMsg({ type: 'stop' });
+        scheduleRetry();
+      }, 1500);
+    })();
+  }
 }
 function onLocalStopped(){
   D.localBlob = new Blob(D.chunks, { type: (D.recorder && D.recorder.mimeType) || 'video/mp4' });
@@ -593,8 +664,8 @@ function onLocalStopped(){
   }
 }
 function startPoseWatch(){
-  // Presence-only watch: if pose was seen and then missing for 1.5s (and at
-  // least 2s elapsed), the rep is over — auto-stop. Runs at ~7fps to save battery.
+  // Calibration watch: tracks presence for the Line-up-frame calibration.
+  // It never stops a recording (v2.2.0 — manual Stop only).
   D.poseSeen = false; D.poseMissingSince = 0;
   if(!window.Pose) return;
   try{
@@ -633,9 +704,11 @@ function handlePresencePose(lm){
   }
   if(seen){ D.poseSeen = true; D.poseMissingSince = 0; }
   else if(D.poseSeen && !D.poseMissingSince){ D.poseMissingSince = now; }
-  else if(D.poseSeen && D.poseMissingSince && now - D.poseMissingSince > 1500 && now - D.recStartedAt > 2000){
-    stopRecording('you left the frame');
-  }
+  /* v2.2.0: NO auto-stop when the athlete leaves the frame. The old
+   * watch stopped the recording 1.5s after the pose vanished — a
+   * dropped frame or a step out of view ended the rep early. Only the
+   * host's Stop video, 2-finger hold, camera-off, or disconnect stops
+   * a recording now. The watch still feeds calibration. */
 }
 function stopPoseWatch(){ clearInterval(D.watchTimer); D.watchTimer = null; }
 
@@ -739,9 +812,13 @@ function startDualRig(){
   // until the remote stream arrives — no error, no stuck state).
   registerDualFeed(dualOwnKey());
   registerDualFeed(dualRemoteKey());
+  /* v2.2.0: live fps readout under the rig status line. */
+  clearInterval(D.fpsTimer);
+  D.fpsTimer = setInterval(updateDualFps, 500);
 }
 function stopDualRig(){
   D.rigStarted = false;
+  clearInterval(D.fpsTimer); D.fpsTimer = null;
   unregisterDualFeed('dual-cam1');
   unregisterDualFeed('dual-cam2');
   setDualRigStatus('');
@@ -900,11 +977,15 @@ function extractDualFeatures(lm){
     armSplit: Math.abs(lm[15].y - lm[16].y) / torso,
     crossing: cross / 2,
     hipLift: (shoulder.y - hip.y) / torso,
+    shoulderY: shoulder.y,
     wristLY: lm[15].y, wristRY: lm[16].y
   };
 }
 function summarizeDual(mode, feats){
-  if(!feats.length) return { label: D.localLabel, score: 0, metrics: [0, 0, 0], issue: 'projection', headline: 'No clear body shape in this clip', fix: DUAL_FIX.projection, frames: 0 };
+  /* v2.2.0: a clip with no clear full-body shape is NOT 0% — 0% says
+   * "terrible form". score: null renders as "Couldn't score" with
+   * the no-shape fix (step back, full body in frame). */
+  if(!feats.length) return { label: D.localLabel, score: null, metrics: [0, 0, 0], issue: 'noShape', headline: 'No clear full-body shape in this clip', fix: DUAL_FIX.noShape, frames: 0, activity: 'none' };
   var lean = dMedian(feats.map(function(f){ return f.lean; }));
   var elbow = dMedian(feats.map(function(f){ return f.elbow; }));
   var thigh = Math.min.apply(null, feats.map(function(f){ return f.thigh; }));
@@ -916,8 +997,21 @@ function summarizeDual(mode, feats){
   var armExc = Math.max(dRange(feats.map(function(f){ return f.wristLY; })), dRange(feats.map(function(f){ return f.wristRY; }))) / dMedian(feats.map(function(f){ return f.torso; }));
   var cross = feats.reduce(function(s, f){ return s + f.crossing; }, 0) / feats.length;
   var hipLift = dMedian(feats.map(function(f){ return f.hipLift; }));
+  /* v2.2.0: arm swings — big wrist excursion + legs near-still (thigh
+   * separation barely changes). Sprinting also swings the arms, but
+   * its thigh separation swings wide, so the leg test separates them. */
+  var thighRange = dRange(feats.map(function(f){ return f.thighSep; }));
+  var isArmSwing = armExc > 0.3 && thighRange < 30;
   var metrics, issues;
-  if(mode === 'block'){
+  if(isArmSwing){
+    /* maxHand = how high the higher hand gets, in torso units above
+     * the shoulder (chin ≈ +0.25, hip ≈ −1). Peak over the whole clip. */
+    var maxHand = Math.max.apply(null, feats.map(function(f){
+      return Math.max((f.shoulderY - f.wristLY) / f.torso, (f.shoulderY - f.wristRY) / f.torso);
+    }));
+    metrics = [dBand(elbow, 60, 110, 40), dCeil(cross, 0.2, 0.4), dFloor(maxHand, 0.15, 0.6)];
+    issues = ['elbowShape', 'straightTrack', 'backDrive'];
+  } else if(mode === 'block'){
     metrics = [dBand(Math.max.apply(null, feats.map(function(f){ return f.lean; })), 28, 55, 25), dFloor(armSplit, 0.65, 0.5), dFloor(rearExt, 150, 35)];
     issues = ['projection', 'armSplit', 'rearPush'];
   } else {
@@ -928,26 +1022,55 @@ function summarizeDual(mode, feats){
   for(var i = 1; i < 3; i++) if(metrics[i] < metrics[worst]) worst = i;
   var issue = issues[worst];
   var score = Math.round(metrics.reduce(function(s, v){ return s + v; }, 0) / 3);
-  return { label: D.localLabel, score: score, metrics: metrics, issue: issue, headline: DUAL_FIX[issue].fix, fix: DUAL_FIX[issue], frames: feats.length };
+  return { label: D.localLabel, score: score, metrics: metrics, issue: issue, headline: DUAL_FIX[issue].fix, fix: DUAL_FIX[issue], frames: feats.length, activity: isArmSwing ? 'arm-swing' : mode };
+}
+/* v2.2.0: per-sample score for replay markers (worst/best moments).
+ * Only per-sample fields are used — the window metrics (armExc, peak
+ * hand height) belong to the verdict, not to one frame. */
+function dualSampleScore(mode, f){
+  if(!f) return -1;
+  if(mode === 'block') return (dBand(f.lean, 28, 55, 25) + dCeil(f.thigh, 26, 34)) / 2;
+  if(mode === 'arm-swing') return (dBand(f.elbow, 60, 110, 40) + dCeil(f.lean, 25, 25)) / 2;
+  return (dCeil(f.lean, 16, 22) + dCeil(f.thigh, 26, 34)) / 2;
+}
+function dualMoments(mode, samples, analysis){
+  var scored = [];
+  samples.forEach(function(s){
+    if(s && s.f){ var sc = dualSampleScore(mode, s.f); if(sc >= 0) scored.push({ t: s.t, score: sc, f: s.f }); }
+  });
+  if(scored.length < 2) return [];
+  var worst = scored[0], best = scored[0];
+  scored.forEach(function(s){ if(s.score < worst.score) worst = s; if(s.score > best.score) best = s; });
+  var out = [];
+  var fixText = analysis && analysis.fix ? analysis.fix.cue : '';
+  out.push({ t: worst.t, kind: 'fix', label: 'Needs work',
+    detail: 'Elbow ~' + Math.round(worst.f.elbow) + '° · lean ~' + Math.round(worst.f.lean) + '°' + (fixText ? ' — ' + fixText : '') });
+  if(best.t !== worst.t) out.push({ t: best.t, kind: 'good', label: 'Looks good here',
+    detail: 'Elbow ~' + Math.round(best.f.elbow) + '° · lean ~' + Math.round(best.f.lean) + '°' });
+  out.sort(function(a, b){ return a.t - b.t; });
+  return out;
 }
 function runLocalAnalysis(){
-  if(!D.localBlob || !window.Pose){ D.localAnalysis = { label: D.localLabel, score: 0, metrics: [0, 0, 0], issue: 'projection', headline: 'Check unavailable on this clip', fix: DUAL_FIX.projection, frames: 0 }; finishLocalAnalysis(); return; }
+  if(!D.localBlob || !window.Pose){ D.localAnalysis = { label: D.localLabel, score: null, metrics: [0, 0, 0], issue: 'unavailable', headline: 'Check unavailable on this clip', fix: DUAL_FIX.unavailable, frames: 0, activity: 'none', moments: [] }; finishLocalAnalysis(); return; }
   var url = URL.createObjectURL(D.localBlob);
   var v = document.createElement('video');
   v.src = url; v.muted = true; v.setAttribute('playsinline', '');
-  var feats = [], timer = null, done = false;
+  var feats = [], samples = [], timer = null, done = false;
   var pose;
   try{
     pose = new Pose({ locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/' + f; } });
     pose.setOptions({ modelComplexity: 0, smoothLandmarks: false, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
-    pose.onResults(function(res){ if(res && res.poseLandmarks){ var f = extractDualFeatures(res.poseLandmarks); if(f) feats.push(f); } });
-  }catch(e){ D.localAnalysis = { label: D.localLabel, score: 0, metrics: [0, 0, 0], issue: 'projection', headline: 'Analyzer didn\u2019t start for this clip', fix: DUAL_FIX.projection, frames: 0 }; finishLocalAnalysis(); return; }
+    pose.onResults(function(res){ if(res && res.poseLandmarks){ var f = extractDualFeatures(res.poseLandmarks); samples.push({ t: v.currentTime || 0, f: f }); if(f) feats.push(f); } });
+  }catch(e){ D.localAnalysis = { label: D.localLabel, score: null, metrics: [0, 0, 0], issue: 'unavailable', headline: 'Analyzer didn\u2019t start for this clip', fix: DUAL_FIX.unavailable, frames: 0, activity: 'none', moments: [] }; finishLocalAnalysis(); return; }
   function finish(){
     if(done) return; done = true;
     clearInterval(timer);
     try{ v.pause(); }catch(e){}
     URL.revokeObjectURL(url);
     D.localAnalysis = summarizeDual(currentMode(), feats);
+    /* v2.2.0: replay moments (worst/best frames) ride on the analysis,
+     * so the host can render marker buttons that seek the replay. */
+    D.localAnalysis.moments = dualMoments(D.localAnalysis.activity || currentMode(), samples, D.localAnalysis);
     finishLocalAnalysis();
   }
   v.addEventListener('play', function(){
@@ -961,19 +1084,25 @@ function finishLocalAnalysis(){
   if(D.role === 'join'){
     sendMsg({ type: 'analysis', summary: D.localAnalysis });
     renderVerdict([D.localAnalysis], 'Camera 2 only \u2014 Camera 1 combines both cameras.');
+    /* v2.2.0: the joiner's own scan-done signal + its own best frame
+     * to its own AI Photo tab. */
+    if(!D.notified){ D.notified = true; if(window.TrackNotify) window.TrackNotify.scanDone(); }
+    renderDualMarkers();
+    maybeAutoSendPhoto();
   } else {
     maybeRenderVerdict();
   }
 }
+function dualScoreText(s){ return s.score === null || s.score === undefined ? 'Couldn\u2019t score' : s.score + '%'; }
 function maybeRenderVerdict(){
   if(D.localAnalysis && D.remoteAnalysis) renderVerdict([D.localAnalysis, D.remoteAnalysis], null);
-  else if(D.localAnalysis && !D.remoteAnalysis) setText('dualVerdict', 'This camera scored ' + D.localAnalysis.score + '%. Waiting on Camera 2\u2026');
+  else if(D.localAnalysis && !D.remoteAnalysis) setText('dualVerdict', 'This camera scored ' + dualScoreText(D.localAnalysis) + '. Waiting on Camera 2\u2026');
 }
 function renderVerdict(list, note){
   var wrap = $('dualVerdictCards');
   if(wrap){
     wrap.innerHTML = list.map(function(s){
-      return '<div class="dual-card"><h4>' + s.label + ' camera \u00b7 ' + s.score + '%</h4>' +
+      return '<div class="dual-card"><h4>' + s.label + ' camera \u00b7 ' + dualScoreText(s) + '</h4>' +
         '<p>' + s.headline + '</p>' +
         '<p class="dual-card-fix"><strong>One fix:</strong> ' + s.fix.cue + ' — ' + s.fix.drill + '</p></div>';
     }).join('');
@@ -982,10 +1111,29 @@ function renderVerdict(list, note){
   if(combined){
     if(list.length >= 2){
       var a = list[0], b = list[1];
-      var weak = a.score <= b.score ? a : b;
-      combined.innerHTML = '<strong>Two-camera result \u2014 ' + a.label + ' ' + a.score + '% \u00b7 ' + b.label + ' ' + b.score + '%.</strong> ' +
-        'Both cameras agree the clearest fix is: ' + weak.fix.cue + ' Drill: ' + weak.fix.drill + '.' +
-        '<span class="dual-disclaimer">Two camera views, not 3D \u2014 two cameras can\u2019t measure depth.</span>';
+      /* v2.2.0: a camera that couldn't score doesn't drag the other
+       * camera's number down — "Camera 2: 0%" was the lie that made
+       * a good arm-swing clip read as a failure. */
+      if(a.score === null && b.score === null){
+        combined.innerHTML = '<strong>Two-camera result — neither camera could score this clip.</strong> ' +
+          a.fix.cue + ' ' + a.fix.drill + '.' +
+          '<span class="dual-disclaimer">Two camera views, not 3D \u2014 two cameras can\u2019t measure depth.</span>';
+      } else if(a.score === null || b.score === null){
+        var scored = a.score === null ? b : a;
+        combined.innerHTML = '<strong>Two-camera result \u2014 ' + a.label + ' ' + dualScoreText(a) + ' \u00b7 ' + b.label + ' ' + dualScoreText(b) + '.</strong> ' +
+          'The scored camera says: ' + scored.fix.cue + ' Drill: ' + scored.fix.drill + '.' +
+          '<span class="dual-disclaimer">Two camera views, not 3D \u2014 two cameras can\u2019t measure depth.</span>';
+      } else {
+        var weak = a.score <= b.score ? a : b;
+        combined.innerHTML = '<strong>Two-camera result \u2014 ' + a.label + ' ' + a.score + '% \u00b7 ' + b.label + ' ' + b.score + '%.</strong> ' +
+          'Both cameras agree the clearest fix is: ' + weak.fix.cue + ' Drill: ' + weak.fix.drill + '.' +
+          '<span class="dual-disclaimer">Two camera views, not 3D \u2014 two cameras can\u2019t measure depth.</span>';
+      }
+      /* v2.2.0: the host's scan-done signal (voice + optional device
+       * notification) fires once, when BOTH cameras have reported. */
+      if(!D.notified){ D.notified = true; if(window.TrackNotify) window.TrackNotify.scanDone(); }
+      renderDualMarkers();
+      maybeAutoSendPhoto();
     } else if(note){
       combined.innerHTML = note + '<span class="dual-disclaimer">Two camera views, not 3D.</span>';
     }
@@ -1037,12 +1185,112 @@ function showReplay(blobA, blobB){
   var back = $('dualStepBack'), fwd = $('dualStepFwd');
   if(back) back.onclick = function(){ stepBoth(-1 / 30); };
   if(fwd) fwd.onclick = function(){ stepBoth(1 / 30); };
+  /* v2.2.0: replay speed (both clips), AI moments, AI Photo send. */
+  var speedBtns = document.querySelectorAll('[data-dual-speed]');
+  speedBtns.forEach(function(b){ b.onclick = function(){
+    var r = parseFloat(b.dataset.dualSpeed) || 1;
+    if(va) va.playbackRate = r;
+    if(vb) vb.playbackRate = r;
+    speedBtns.forEach(function(x){ x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+  }; });
+  var sendBtn = $('dualSendPhotoBtn');
+  if(sendBtn) sendBtn.onclick = function(){ sendBestFrameToPhoto(); };
+  renderDualMarkers();
+  maybeAutoSendPhoto();
   function stepBoth(dt){
     if(va){ va.pause(); va.currentTime = clamp(va.currentTime + dt, 0, va.duration || 0); }
     if(vb && blobB){ vb.pause(); vb.currentTime = clamp(vb.currentTime + dt, 0, vb.duration || 0); }
     var pb = $('dualPlayBtn'); if(pb) pb.textContent = '▶ Play both';
   }
   setText('dualRecState', 'Replay ready \u2014 one slider moves both clips.');
+}
+/* v2.2.0 replay helpers: slow-mo, AI moments, AI Photo send, fps. */
+function fmtDualTime(secs){
+  var s = Math.max(0, Math.round(secs));
+  return Math.floor(s / 60) + ':' + (s % 60 < 10 ? '0' : '') + (s % 60);
+}
+function seekBoth(t){
+  var va = $('dualReplayA'), vb = $('dualReplayB');
+  if(va){ va.pause(); try{ va.currentTime = t; }catch(e){} }
+  if(vb && vb.src){ vb.pause(); try{ vb.currentTime = t; }catch(e){} }
+  var pb = $('dualPlayBtn'); if(pb) pb.textContent = '▶ Play both';
+}
+function renderDualMarkers(){
+  var wrap = $('dualMarkers');
+  if(!wrap) return;
+  var moments = (D.localAnalysis && D.localAnalysis.moments) || [];
+  if(!moments.length){ wrap.innerHTML = ''; showEl(wrap, false); return; }
+  wrap.innerHTML = '<span class="dual-markers-label">AI moments — tap to jump:</span>' +
+    moments.map(function(m){
+      return '<button class="ghost-control small" data-dual-moment="' + m.t.toFixed(2) + '" type="button">' +
+        (m.kind === 'fix' ? '🔴 ' : '🟢 ') + fmtDualTime(m.t) + ' — ' + m.label + ' (' + m.detail + ')</button>';
+    }).join('');
+  showEl(wrap, true);
+  wrap.querySelectorAll('[data-dual-moment]').forEach(function(btn){
+    btn.addEventListener('click', function(){ seekBoth(parseFloat(btn.dataset.dualMoment)); });
+  });
+  var sendBtn = $('dualSendPhotoBtn');
+  if(sendBtn) showEl(sendBtn, true);
+}
+/* Seek a video to t seconds, snapshot the frame, then put the video
+ * back where it was (same time + play state) before calling back. */
+function snapshotVideoAt(video, t, cb){
+  if(!video || !video.src){ cb(null); return; }
+  var wasTime = video.currentTime || 0, wasPaused = video.paused;
+  function restore(){
+    try{ video.currentTime = wasTime; }catch(e){}
+    if(!wasPaused){ var p = video.play(); if(p && p.catch) p.catch(function(){}); }
+  }
+  function done(){
+    var url = null;
+    try{
+      var c = document.createElement('canvas');
+      c.width = video.videoWidth || 320; c.height = video.videoHeight || 240;
+      c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+      url = c.toDataURL('image/jpeg', 0.8);
+    }catch(e){ url = null; }
+    restore();
+    cb(url);
+  }
+  if(video.readyState >= 2 && Math.abs(video.currentTime - t) < 0.05){ done(); return; }
+  var settled = false;
+  var onSeek = function(){ if(settled) return; settled = true; video.removeEventListener('seeked', onSeek); done(); };
+  video.addEventListener('seeked', onSeek);
+  try{ video.currentTime = t; }catch(e){ if(!settled){ settled = true; video.removeEventListener('seeked', onSeek); restore(); cb(null); } }
+  setTimeout(function(){ if(!settled){ settled = true; video.removeEventListener('seeked', onSeek); restore(); cb(null); } }, 1500);
+}
+function sendBestFrameToPhoto(){
+  var moments = (D.localAnalysis && D.localAnalysis.moments) || [];
+  var best = null;
+  moments.forEach(function(m){ if(m.kind === 'good') best = m; });
+  if(!best && moments.length) best = moments[0];
+  if(!best){ setText('dualRecState', 'No AI moments yet — the analysis is still running.'); return; }
+  var va = $('dualReplayA');
+  snapshotVideoAt(va, best.t, function(url){
+    if(!url){ setText('dualRecState', 'Couldn’t grab that frame — try again.'); return; }
+    if(window.TrackPhoto && window.TrackPhoto.receiveFrame){
+      window.TrackPhoto.receiveFrame({ url: url, label: 'Best frame from your two-camera recording' });
+      setText('dualRecState', 'Sent to AI Photo ✓ — open the AI Photo tab.');
+    }
+  });
+}
+function maybeAutoSendPhoto(){
+  if(D.photoSent) return;
+  var moments = (D.localAnalysis && D.localAnalysis.moments) || [];
+  if(!moments.length) return;
+  var va = $('dualReplayA');
+  if(!va || !va.src) return;
+  if(!window.TrackPhoto || !window.TrackPhoto.receiveFrame) return;
+  D.photoSent = true;
+  sendBestFrameToPhoto();
+}
+function updateDualFps(){
+  if(!window.TrackRig || !window.TrackRig.getFps) return;
+  var fps = window.TrackRig.getFps();
+  if(!fps || !fps.draw) return;
+  var text = 'Rig drawing ~' + fps.draw + ' fps · pose ~' + fps.infer + '/sec';
+  setText('dualRigFps', text);
+  setText('dualJoinRigFps', text);
 }
 
 /* ---------- View switching / teardown ---------- */
@@ -1134,7 +1382,8 @@ window.TrackDual = {
   },
   setCamera: setDualCamera, switchCamera: switchDualCamera,
   startSkeleton: startDualRig, stopSkeleton: stopDualRig,
-  _test: { gestureTick: dualGestureTick, setRigStatus: setDualRigStatus, setGestureStatus: setDualGestureStatus, setRole: function(r){ D.role = r; } },
+  _test: { gestureTick: dualGestureTick, setRigStatus: setDualRigStatus, setGestureStatus: setDualGestureStatus, setRole: function(r){ D.role = r; },
+    summarizeDual: summarizeDual, extractDualFeatures: extractDualFeatures, dualSampleScore: dualSampleScore, dualMoments: dualMoments, dualScoreText: dualScoreText },
   isCamOff: function(){ return D.camOff; }
 };
 })();

@@ -1,4 +1,4 @@
-/* Track Analyzer v2.1.9 smoke harness — stubbed DOM/navigator/Pose.
+/* Track Analyzer v2.2.0 smoke harness — stubbed DOM/navigator/Pose.
  * Run: node /tmp/track-smoke.js ; exit code 0 = all pass. */
 const fs = require('fs'), vm = require('vm');
 const ROOT = '/home/hatch/workspace/track-analyzer-private/';
@@ -92,7 +92,7 @@ const sandbox = { console, setTimeout, clearTimeout, setInterval: () => 999, cle
   speechSynthesis: { speak(){}, cancel(){}, getVoices: () => [] },
   Pose: PoseStub, POSE_CONNECTIONS: [], POSE_LANDMARKS: {}, Peer: PeerStub,
   RTCPeerConnection: class { getSenders(){ return []; } },
-  fetch: async () => ({ ok: true, json: async () => ({ version: '2.1.9' }), text: async () => '{}' }),
+  fetch: async () => ({ ok: true, json: async () => ({ version: '2.2.0' }), text: async () => '{}' }),
   alert(){}, confirm: () => true,
   getComputedStyle: () => ({ objectFit: stubFit }) };
 sandbox.window = sandbox; sandbox.globalThis = sandbox;
@@ -556,7 +556,7 @@ const W = sandbox;
 
   /* ---------- Version / files ---------- */
   const versionJson = JSON.parse(fs.readFileSync(ROOT + 'version.json', 'utf8'));
-  t('version.json = 2.1.9', versionJson.version === '2.1.9');
+  t('version.json = 2.2.0', versionJson.version === '2.2.0');
   const changelog = JSON.parse(fs.readFileSync(ROOT + 'changelog.json', 'utf8'));
   const entry219 = changelog.find(e => e.version === '2.1.9');
   t('changelog 2.1.9 has 4 notes incl. host-only gestures + no step-down + voice on iPhone + wait line clears',
@@ -583,10 +583,25 @@ const W = sandbox;
     entry216.notes.some(n => n.indexOf('No more silent failures') >= 0) &&
     entry216.notes.some(n => n.indexOf('Recording has ended') >= 0));
   const updateSrc = fs.readFileSync(ROOT + 'js/update.js', 'utf8');
-  t('update.js fallback history 2.1.9 matches changelog + VERSION = 2.1.9',
+  t('update.js fallback history 2.1.9 matches changelog + VERSION = 2.2.0',
     updateSrc.indexOf('ONLY the main camera') >= 0 &&
-    updateSrc.indexOf("var VERSION = '2.1.9'") >= 0 &&
-    W.TrackUpdate.getVersion() === '2.1.9');
+    updateSrc.indexOf("var VERSION = '2.2.0'") >= 0 &&
+    W.TrackUpdate.getVersion() === '2.2.0');
+  const entry220 = changelog.find(e => e.version === '2.2.0');
+  t('changelog 2.2.0 has 7 notes incl. no cap + stop-sync + arm swings + no-shape + AI Photo + notifications + slow-mo/markers + smooth rig',
+    entry220 && entry220.notes.length === 7 &&
+    entry220.notes.some(n => n.indexOf('no more clip-length cap') >= 0) &&
+    entry220.notes.some(n => n.indexOf('Stop now really stops BOTH') >= 0) &&
+    entry220.notes.some(n => n.indexOf('Arm swings are now a real activity') >= 0) &&
+    entry220.notes.some(n => n.indexOf("Couldn't score") >= 0) &&
+    entry220.notes.some(n => n.indexOf('goes to AI Photo') >= 0) &&
+    entry220.notes.some(n => n.indexOf('Notify me when scans finish') >= 0) &&
+    entry220.notes.some(n => n.indexOf('slow motion') >= 0) &&
+    entry220.notes.some(n => n.indexOf('smooth now') >= 0));
+  t('update.js fallback history 2.2.0 matches changelog',
+    updateSrc.indexOf('no more clip-length cap') >= 0 &&
+    updateSrc.indexOf('Stop now really stops BOTH') >= 0 &&
+    updateSrc.indexOf('Arm swings are now a real activity') >= 0);
   const html = fs.readFileSync(ROOT + 'index.html', 'utf8');
   t('index.html: Camera 1 / Camera 2 labels present', html.indexOf('Camera 1') >= 0 && html.indexOf('Camera 2') >= 0);
   t('index.html: no "Second camera" / "Main phone" wording left', html.indexOf('Second camera') < 0 && html.indexOf('Main phone') < 0);
@@ -599,7 +614,7 @@ const W = sandbox;
     html.indexOf('js/rig.js') >= 0);
   t('index.html: rig + gesture status lines on both dual panels',
     ['dualRigStatus', 'dualGestureStatus', 'dualJoinRigStatus', 'dualJoinGestureStatus'].every(s => html.indexOf('id="' + s + '"') >= 0));
-  t('index.html: version strings 2.1.9', html.indexOf('v2.1.9') >= 0 && html.indexOf('v2.1.8') < 0);
+  t('index.html: version strings 2.2.0', html.indexOf('v2.2.0') >= 0 && html.indexOf('v2.1.9') < 0);
   t('index.html: wait line has id dualWaitLine (hidden once Camera 2 connects)',
     html.indexOf('id="dualWaitLine"') >= 0);
   const css = fs.readFileSync(ROOT + 'css/app.css', 'utf8');
@@ -681,8 +696,9 @@ const W = sandbox;
     W.TrackRig._test.getQuality().interval === 140);
   t('v2.1.9 host-only: dualcam.js has no want-start/want-stop; start/stop obeyed by joiner only',
     dualSrc219.indexOf('want-start') < 0 && dualSrc219.indexOf('want-stop') < 0 &&
-    dualSrc219.indexOf("if(D.role === 'join') startRecording") >= 0 &&
-    dualSrc219.indexOf("if(D.role === 'join') stopRecording") >= 0);
+    dualSrc219.indexOf("if(D.role === 'join') startRecording()") >= 0 &&
+    dualSrc219.indexOf("stopRecording('the other camera stopped')") >= 0 &&
+    dualSrc219.indexOf("sendMsg({ type: 'stopped' })") >= 0);
   // Voice: announce() speaks the exact words through speechSynthesis (no silent swallow).
   const spoken = [];
   sandbox.speechSynthesis.speak = function(u){ spoken.push(u && u.text); };
@@ -691,6 +707,150 @@ const W = sandbox;
     spoken.indexOf('Recording has started.') >= 0, spoken.join('|'));
   t('v2.1.9 voice: toggle-on speaks a confirmation (unlocks iOS speech)',
     aiSrc.indexOf("announce('Voice coaching on.')") >= 0);
+
+  /* ---------- v2.2.0: no cap, stop-sync, arm swings, honest verdicts, AI Photo bridge, notifications, slow-mo, smooth rig ---------- */
+  // No clip cap: no duration select, no recTimer, no auto-stop branches.
+  const dualSrc220 = fs.readFileSync(ROOT + 'js/dualcam.js', 'utf8');
+  t('v2.2.0 no cap: HTML has no clip-length select; Stop button reads "Stop video"',
+    html.indexOf('dualDuration') < 0 && html.indexOf('>Stop video<') >= 0);
+  t('v2.2.0 no cap: dualcam.js has no recTimer / "time is up" / "you left the frame" auto-stop',
+    dualSrc220.indexOf('recTimer') < 0 && dualSrc220.indexOf('time is up') < 0 &&
+    dualSrc220.indexOf('you left the frame') < 0 && dualSrc220.indexOf('D.duration') < 0);
+  // Stop-sync protocol: retry + ack + heartbeat + watchdog + close-handler stop.
+  t('v2.2.0 stop-sync: retry/ack (stopped, stopAcked), heartbeat (rec-alive, lastAlive), close-handler stop',
+    dualSrc220.indexOf("'stopped'") >= 0 && dualSrc220.indexOf('stopAcked') >= 0 &&
+    dualSrc220.indexOf("'rec-alive'") >= 0 && dualSrc220.indexOf('lastAlive') >= 0 &&
+    dualSrc220.indexOf("if(D.recording) stopRecording('connection ended')") >= 0 &&
+    dualSrc220.indexOf("stopRecording('lost contact with Camera 1')") >= 0);
+  // Arm swings: classify + scoreFrame.
+  const baseF = { missing: [], hipX: 0.5, hipY: 0.6, kneeL: 170, kneeR: 170, lean: 10,
+    torso: 0.3, wristLY: 0.35, wristRY: 0.65 };
+  const histArm = [];
+  let armAct = 'rest';
+  for(let i = 0; i < 6; i++){
+    const f = Object.assign({}, baseF, { wristLY: i % 2 ? 0.75 : 0.35, wristRY: i % 2 ? 0.35 : 0.75 });
+    armAct = W.TrackAI._test.classify(f, histArm);
+  }
+  t('v2.2.0 arm-swing: still hips + oscillating wrists classifies as arm-swing (not rest)',
+    armAct === 'arm-swing', armAct);
+  const histRest = [];
+  let restAct = 'rest';
+  for(let i = 0; i < 6; i++) restAct = W.TrackAI._test.classify(Object.assign({}, baseF), histRest);
+  t('v2.2.0 arm-swing: still hips + still wrists still classifies as rest', restAct === 'rest', restAct);
+  const histSprint = [];
+  let sprintAct = 'rest';
+  for(let i = 0; i < 6; i++){
+    const f = Object.assign({}, baseF, { hipX: 0.3 + i * 0.15, wristLY: i % 2 ? 0.75 : 0.35, wristRY: i % 2 ? 0.35 : 0.75 });
+    sprintAct = W.TrackAI._test.classify(f, histSprint);
+  }
+  t('v2.2.0 arm-swing: moving hips still classifies as sprint (arm check never steals a sprint)',
+    sprintAct === 'sprint', sprintAct);
+  const armGood = Object.assign({}, baseF, { elbow: 90, crossing: 0, hipLift: -1, hipY: 0.6,
+    wristLY: 0.25, wristRY: 0.65, shinReach: 0, thighSep: 30, sideRatio: 0.3, kneeX: 0.5, ankleX: 0.5 });
+  const scGood = W.TrackAI._test.scoreFrame('arm-swing', armGood);
+  t('v2.2.0 arm-swing: good arm shape scores high with arm-swing labels',
+    scGood.score >= 90 && scGood.labels.join('|').indexOf('Hand height') >= 0, JSON.stringify(scGood));
+  const armBad = Object.assign({}, baseF, { elbow: 160, crossing: 1, hipLift: -1, hipY: 0.6,
+    wristLY: 0.6, wristRY: 0.6, shinReach: 0, thighSep: 30, sideRatio: 0.3, kneeX: 0.5, ankleX: 0.5 });
+  const scBad = W.TrackAI._test.scoreFrame('arm-swing', armBad);
+  t('v2.2.0 arm-swing: straight elbows + crossed hands + low hands scores low and trips armHeight',
+    scBad.score <= 20 && scBad.tripped === 'armHeight', JSON.stringify(scBad));
+  // Dual summary: arm-swing branch + no-feats null score.
+  function dualFeat(i){
+    return { torso: 0.3, lean: 10, elbow: 90, kneeL: 170, kneeR: 170, thigh: 60,
+      thighSep: 15 + (i % 3), shinReach: 0, armSplit: 0.4, crossing: 0, hipLift: -1,
+      shoulderY: 0.3, wristLY: i % 2 ? 0.7 : 0.3, wristRY: i % 2 ? 0.3 : 0.7 };
+  }
+  const armFeats = []; for(let i = 0; i < 10; i++) armFeats.push(dualFeat(i));
+  const armSum = W.TrackDual._test.summarizeDual('sprint', armFeats);
+  t('v2.2.0 dual arm-swing: arm practice scores as arm-swing (not 0%, not sprint)',
+    armSum.activity === 'arm-swing' && armSum.score > 70, JSON.stringify(armSum));
+  const emptySum = W.TrackDual._test.summarizeDual('sprint', []);
+  t('v2.2.0 dual no-shape: empty feats -> score null + noShape (never 0%)',
+    emptySum.score === null && emptySum.issue === 'noShape');
+  t('v2.2.0 dual no-shape: dualScoreText(null) renders "Couldn’t score"',
+    W.TrackDual._test.dualScoreText(emptySum) === 'Couldn’t score');
+  // Dual moments: worst/best sample markers.
+  const samples = [
+    { t: 0, f: { elbow: 85, lean: 10, thigh: 60 } },
+    { t: 1, f: { elbow: 90, lean: 10, thigh: 60 } },
+    { t: 2, f: { elbow: 90, lean: 10, thigh: 60 } },
+    { t: 3, f: { elbow: 150, lean: 10, thigh: 60 } },
+    { t: 4, f: { elbow: 90, lean: 10, thigh: 60 } }
+  ];
+  const moments = W.TrackDual._test.dualMoments('arm-swing', samples, { fix: { cue: 'Test cue' } });
+  t('v2.2.0 dual moments: best (elbow 85) + worst (elbow 150) markers, sorted by time',
+    moments.length === 2 && moments[0].kind === 'good' && moments[0].t === 0 &&
+    moments[1].kind === 'fix' && moments[1].t === 3, JSON.stringify(moments));
+  // AI Photo bridge + notifications + slow-mo wired in source + HTML.
+  const appSrc = fs.readFileSync(ROOT + 'js/app.js', 'utf8');
+  t('v2.2.0 AI Photo bridge: TrackPhoto.receiveFrame exists; analyzer + dualcam call it',
+    appSrc.indexOf('receivePhotoFrame') >= 0 && appSrc.indexOf('receiveFrame: receivePhotoFrame') >= 0 &&
+    aiSrc.indexOf('TrackPhoto.receiveFrame') >= 0 && dualSrc220.indexOf('TrackPhoto.receiveFrame') >= 0 &&
+    dualSrc220.indexOf('Send best frame to AI Photo') >= 0 && dualSrc220.indexOf('maybeAutoSendPhoto') >= 0);
+  t('v2.2.0 notifications: "Analysis complete" voice + Notification API + toggle button in HTML',
+    aiSrc.indexOf("announce('Analysis complete.')") >= 0 && aiSrc.indexOf('new Notification(') >= 0 &&
+    aiSrc.indexOf('aiNotifyToggle') >= 0 && html.indexOf('id="aiNotifyToggle"') >= 0);
+  t('v2.2.0 slow-mo: replay speed buttons in HTML + playbackRate in dualcam; clip slow review cycles 1/0.5/0.25',
+    html.indexOf('data-dual-speed="0.25"') >= 0 && html.indexOf('data-dual-speed="0.5"') >= 0 &&
+    dualSrc220.indexOf('playbackRate') >= 0 && aiSrc.indexOf('var rates = [1, 0.5, 0.25]') >= 0 &&
+    html.indexOf('id="dualMarkers"') >= 0 && html.indexOf('id="aiClipMarkers"') >= 0 &&
+    html.indexOf('id="dualSendPhotoBtn"') >= 0);
+  // Smooth rig: interpolation + staleness + hand gate + fps.
+  const rigSrc220 = fs.readFileSync(ROOT + 'js/rig.js', 'utf8');
+  t('v2.2.0 smooth rig: interp helpers + fps getter in rig.js; frame() uses advanceRigInterp',
+    rigSrc220.indexOf('advanceRigInterp') >= 0 && rigSrc220.indexOf('interpPoseStore') >= 0 &&
+    rigSrc220.indexOf('getFps') >= 0 && rigSrc220.indexOf('advanceRigInterp(rigs[i])') >= 0);
+  t('v2.2.0 smooth rig: staleness clear (600ms) + hands need torso anchors in paintRig',
+    rigSrc220.indexOf('now - rig.lastTargetT > 600') >= 0 &&
+    rigSrc220.indexOf('poseDrawn') >= 0 && rigSrc220.indexOf('rig.poseDisplay.has[11]') >= 0);
+  // Interp midpoint: two targets, draw halfway -> display is the midpoint.
+  const interpCanvas220 = makeEl('interp-canvas');
+  const interpVideo220 = makeEl('interp-video');
+  const interpRig220 = W.TrackRig.registerDraw(interpCanvas220, interpVideo220);
+  const poseA = {}; const poseB = {};
+  // Jump stays under the 0.35 teleport guard, so it interpolates instead of snapping.
+  for(let i = 0; i < 33; i++){ poseA[i] = { x: 0.4, y: 0.5, v: 0.9 }; poseB[i] = { x: 0.6, y: 0.7, v: 0.9 }; }
+  W.TrackRig.setTarget(interpCanvas220, poseA, [], []);
+  W.TrackRig.setTarget(interpCanvas220, poseB, [], []);
+  interpRig220.prevT = 1000; interpRig220.targetT = 2000;
+  W.TrackRig._test.advanceRigInterp(interpRig220, 1500);
+  t('v2.2.0 smooth rig: halfway between two targets the display sits at the midpoint',
+    Math.abs(interpRig220.poseDisplay.x[11] - 0.5) < 0.02 && Math.abs(interpRig220.poseDisplay.y[11] - 0.6) < 0.02,
+    'x=' + interpRig220.poseDisplay.x[11] + ' y=' + interpRig220.poseDisplay.y[11]);
+  // Staleness: old target -> advance clears the rig.
+  interpRig220.lastTargetT = Date.now() - 1000;
+  W.TrackRig._test.advanceRigInterp(interpRig220);
+  t('v2.2.0 stale rig: no fresh inference for 600ms -> rig clears (no frozen pose on a black feed)',
+    interpRig220.hasTarget === false && interpRig220.poseDisplay.has[11] === 0);
+  // Hand gate in paintRig: hands draw only with torso anchors.
+  const gateCanvas220 = makeEl('gate-canvas');
+  const gateVideo220 = makeEl('gate-video');
+  const gateRig220 = W.TrackRig.registerDraw(gateCanvas220, gateVideo220);
+  let handLines220 = 0;
+  gateRig220.ctx = { canvas: gateCanvas220, fillStyle: '', strokeStyle: '', lineWidth: 1, font: '', textBaseline: '', textAlign: '',
+    clearRect(){}, fillRect(){}, strokeRect(){}, beginPath(){}, moveTo(x, y){}, lineTo(x, y){ handLines220++; }, stroke(){}, fill(){},
+    arc(){}, rect(){}, roundRect(){}, fillText(){}, save(){}, restore(){}, setTransform(){}, drawImage(){}, clip(){},
+    quadraticCurveTo(){}, bezierCurveTo(){}, ellipse(){}, setLineDash(){}, translate(){}, rotate(){}, scale(){},
+    createLinearGradient(){ return { addColorStop(){} }; }, measureText(txt){ return { width: 0 }; } };
+  gateRig220.hasTarget = true; gateRig220.lastTargetT = Date.now();
+  for(let i = 0; i < 21; i++){ gateRig220.handDisplay[0].has[i] = 1; gateRig220.handDisplay[0].x[i] = 0.5; gateRig220.handDisplay[0].y[i] = 0.5; }
+  gateRig220.poseDisplay.has[11] = 0; gateRig220.poseDisplay.has[12] = 0; gateRig220.poseDisplay.has[23] = 0; gateRig220.poseDisplay.has[24] = 0;
+  gateRig220.contentMap = { mx: 320, bx: 0, my: 240, by: 0 };
+  W.TrackRig._test.paintRig(gateRig220);
+  const noTorsoLines220 = handLines220;
+  gateRig220.poseDisplay.has[11] = 1; gateRig220.poseDisplay.x[11] = 0.5; gateRig220.poseDisplay.y[11] = 0.4;
+  gateRig220.poseDisplay.has[23] = 1; gateRig220.poseDisplay.x[23] = 0.5; gateRig220.poseDisplay.y[23] = 0.7;
+  handLines220 = 0;
+  W.TrackRig._test.paintRig(gateRig220);
+  t('v2.2.0 close-up guard: hands do NOT draw without torso anchors; they DO draw with them',
+    noTorsoLines220 === 0 && handLines220 > 0, 'noTorso=' + noTorsoLines220 + ' withTorso=' + handLines220);
+  // ID cross-check for the new elements.
+  ['dualRigFps', 'dualJoinRigFps', 'dualMarkers', 'dualSendPhotoBtn', 'aiNotifyToggle', 'aiClipMarkers'].forEach(id => {
+    t('v2.2.0 IDs: #' + id + ' exists in HTML and is referenced in JS',
+      html.indexOf('id="' + id + '"') >= 0 &&
+      (aiSrc.indexOf(id) >= 0 || dualSrc220.indexOf(id) >= 0 || appSrc.indexOf(id) >= 0));
+  });
 
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);

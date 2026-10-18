@@ -443,7 +443,31 @@ function bindPhotos(){
   });
 }
 
-/* ---- Tab switching + full-rep-review dialog ---- */
+/* v2.2.0: a recording's best frame lands in AI Photo slot A — the
+ * same analysis as a picked photo (markers + You vs Pro), no tap
+ * needed. Called by the AI Analyzer after an analysis, and by the
+ * two-camera replay's "Send best frame to AI Photo" button. */
+function receivePhotoFrame(req){
+  if(!req || !req.url) return false;
+  var card = document.querySelector('[data-photo-slot="0"]');
+  if(!card) return false;
+  var img = card.querySelector('img'), readout = card.querySelector('.photo-readout');
+  if(!img || !readout) return false;
+  if(photoBusy){ readout.textContent = 'Still analyzing the last photo — your recording frame will wait.'; return false; }
+  if(!ensurePhotoPose()){ readout.textContent = 'The analyzer didn’t start. Reload and try again.'; return false; }
+  if(photoUrls[0]){ URL.revokeObjectURL(photoUrls[0]); photoUrls[0] = null; }
+  img.src = req.url; img.alt = req.label || 'Best frame from your recording';
+  readout.textContent = 'From your recording — reading your shape and measuring angles…';
+  img.onerror = function(){ photoBusy = false; pendingPhoto = null; readout.textContent = 'That frame didn’t open.'; };
+  img.onload = function(){
+    card.querySelector('.photo-placeholder').hidden = true; img.hidden = true;
+    photoBusy = true; pendingPhoto = { slot: 0, img: img, card: card };
+    photoPose.send({ image: img }).catch(function(){
+      readout.textContent = 'That frame didn’t work. Try a clear, full-body side view.'; photoBusy = false; pendingPhoto = null;
+    });
+  };
+  return true;
+}
 var screenCopy = {
   ai: ['AI Analyzer', 'Live coaching, two cameras, photo check, and your results — one screen'],
   'ai-photo': ['AI Photo', 'Photo reports from the AI Analyzer, plus your form vs pro form'],
@@ -521,7 +545,7 @@ function bindChrome(){
   });
 }
 
-window.TrackPhoto = { handlePhotoResults: handlePhotoResults, photoMissingJoints: photoMissingJoints, drawPhotoMarker: drawPhotoMarker };
+window.TrackPhoto = { handlePhotoResults: handlePhotoResults, photoMissingJoints: photoMissingJoints, drawPhotoMarker: drawPhotoMarker, receiveFrame: receivePhotoFrame };
 window.TrackClassic = {
   setBlockStarts: setBlockStarts,
   getBlockStarts: function(){ return blockStartsOn; },

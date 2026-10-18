@@ -1,4 +1,4 @@
-/* Track Analyzer — update system (v2.1.9)
+/* Track Analyzer — update system (v2.2.0)
  *
  * Tenno Vault-style: visible version, What's New panel, Check for updates,
  * and an update banner. The banner fires ONLY when version.json reports a
@@ -35,12 +35,30 @@
  * step-down throttle removed (no more 'smooth mode' lag); voice
  * speaks on iPhone (toggle-on confirmation unlocks speech audio);
  * 'Waiting for Camera 2…' clears once Camera 2 connects.
+ *
+ * v2.2.0 — two cameras: no clip-length cap, no auto-stop, Stop really
+ * stops BOTH recorders (retry + heartbeat + close-handler); arm swings
+ * are a real scored activity; no-shape clips say 'Couldn't score'
+ * instead of 0%; best frame auto-sends to AI Photo + manual send
+ * button; scan-done voice + optional device notification; replay
+ * slow-mo 0.25×/0.5×/1× + AI moment markers that seek; smooth rig
+ * (interpolated at display refresh, up to 120Hz) + live fps line +
+ * stale-feed clear + hands need torso anchors.
  */
 (function(){
 'use strict';
-var VERSION = '2.1.9';
+var VERSION = '2.2.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: '2.2.0', date: '2026-10-17', notes: [
+    'Two cameras: no more clip-length cap and no more auto-stop. Recording runs until you tap Stop video, hold 2 fingers, turn a camera off, or disconnect. The old 10-second cap and the \'you left the frame\' auto-stop are gone.',
+    'Two cameras: Stop now really stops BOTH cameras. The host sends Stop again if the second camera doesn\'t answer, sends a heartbeat while recording, and a closing connection stops a running recording — the second camera no longer keeps rolling after you ended the video on the main.',
+    'Arm swings are now a real activity: the camera scores your arm action (elbow angle, hands on your own side, hand height) instead of reading arm practice as rest with no reps. A clip where the camera can\'t see your full body now says \'Couldn\'t score\' instead of 0%.',
+    'Your recording\'s best frame now goes to AI Photo on its own — with markers and You vs Pro — and the two-camera replay has a \'Send best frame to AI Photo\' button.',
+    'Scans tell you when they\'re done: \'Analysis complete\' speaks out loud, and the new \'Notify me when scans finish\' button can send a device notification too (tap it once to allow).',
+    'Replay now has slow motion (0.25× / 0.5× / 1×) plus AI moments — tap a red \'Needs work\' or green \'Looks good\' marker to jump both clips to that moment. Uploaded clips keep playing after analysis with their own moments.',
+    'The rig is smooth now: it glides between camera frames at your screen\'s refresh rate (up to 120 fps) instead of jumping, with a live \'Rig drawing ~X fps · pose ~Y/sec\' line. It also clears itself if the feed freezes or goes black, and hands no longer draw alone on a face close-up (that was the tangled knot).'
+  ]},
   { version: '2.1.9', date: '2026-10-17', notes: [
     'Two cameras: ONLY the main camera (Camera 1) starts and stops recording now. Camera 2 never starts or stops — its hand signs used to cancel Camera 1’s hold, because the other hand hanging at your side reads as a different sign and reset the hold before it could fire. Hold 1 finger up to Camera 1 to start, 2 fingers to stop. The Camera 2 screen says the main camera controls recording.',
     'The rig is no longer throttled in two-camera mode: the old step-down cut each camera to about 2 fresh poses per second on slower phones, which read as a laggy rig. Inference now runs at full rate on both cameras, and “smooth mode” is gone — a rig that draws just says it’s on.',

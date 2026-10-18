@@ -1,8 +1,22 @@
-/* Track Analyzer — AI Analyzer (v2.1.6)
+/* Track Analyzer — AI Analyzer (v2.2.0)
  *
  * On-device coaching: the camera watches the athlete, names what it sees,
  * and gives one fix at a time from the embedded knowledge base
  * (js/ai-knowledge.js). No cloud model, no API key, no network calls.
+ *
+ * v2.2.0 (from Giel's Oct 17 video — arm swings scored 0% / no reps):
+ * - Arm swings are now a real activity: hips near-still + big wrist
+ *   excursion over the 2s window = 'arm-swing', scored on elbow angle,
+ *   hands-on-own-side, and hand height. Arm practice no longer reads
+ *   as "rest" and no longer produces "No full reps in this clip".
+ * - Scan-done notifications: "Analysis complete" speaks out loud, and
+ *   an opt-in "Notify me when scans finish" button sends a device
+ *   notification (tap to grant permission) so a scan finishing while
+ *   the tab is in the background still reaches him.
+ * - Best frame auto-sends to AI Photo after every analysis, and the
+ *   two-camera replay has a manual "Send best frame to AI Photo".
+ * - Slow review now cycles 1× → 0.5× → 0.25× → 1×, and an uploaded
+ *   clip keeps playing after analysis with AI moments that seek.
  *
  * v2.1.6: the live rig is drawn by the shared smooth rig engine
  * (js/rig.js) — full pose (all 33 landmarks) PLUS both hands with every
@@ -83,12 +97,14 @@ var ACTIVITY_LABEL = {
   none: 'No athlete in frame', rest: 'Resting', set: 'Set position',
   'block-start': 'Block start', sprint: 'Sprint rep', drill: 'Drill (A-skip pattern)',
   squat: 'Squat', hinge: 'Hip hinge (clean / deadlift pattern)',
-  bench: 'Bench-press pattern', moving: 'Moving'
+  bench: 'Bench-press pattern', moving: 'Moving',
+  'arm-swing': 'Arm swings'
 };
 // Which knowledge-base entry to coach from for each detected activity.
 var ACTIVITY_KB = {
   'block-start': 'block-starts', sprint: 'sprint-100', drill: 'sprint-100',
-  squat: 'squat', hinge: 'clean', bench: 'bench', set: 'block-starts', rest: 'warmup', moving: 'sprint-100'
+  squat: 'squat', hinge: 'clean', bench: 'bench', set: 'block-starts', rest: 'warmup', moving: 'sprint-100',
+  'arm-swing': 'sprint-100'
 };
 function getDual(){
   try{ return window.TrackDual ? window.TrackDual.getState() : null; }catch(e){ return null; }
@@ -404,12 +420,52 @@ function renderLatestAiPhoto(){
   card.hidden = false;
   drawAllFrameMarks();
 }
+/* v2.2.0 scan-done notifications: voice + optional device notification.
+ * The toggle (aiNotifyToggle) asks for permission on tap — the browser
+ * only grants Notification permission from a real tap. The preference
+ * is a plain localStorage flag, never a server subscription. */
+function scanNotifyWanted(){
+  try{ return localStorage.getItem('trackAnalyzer.notify.device') === '1'; }catch(e){ return false; }
+}
+function setScanNotifyWanted(on){
+  try{ localStorage.setItem('trackAnalyzer.notify.device', on ? '1' : '0'); }catch(e){}
+}
+function notifyScanDone(){
+  /* Voice: same rule as "Recording has started/ended" — it speaks even
+   * with Voice coaching off, because a finished scan is a system event. */
+  announce('Analysis complete.');
+  if(scanNotifyWanted() && typeof Notification !== 'undefined' && Notification.permission === 'granted'){
+    try{
+      new Notification('Track Analyzer', { body: 'Analysis complete — see your AI Photo report and your new fix in Guide.' });
+    }catch(e){}
+  }
+}
+function paintNotifyToggle(){
+  var btn = $('aiNotifyToggle');
+  if(!btn) return;
+  var granted = typeof Notification !== 'undefined' && Notification.permission === 'granted';
+  var on = scanNotifyWanted() && granted;
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  btn.textContent = on ? 'Scan notifications: on' : 'Notify me when scans finish';
+}
 function notifyAnalysisDone(){
   renderLatestFix();
   renderLatestAiPhoto();
   renderRunway();
   setBadge('photo', true);
   setBadge('guide', true);
+  /* v2.2.0: the recording's best frame goes to AI Photo with its
+   * annotations + You vs Pro — before this, nothing ever landed in
+   * AI Photo from a recording (arm practice produced no best frames
+   * at all, and nothing bridged the gap). Once per session. */
+  if(AI.lastSession && AI.photoSentFor !== AI.lastSession && AI.lastSession.bestFrames && AI.lastSession.bestFrames.length){
+    AI.photoSentFor = AI.lastSession;
+    if(window.TrackPhoto && window.TrackPhoto.receiveFrame){
+      window.TrackPhoto.receiveFrame({ url: AI.lastSession.bestFrames[0].url,
+        label: 'Best frame from your ' + (ACTIVITY_LABEL[AI.lastSession.bestFrames[0].activity] || 'recording') });
+    }
+  }
+  notifyScanDone();
   var toast = $('aiNotifyToast');
   if(toast){
     toast.hidden = false;
@@ -578,12 +634,29 @@ function classify(f, hist){
     if((d1 > 0.004 && d2 < -0.004) || (d1 < -0.004 && d2 > 0.004)) turns++;
   }
   var crouched = last.hipY > 0.55 && Math.min(last.kneeL, last.kneeR) < 140 && last.lean > 35;
-  if(motion < 0.05) return crouched ? 'set' : 'rest';
+  /* v2.2.0: arm swings — hips near-still but the wrists travel a big
+   * range over the 2s window. Without this, arm practice read as
+   * "rest" (motion < 0.05) and produced "No full reps in this clip".
+   * Sprinting also swings the arms, but its hip motion is far above
+   * the 0.05 line, so the arm check only fires on the still-hip paths
+   * below — it can never steal a sprint. */
+  var armExc = 0;
+  if(last.torso){
+    var minL = Infinity, maxL = -Infinity, minR = Infinity, maxR = -Infinity;
+    hist.forEach(function(h){
+      if(!h.f) return;
+      if(typeof h.f.wristLY === 'number'){ if(h.f.wristLY < minL) minL = h.f.wristLY; if(h.f.wristLY > maxL) maxL = h.f.wristLY; }
+      if(typeof h.f.wristRY === 'number'){ if(h.f.wristRY < minR) minR = h.f.wristRY; if(h.f.wristRY > maxR) maxR = h.f.wristRY; }
+    });
+    armExc = Math.max(maxL - minL, maxR - minR) / last.torso;
+  }
+  if(motion < 0.05){ if(armExc > 0.3) return 'arm-swing'; return crouched ? 'set' : 'rest'; }
   if(AI.state === 'set' && velX > 0.3) return 'block-start';
   if(hipRangeY > 0.10 && Math.abs(velX) < 0.15) return turns >= 4 ? 'drill' : 'squat';
   if(last.lean > 60 && Math.abs(velX) < 0.15 && Math.abs(last.wristLY - last.wristRY) > 0.05) return 'bench';
   if(last.lean > 45 && motion < 0.25) return 'hinge';
   if(Math.abs(velX) > 0.25) return 'sprint';
+  if(armExc > 0.3) return 'arm-swing';
   return 'moving';
 }
 function scoreFrame(activity, f){
@@ -603,11 +676,28 @@ function scoreFrame(activity, f){
   } else if(activity === 'bench'){
     metrics = [band(f.elbow, 70, 110, 40), ceilS(f.crossing, 0.2, 0.4), 100];
     labels = ['Elbow angle', 'Bar control', 'Shoulder position'];
+  } else if(activity === 'arm-swing'){
+    /* v2.2.0: arm practice. maxHand = how high the higher hand is,
+     * in torso units above the shoulder (chin ≈ +0.25, hip ≈ −1).
+     * At every point of a good arm action one hand is up — a frame
+     * where BOTH hands are low is a real fault, not a mid-swing pass. */
+    var maxHand = f.hipLift + Math.max(f.hipY - f.wristLY, f.hipY - f.wristRY) / f.torso;
+    metrics = [band(f.elbow, 60, 110, 40), ceilS(f.crossing, 0.2, 0.4), floorS(maxHand, 0.15, 0.6)];
+    labels = ['Elbow angle', 'Hands on own side', 'Hand height'];
   } else {
     return { score: 0, metrics: [], labels: [], tripped: null };
   }
   var tripped = null;
-  if(f.shinReach > 0.12) tripped = 'overstride';
+  /* v2.2.0: arm-swing trips take priority — the generic chain below
+   * would mislabel arm practice (e.g. a low shinReach is meaningless
+   * when the feet are planted). */
+  if(activity === 'arm-swing'){
+    var maxHandTrip = f.hipLift + Math.max(f.hipY - f.wristLY, f.hipY - f.wristRY) / f.torso;
+    if(maxHandTrip < -0.35) tripped = 'armHeight';
+    else if(f.elbow < 50 || f.elbow > 130) tripped = 'elbowShape';
+    else if(f.crossing > 0.3) tripped = 'armCross';
+  }
+  else if(f.shinReach > 0.12) tripped = 'overstride';
   else if((activity === 'block-start' || activity === 'set') && f.lean < 20) tripped = 'earlyRise';
   else if(f.crossing > 0.3) tripped = 'armCross';
   else if(f.elbow < 70 || f.elbow > 130) tripped = 'elbowShape';
@@ -720,13 +810,16 @@ function onFrame(f, angle){
     f: { lean: f.lean, kneeL: f.kneeL, kneeR: f.kneeR, elbow: f.elbow, thighSep: f.thighSep, shinReach: f.shinReach } });
   if(AI.deep.frames1.length > 900) AI.deep.frames1.shift();
   // Live callout every ~5s while moving: praise + one fix.
-  if((activity === 'sprint' || activity === 'block-start' || activity === 'squat' || activity === 'hinge' || activity === 'drill' || activity === 'bench') && now - AI.lastCallout > 5000){
+  if((activity === 'sprint' || activity === 'block-start' || activity === 'squat' || activity === 'hinge' || activity === 'drill' || activity === 'bench' || activity === 'arm-swing') && now - AI.lastCallout > 5000){
     AI.lastCallout = now;
     var kb = kbFor(activity);
     var fix = null;
     if(scored.tripped && kb){
       for(var i = 0; i < kb.faults.length; i++) if(kb.faults[i].check === scored.tripped){ fix = kb.faults[i]; break; }
     }
+    /* v2.2.0: faults with no KB entry in this activity (e.g. armHeight
+     * during arm swings) still get a real cue from the fault index. */
+    if(!fix && scored.tripped) fix = findFault(scored.tripped) || LOCAL_FAULT[scored.tripped] || null;
     if(!fix && kb){
       var generals = kb.faults.filter(function(x){ return x.check === 'general'; });
       if(generals.length){ fix = generals[AI.cueIdx % generals.length]; AI.cueIdx++; }
@@ -749,10 +842,12 @@ function onFrame(f, angle){
     }
   }
   // Best frames: top-3 snapshots by score during reps.
-  if(scored.score >= 70 && (activity === 'sprint' || activity === 'block-start' || activity === 'squat')){
+  // v2.2.0: arm swings capture too — before this, arm practice never
+  // produced a best frame, so nothing ever reached AI Photo.
+  if(scored.score >= 70 && (activity === 'sprint' || activity === 'block-start' || activity === 'squat' || activity === 'arm-swing')){
     maybeCaptureBest(scored.score, activity, AI.lastLandmarks1);
   }
-  if(scored.score <= 55 && (activity === 'sprint' || activity === 'block-start' || activity === 'squat' || activity === 'drill' || activity === 'hinge' || activity === 'bench')){
+  if(scored.score <= 55 && (activity === 'sprint' || activity === 'block-start' || activity === 'squat' || activity === 'drill' || activity === 'hinge' || activity === 'bench' || activity === 'arm-swing')){
     maybeCaptureWorst(scored.score, activity, AI.lastLandmarks1);
   }
 }
@@ -1500,7 +1595,7 @@ function startCoachingFromWatch(){
 }
 
 /* ================= Deep analysis (full-clip review after Stop) ================= */
-var REP_ACTIVITIES = ['block-start', 'sprint', 'drill', 'squat', 'hinge', 'bench', 'moving'];
+var REP_ACTIVITIES = ['block-start', 'sprint', 'drill', 'squat', 'hinge', 'bench', 'moving', 'arm-swing'];
 function absorbFrame(state, fr){
   if(REP_ACTIVITIES.indexOf(fr.activity) === -1){ state.cur = null; return; }
   var cur = state.cur;
@@ -1523,7 +1618,13 @@ var CHECK_LABEL = {
   overstride: 'Overstriding', earlyRise: 'Popping up too early', armCross: 'Arms crossing',
   elbowShape: 'Elbow shape', tallPosture: 'Posture', footRecovery: 'Foot recovery',
   thighSep: 'Thigh separation', squatDepth: 'Squat depth', hingeBack: 'Hinge back',
-  squatKnee: 'Knee tracking', armSplit: 'Hand separation'
+  squatKnee: 'Knee tracking', armSplit: 'Hand separation',
+  armHeight: 'Hands staying low'
+};
+/* Faults with no knowledge-base entry: plain cue + drill here so the
+ * deep report never falls back to "Work on this one rep at a time." */
+var LOCAL_FAULT = {
+  armHeight: { fault: 'Hands staying low', cue: 'Drive the hands up to your chin, then back to your hip.', drill: '2 × 15 seconds seated arm action' }
 };
 function findFault(check){
   if(window.TrackKB){
@@ -1570,7 +1671,7 @@ function buildDeepReport(reps, frames2count, opts){
     Object.keys(r.tripCounts).forEach(function(k){ faultCounts[k] = (faultCounts[k] || 0) + r.tripCounts[k]; });
   });
   var faultList = Object.keys(faultCounts).sort(function(a, b){ return faultCounts[b] - faultCounts[a]; }).map(function(check){
-    var kb = findFault(check);
+    var kb = findFault(check) || LOCAL_FAULT[check] || null;
     return { check: check, count: faultCounts[check],
       fault: kb ? kb.fault : (CHECK_LABEL[check] || check),
       cue: kb ? kb.cue : 'Work on this one rep at a time.',
@@ -1613,7 +1714,7 @@ function skelFaultJoints(check){
   var map = {
     overstride: [27, 28], earlyRise: [23, 24], armCross: [15, 16], elbowShape: [13, 14],
     tallPosture: [23, 24], footRecovery: [25, 26], thighSep: [25, 26], squatDepth: [25, 26],
-    hingeBack: [23, 24], squatKnee: [25, 26], armSplit: [15, 16]
+    hingeBack: [23, 24], squatKnee: [25, 26], armSplit: [15, 16], armHeight: [15, 16]
   };
   return map[check] || [];
 }
@@ -1766,13 +1867,63 @@ function stopAndAnalyze(){
   if(!AI.running && AI.mode !== 'coaching') return;
   announce('Recording has ended.');
   AI.lastSession = AI.session;
+  /* v2.2.0: keep an uploaded clip playable after analysis (replay +
+   * AI moments). Live recordings have no saved clip to keep. */
+  AI.keepClip = AI.clipMode;
   stopAI();
   runDeepAnalysis().then(function(){
     renderSessionSummary(AI.lastSession);
     showEl($('aiSummary'), true);
     notifyAnalysisDone();
+    if(AI.clipMode) renderClipMarkers();
     var s = $('aiSummary');
     if(s) s.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
+/* v2.2.0: AI moments for an uploaded clip — the worst frame, the best
+ * frame, and the first moment of each distinct fault, as seek buttons.
+ * Times are clip-relative: frames1 timestamps are wall-clock, so
+ * subtract the session start. */
+function fmtClipTime(secs){
+  var s = Math.max(0, Math.round(secs));
+  return Math.floor(s / 60) + ':' + (s % 60 < 10 ? '0' : '') + (s % 60);
+}
+function renderClipMarkers(){
+  var wrap = $('aiClipMarkers');
+  if(!wrap) return;
+  var frames = AI.deep.frames1 || [];
+  var start = (AI.lastSession && AI.lastSession.startedAt) || 0;
+  var usable = frames.filter(function(fr){ return fr && fr.f && fr.score > 0; });
+  if(!usable.length){ wrap.innerHTML = ''; showEl(wrap, false); return; }
+  var worst = usable[0], best = usable[0];
+  var faultFirst = {};
+  usable.forEach(function(fr){
+    if(fr.score < worst.score) worst = fr;
+    if(fr.score > best.score) best = fr;
+    if(fr.tripped && !faultFirst[fr.tripped]) faultFirst[fr.tripped] = fr;
+  });
+  var markers = [];
+  markers.push({ fr: worst, kind: 'fix', label: 'Needs work', detail: (CHECK_LABEL[worst.tripped] || worst.tripped || 'Lowest score') + ' · ~' + worst.score + '%' });
+  if(best !== worst) markers.push({ fr: best, kind: 'good', label: 'Looks good here', detail: 'Best frame · ~' + best.score + '%' });
+  Object.keys(faultFirst).forEach(function(check){
+    if(faultFirst[check] === worst) return;
+    markers.push({ fr: faultFirst[check], kind: 'fix', label: 'First: ' + (CHECK_LABEL[check] || check), detail: 'Fault first appears · ~' + faultFirst[check].score + '%' });
+  });
+  markers = markers.slice(0, 5).sort(function(a, b){ return a.fr.t - b.fr.t; });
+  wrap.innerHTML = '<span class="ai-markers-label">AI moments — tap to jump:</span>' +
+    markers.map(function(m){
+      var t = Math.max(0, (m.fr.t - start) / 1000);
+      return '<button class="ghost-control small" data-clip-moment="' + t.toFixed(2) + '" type="button">' +
+        (m.kind === 'fix' ? '🔴 ' : '🟢 ') + fmtClipTime(t) + ' — ' + m.label + ' (' + m.detail + ')</button>';
+    }).join('');
+  showEl(wrap, true);
+  wrap.querySelectorAll('[data-clip-moment]').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var v = $('aiVideo');
+      if(!v) return;
+      try{ v.currentTime = parseFloat(btn.dataset.clipMoment); }catch(e){}
+      var p = v.play(); if(p && p.catch) p.catch(function(){});
+    });
   });
 }
 function renderSessionSummary(s){
@@ -1802,6 +1953,9 @@ function startAI(reuseStream, opts){
   if(AI.running) return;
   opts = opts || {};
   if(AI.camOff && !opts.clipUrl){ setText('aiSeeing', 'Camera is off — turn it on to record.'); return; }
+  /* v2.2.0: release a previous kept clip before replacing it. */
+  if(AI.clipUrl){ try{ URL.revokeObjectURL(AI.clipUrl); }catch(e){} AI.clipUrl = null; }
+  AI.keepClip = false;
   AI.clipMode = !!(opts && opts.clipUrl);
   AI.clipUrl = (opts && opts.clipUrl) || null;
   AI.lastClassic = null; AI.lastTripped = null; AI.lastGuideIssue = '';
@@ -1919,10 +2073,20 @@ function stopAI(){
   AI.gesture.holdKind = ''; AI.gesture.holdCount = 0; setHoldBar(0);
   clearLiveSkeleton();
   if(AI.ownStream){ AI.ownStream.getTracks().forEach(function(t){ t.stop(); }); AI.ownStream = null; }
-  var v1 = $('aiVideo'); if(v1){ v1.srcObject = null; v1.onended = null; if(AI.clipMode) v1.removeAttribute('src'); }
+  var v1 = $('aiVideo'); if(v1){ v1.srcObject = null; v1.onended = null;
+    /* v2.2.0: an uploaded clip stays playable after analysis (with
+     * controls + AI moments below it) instead of vanishing. The live
+     * camera path still clears. */
+    if(AI.clipMode && AI.keepClip){
+      v1.controls = true;
+    } else {
+      if(AI.clipMode) v1.removeAttribute('src');
+    }
+  }
   var v2 = $('aiVideo2'); if(v2) v2.srcObject = null;
-  if(AI.clipUrl){ try{ URL.revokeObjectURL(AI.clipUrl); }catch(e){} AI.clipUrl = null; }
-  AI.clipMode = false;
+  if(AI.clipUrl && !(AI.clipMode && AI.keepClip)){ try{ URL.revokeObjectURL(AI.clipUrl); }catch(e){} AI.clipUrl = null; }
+  if(!(AI.clipMode && AI.keepClip)) AI.clipMode = false;
+  AI.keepClip = false;
   var slowBtn = $('aiSlowReview'); if(slowBtn) slowBtn.setAttribute('aria-pressed', 'false');
   var sb = $('aiStartBtn'); if(sb){ sb.textContent = 'Start recording'; showEl(sb, true); }
   showEl($('aiStopBtn'), false);
@@ -2041,11 +2205,45 @@ function initAI(){
   if(slowBtn) slowBtn.addEventListener('click', function(){
     var v = $('aiVideo');
     if(!v || !AI.clipMode){ setText('aiSeeing', 'Upload a clip to use slow review.'); return; }
-    var slow = v.playbackRate === 1;
-    v.playbackRate = slow ? 0.35 : 1;
-    slowBtn.setAttribute('aria-pressed', slow ? 'true' : 'false');
-    setText('aiSeeing', slow ? 'Slow review — clip at a third of normal speed.' : 'Recording — clip at normal speed.');
+    /* v2.2.0: cycle 1× → 0.5× → 0.25× → 1×. The old toggle only did
+     * 0.35×, which was too fast to see the exact moment a fault lands. */
+    var rates = [1, 0.5, 0.25];
+    var idx = rates.indexOf(v.playbackRate);
+    var next = rates[(idx + 1) % rates.length];
+    v.playbackRate = next;
+    slowBtn.setAttribute('aria-pressed', next !== 1 ? 'true' : 'false');
+    slowBtn.textContent = next === 1 ? 'Slow review' : 'Slow review: ' + (next * 100) + '%';
+    setText('aiSeeing', next === 1 ? 'Recording — clip at normal speed.' :
+      'Slow review — clip at ' + (next === 0.5 ? 'half' : 'quarter') + ' speed.');
   });
+  /* v2.2.0: "Notify me when scans finish" — asks the browser for
+   * notification permission on this tap (a tap is the only way the
+   * browser grants it). If permission is denied, the button says so
+   * and the on-screen toast still fires. */
+  var notifyBtn = $('aiNotifyToggle');
+  if(notifyBtn){
+    paintNotifyToggle();
+    notifyBtn.addEventListener('click', function(){
+      if(typeof Notification === 'undefined'){
+        setText('aiSeeing', 'This browser can’t send device notifications — the on-screen toast still shows when a scan finishes.');
+        return;
+      }
+      if(Notification.permission === 'granted'){
+        setScanNotifyWanted(!scanNotifyWanted());
+        paintNotifyToggle();
+        setText('aiSeeing', scanNotifyWanted() ? 'Scan notifications on — you’ll get a device notification when a scan finishes.' : 'Scan notifications off.');
+        return;
+      }
+      if(Notification.permission === 'denied'){
+        setText('aiSeeing', 'Notifications are blocked for this site — allow them in your browser settings, then tap again.');
+        return;
+      }
+      Notification.requestPermission().then(function(p){
+        if(p === 'granted') setScanNotifyWanted(true);
+        paintNotifyToggle();
+      });
+    });
+  }
   var flipBtn = $('aiFlipBtn');
   if(flipBtn) flipBtn.addEventListener('click', switchSingleCamera);
   var camToggleBtn = $('aiCamToggleBtn');
@@ -2080,11 +2278,15 @@ window.TrackAI = { setBlockStarts: setBlockStarts, getBlockStarts: function(){ r
   setCamera: setSingleCamera, switchCamera: switchSingleCamera,
   isCamOff: function(){ return AI.camOff; },
   startClip: function(url){ startAI(false, { clipUrl: url, announce: false }); },
-  endClip: function(){ if(AI.running) stopAndAnalyze(); } };
+  endClip: function(){ if(AI.running) stopAndAnalyze(); },
+  /* v2.2.0 test hooks (smoke tests only). */
+  _test: { classify: classify, scoreFrame: scoreFrame, notifyScanDone: notifyScanDone } };
 window.TrackFrameMarks = { build: buildFrameMarks, draw: drawFrameMarks, at: frameMarkAt,
   figureHtml: frameMarksFigureHtml, drawAll: drawAllFrameMarks,
   getAnnotations: function(){ return AI.frameAnnotations; } };
 window.TrackAIAnnounce = { announce: announce, speakNow: announce };
+/* v2.2.0: the two-camera side reuses the same scan-done signal. */
+window.TrackNotify = { scanDone: notifyScanDone, paintToggle: paintNotifyToggle };
 window.TrackAIGesture = { countFingers: countFingers, isFrontal: isFrontal,
   tick: gestureTick, setStatus: setGestureStatus, bestHandCount: bestHandCount };
 window.TrackAIDeep = { segmentReps: segmentReps, buildDeepReport: buildDeepReport, pickVideos: pickVideos, absorbFrame: absorbFrame };
