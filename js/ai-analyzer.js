@@ -69,7 +69,7 @@ var AI = {
   movingSince: 0, setSince: 0,
   mode: 'idle', // idle | watching | coaching
   lastFrontal: false, lastLandmarks1: null, lastRawLm: null,
-  facing: 'environment', camOff: false, camDeviceId: null,
+  facing: 'environment', camOff: true, camDeviceId: null,
   clipMode: false, clipUrl: null,
   lastClassic: null, lastTripped: null, lastGuideIssue: '',
   announcingUntil: 0,
@@ -421,7 +421,12 @@ function attachStream(video, stream){
   video.srcObject = stream;
   video.muted = true;
   video.setAttribute('playsinline', '');
-  var p = video.play(); if(p && p.catch) p.catch(function(){});
+  /* Robust play: the kit retries on loadedmetadata/canplay, so a
+   * stream attached while the panel is still hidden still becomes
+   * visible once the panel shows (plain play() here used to fail
+   * silently and leave a black preview). */
+  if(window.TrackCam && window.TrackCam.playVideo) window.TrackCam.playVideo(video);
+  else { var p = video.play(); if(p && p.catch) p.catch(function(){}); }
 }
 /* Single camera: open via the camera kit (chosen device / facing first,
  * then ANY available camera — this is what makes a PC webcam work).
@@ -500,7 +505,7 @@ function switchSingleCamera(){
 }
 function makePose(onResult){
   var pose = new Pose({ locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/' + f; } });
-  pose.setOptions({ modelComplexity: 0, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+  pose.setOptions({ modelComplexity: 0, smoothLandmarks: false, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
   pose.onResults(onResult);
   return pose;
 }
@@ -1374,8 +1379,14 @@ function gestureTick(){
     g.hands.send({ image: v }).catch(function(){});
   }
   var want = '';
-  if(AI.lastFrontal && g.lastCount === 1 && AI.mode === 'watching') want = 'start';
-  else if(AI.lastFrontal && g.lastCount === 2 && AI.mode === 'coaching') want = 'stop';
+  /* v2.1.8: the finger sign IS the trigger — any extended finger
+   * counts (same rule for start and stop), and the face is NOT
+   * required. The old code also required a frontal face, so a hand
+   * held up while the face was turned, far away, or out of frame
+   * never fired. A confidently-seen hand showing 1 or 2 fingers
+   * is enough. */
+  if(g.lastCount === 1 && AI.mode === 'watching') want = 'start';
+  else if(g.lastCount === 2 && AI.mode === 'coaching') want = 'stop';
   if(want && want === g.holdKind) g.holdCount++;
   else { g.holdKind = want; g.holdCount = want ? 1 : 0; }
   setHoldBar(g.holdCount / 10);
@@ -1387,9 +1398,9 @@ function gestureTick(){
     if(g.holdCount >= 10){ g.holdKind = ''; g.holdCount = 0; setHoldBar(0); stopAndAnalyze(); }
   } else if(AI.mode === 'watching'){
     // No silent failure: the status line says what the camera sees.
-    if(!g.faceSeen) setGestureStatus('noFace');
-    else if(!g.handSeen) setGestureStatus('noHand');
-    else setGestureStatus('handSeen');
+    // Face not required — a hand sign alone starts recording.
+    if(g.handSeen) setGestureStatus('handSeen');
+    else setGestureStatus('noHand');
   } else if(AI.mode === 'coaching'){
     if(g.handSeen) setGestureStatus('handSeenStop');
     else setGestureStatus('coaching');
@@ -1446,6 +1457,22 @@ function startWatching(){
     }
     startGestureLoop();
     setText('aiSeeing', useDual ? 'Watching both cameras…' : 'Watching — move into frame.');
+    /* v2.1.8: the panel is visible NOW — play again. A play() issued
+     * while the panel was still hidden can fail silently and leave a
+     * black preview under a "Watching" line. If the video is still
+     * paused with a live stream 2s later, say so instead of leaving
+     * a black preview with no explanation. */
+    if(window.TrackCam && window.TrackCam.playVideo){
+      window.TrackCam.playVideo($('aiVideo'));
+      if(useDual && dual.remoteStream) window.TrackCam.playVideo($('aiVideo2'));
+    }
+    setTimeout(function(){
+      if(AI.mode !== 'watching' || AI.camOff) return;
+      var vv = $('aiVideo');
+      if(vv && vv.srcObject && vv.paused){
+        setText('aiSeeing', 'Camera is on but the preview looks black — tap “Camera: off”, then “Camera: on”.');
+      }
+    }, 2000);
   }
   if(useDual){ beginWatch(); return; }
   openSingleCamera().then(function(stream){
@@ -1783,6 +1810,7 @@ function startAI(reuseStream, opts){
   showEl($('aiStartBtn'), false);
   showEl($('aiStopBtn'), true);
   showEl($('aiEndSessionBtn'), true);
+  showEl($('aiCamOff'), false); // recording/clip — no off overlay
   setGestureStatus('coaching');
   setText('aiSeeing', 'Starting camera…');
   var dual = getDual();
@@ -1806,7 +1834,8 @@ function startAI(reuseStream, opts){
         cv.src = AI.clipUrl;
         cv.muted = true;
         cv.setAttribute('playsinline', '');
-        var cp = cv.play(); if(cp && cp.catch) cp.catch(function(){});
+        if(window.TrackCam && window.TrackCam.playVideo) window.TrackCam.playVideo(cv);
+        else { var cp = cv.play(); if(cp && cp.catch) cp.catch(function(){}); }
         // Same pipeline as a live recording: pose on every frame, deep
         // check at the end. Two safety nets so a bad or stalled clip
         // can never hang in "recording" forever — an unreadable file
@@ -1889,6 +1918,12 @@ function stopAI(){
   showEl($('aiStopBtn'), false);
   showEl($('aiEndSessionBtn'), false);
   setGestureStatus('off');
+  /* v2.1.8: stopping ends the camera too — sync the toggle so it
+   * tells the truth (one tap turns it back on). */
+  AI.camOff = true;
+  var camBtn = $('aiCamToggleBtn');
+  if(camBtn){ camBtn.setAttribute('aria-pressed', 'false'); camBtn.textContent = 'Camera: off'; }
+  showEl($('aiCamOff'), true);
 }
 
 function endSession(){
@@ -1924,7 +1959,15 @@ function renderKB(){
 }
 function showAI(){
   renderKB();
-  if(AI.mode === 'idle') startWatching();
+  /* v2.1.8: the camera starts OFF. Opening the tab never starts the
+   * camera or prompts for permission — the placeholder shows until
+   * the user taps "Camera: on" (or Start recording, which also
+   * refuses while the camera is off). */
+  if(AI.mode === 'idle'){
+    setSingleCamera(false);
+    showEl($('aiLivePanel'), true);
+    showEl($('aiSummary'), false);
+  }
 }
 
 function aiTeardown(){

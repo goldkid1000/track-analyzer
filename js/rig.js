@@ -137,7 +137,10 @@ function stepPoseStore(display, target, k, nowMs, graceMs){
       display.v[i] = target.v[i];
       display.unseen[i] = 0;
     } else if(display.has[i]){
-      if(!display.unseen[i]) display.unseen[i] = nowMs;
+      /* v2.1.8: grace 0 means vanish the same frame — no lingering
+       * joints after the body leaves. */
+      if(graceMs <= 0){ display.has[i] = 0; display.unseen[i] = 0; }
+      else if(!display.unseen[i]) display.unseen[i] = nowMs;
       else if(nowMs - display.unseen[i] > graceMs){ display.has[i] = 0; display.unseen[i] = 0; }
     }
   }
@@ -152,7 +155,8 @@ function stepHandStore(display, target, k, nowMs, graceMs){
       display.y[i] = lerpStep(display.y[i], target.y[i], k);
       display.unseen[i] = 0;
     } else if(display.has[i]){
-      if(!display.unseen[i]) display.unseen[i] = nowMs;
+      if(graceMs <= 0){ display.has[i] = 0; display.unseen[i] = 0; }
+      else if(!display.unseen[i]) display.unseen[i] = nowMs;
       else if(nowMs - display.unseen[i] > graceMs){ display.has[i] = 0; display.unseen[i] = 0; }
     }
   }
@@ -206,8 +210,15 @@ function fillPoseFromDict(store, dict){
   }
   /* Fewer than 6 visible joints is not a body — it is noise (a back
    * view with only a few guessed points, a partial frame). Draw
-   * nothing rather than garbage. */
+   * nothing rather than garbage.
+   * v2.1.8: core torso anchors required — at least one shoulder
+   * (11/12) AND at least one hip (23/24) must be actually seen, or
+   * there is no body to draw. Without this, a few visible arm/leg
+   * points could still pass the 6-joint count and draw a partial
+   * rig. When the body leaves, the rig vanishes with it. */
   if(n < 6){ clearPoseStore(store); return false; }
+  if(!store.has[11] && !store.has[12]){ clearPoseStore(store); return false; }
+  if(!store.has[23] && !store.has[24]){ clearPoseStore(store); return false; }
   return any;
 }
 function fillPoseFromArray(store, lm){
@@ -224,8 +235,12 @@ function fillPoseFromArray(store, lm){
     }
   }
   /* Fewer than 6 visible joints is not a body — it is noise. Draw
-   * nothing rather than garbage. */
+   * nothing rather than garbage.
+   * v2.1.8: core torso anchors required — at least one shoulder
+   * (11/12) AND at least one hip (23/24) must be actually seen. */
   if(n < 6){ clearPoseStore(store); return false; }
+  if(!store.has[11] && !store.has[12]){ clearPoseStore(store); return false; }
+  if(!store.has[23] && !store.has[24]){ clearPoseStore(store); return false; }
   return any;
 }
 function fillHandFromArray(store, lm){
@@ -330,13 +345,14 @@ function setTargetOnRig(rig, poseDict, hands, faultJoints){
     handSeen: handsArr.length > 0, faceSeen: faceSeen };
 }
 /* Advance display state toward target — pure w.r.t. the DOM (no canvas
- * access), so the smoke test can call it directly. */
+ * access), so the smoke test can call it directly.
+ * v2.1.8: grace 0 — joints vanish the frame they stop being seen. */
 function advanceRig(rig, k){
   if(!rig.hasTarget) return;
   var n = Date.now();
-  stepPoseStore(rig.poseDisplay, rig.poseTarget, k, n);
-  stepHandStore(rig.handDisplay[0], rig.handTarget[0], k, n);
-  stepHandStore(rig.handDisplay[1], rig.handTarget[1], k, n);
+  stepPoseStore(rig.poseDisplay, rig.poseTarget, k, n, 0);
+  stepHandStore(rig.handDisplay[0], rig.handTarget[0], k, n, 0);
+  stepHandStore(rig.handDisplay[1], rig.handTarget[1], k, n, 0);
 }
 /* Where the video frame actually sits inside the canvas.
  * The video uses object-fit: contain (full frame visible, letterboxed),
@@ -461,8 +477,10 @@ function frame(ts){
   lastRafT = ts;
   if(dt < 0) dt = 16;
   if(dt > 100) dt = 100;
-  // Smoothing factor: responsive but jitter-free (~10/s approach rate).
-  var k = 1 - Math.exp(-dt * 0.012);
+  // v2.1.8: NO smoothing — the display snaps to the latest inference
+  // every frame, so the rig sits exactly on the body instead of
+  // trailing behind it. (Old code eased toward the target.)
+  var k = 1;
   for(var i = 0; i < rigs.length; i++){
     advanceRig(rigs[i], k);
     paintRig(rigs[i]);
@@ -483,7 +501,7 @@ function ensurePose(){
   if(poseInst) return poseInst;
   if(!window.Pose) throw new Error('Pose not available');
   var p = new Pose({ locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/' + f; } });
-  p.setOptions({ modelComplexity: 0, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+  p.setOptions({ modelComplexity: 0, smoothLandmarks: false, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
   p.onResults(function(res){
     var w = poseWaiters.shift();
     if(w) w.resolve(res && res.poseLandmarks);

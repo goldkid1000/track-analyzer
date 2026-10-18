@@ -1,4 +1,4 @@
-/* Track Analyzer — camera kit (v2.1.5)
+/* Track Analyzer — camera kit (v2.1.6)
  *
  * Shared camera helpers for the single camera (js/ai-analyzer.js) and the
  * two cameras (js/dualcam.js). One set of rules everywhere:
@@ -85,6 +85,30 @@ window.TrackCam = {
       var s = t && t.getSettings && t.getSettings();
       return (s && s.deviceId) || '';
     }catch(e){ return ''; }
+  },
+  /* Play a video element that already has a stream: the plain
+   * video.play() call can fail (and stay failed, black preview) when
+   * it runs while the panel is still hidden — e.g. the camera is
+   * attached before the live panel is shown. That rejection used to be
+   * swallowed, so the preview stayed black forever with no retry.
+   * This helper plays now AND retries once the video can play, so a
+   * stream that is live always becomes visible. */
+  playVideo: function(video){
+    if(!video || (!video.srcObject && !video.src)) return;
+    function tryPlay(){
+      if(!video.srcObject && !video.src) return;
+      if(!video.paused && video.readyState >= 2) return;
+      try{
+        var p = video.play();
+        if(p && p.catch) p.catch(function(){});
+      }catch(e){}
+    }
+    if(!video.__taPlayBound){
+      video.__taPlayBound = true;
+      video.addEventListener('loadedmetadata', tryPlay);
+      video.addEventListener('canplay', tryPlay);
+    }
+    tryPlay();
   },
   nextCamera: function(stream){
     var self = this;

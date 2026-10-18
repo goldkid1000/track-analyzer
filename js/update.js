@@ -1,4 +1,4 @@
-/* Track Analyzer — update system (v2.1.7)
+/* Track Analyzer — update system (v2.1.8)
  *
  * Tenno Vault-style: visible version, What's New panel, Check for updates,
  * and an update banner. The banner fires ONLY when version.json reports a
@@ -23,12 +23,25 @@
  * status lines (Skeleton on only when drawing, names the camera); hand
  * signs really work from BOTH cameras with hold grace; hands read on a
  * bigger frame; rig maps to the video's real on-screen shape.
+ *
+ * v2.1.8 — camera starts OFF (no auto-start, no permission prompt until
+ * the user taps Camera: on); black-preview play fix; hand signs need no
+ * face (any finger counts, same rule both); rig needs real torso
+ * anchors and vanishes with the body; rig snaps to latest landmarks,
+ * no smoothing lag.
  */
 (function(){
 'use strict';
-var VERSION = '2.1.7';
+var VERSION = '2.1.8';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: '2.1.8', date: '2026-10-17', notes: [
+    'Camera starts OFF. Opening the app or the AI Analyzer tab never starts the camera or asks for permission — the preview shows “Camera off — turn it on to start” until you tap “Camera: on”. Stopping a recording turns the camera off too, and the button tells the truth.',
+    'Black preview fixed at the real broken step: the video used to be told to play while its panel was still hidden, and that failed play was silently swallowed, so the preview stayed black forever under a “Watching” line. Play now retries once the panel is visible, and if the preview is still black 2 seconds later the status line says so and tells you to toggle the camera off and on.',
+    'Hand signs work on the hand alone: ANY extended finger counts (thumb or any finger — the count comes from finger joints, tip vs middle joint), 1 finger starts recording, 2 fingers stop, same rule for both, on either camera. The face is no longer required — a hand held up with your face turned or out of frame still fires.',
+    'The body rig only draws when a real body is detected: at least one shoulder AND at least one hip must be actually seen, on top of the existing 6-visible-joint rule. When the body leaves the frame, the rig vanishes with it instead of hanging on guessed points.',
+    'The rig is in sync with your body now: it snaps to the latest landmarks every frame — no interpolation glide, no grace delay, no model smoothing. It still maps through the video\'s real on-screen shape, so it sits on you, not beside you.'
+  ]},
   { version: '2.1.7', date: '2026-10-17', notes: [
     'The rig only draws joints the camera actually sees. A joint that is hidden, behind you, or out of frame gets no dot and no line — no more head blob on your back, no more tangled knot on close-ups. If too few joints are visible, that feed draws nothing instead of garbage.',
     'Face is now one small head marker instead of a blob of face dots. Hands are small dots with thin lines, and the finger skeleton only shows when a hand is confidently detected — no more spiderwebs.',

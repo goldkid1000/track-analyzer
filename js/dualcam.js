@@ -195,7 +195,11 @@ function attachStream(video, stream){
   video.srcObject = stream;
   video.muted = true;
   video.setAttribute('playsinline', '');
-  var p = video.play(); if(p && p.catch) p.catch(function(){});
+  /* Robust play (same fix as the single camera): retries on
+   * loadedmetadata/canplay, so a stream attached while its panel is
+   * hidden still becomes visible. */
+  if(window.TrackCam && window.TrackCam.playVideo) window.TrackCam.playVideo(video);
+  else { var p = video.play(); if(p && p.catch) p.catch(function(){}); }
 }
 function dualCamErrorText(err){
   if(window.TrackCam) return window.TrackCam.cameraErrorText(err);
@@ -597,7 +601,7 @@ function startPoseWatch(){
   try{
     if(!D.watchPose){
       D.watchPose = new Pose({ locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/' + f; } });
-      D.watchPose.setOptions({ modelComplexity: 0, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+      D.watchPose.setOptions({ modelComplexity: 0, smoothLandmarks: false, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
       D.watchPose.onResults(function(res){
         handlePresencePose(res && res.poseLandmarks);
       });
@@ -760,12 +764,13 @@ function dualGestureTick(){
     if(!g || !g.fresh) return;
     if(g.handSeen){ handSeen = true; if(!handSeenKey) handSeenKey = key; seenCounts.push(g.count); }
     if(g.faceSeen) faceSeen = true;
-    /* v2.1.7: a hand sign counts when the face is seen OR the pose is
-     * frontal. The old code required frontal only — a hand held up
-     * beside the face (or a noisy nose landmark) killed the sign even
-     * though the hand was plainly visible. Both feeds are sampled
-     * every tick; whichever camera sees the sign drives it. */
-    if((g.frontal || g.faceSeen) && (g.count === 1 || g.count === 2) && !best) best = { count: g.count, key: key };
+    /* v2.1.8: the finger sign IS the trigger — any extended finger
+     * counts (same rule for start and stop), and the face is NOT
+     * required. The old code needed face-seen OR frontal, so a hand
+     * held up with the face turned or out of frame never fired.
+     * Both feeds are sampled every tick; whichever camera sees the
+     * sign drives it. */
+    if((g.count === 1 || g.count === 2) && !best) best = { count: g.count, key: key };
   });
   function camLabel(key){ return key === 'dual-cam1' ? 'Camera 1' : 'Camera 2'; }
   var want = '';
@@ -800,12 +805,11 @@ function dualGestureTick(){
     if(D.gestureHoldCount >= 10){ D.gestureHoldKind = ''; D.gestureHoldCount = 0; D.gestureMissCount = 0; dualGestureStop(); }
   } else if(D.recording){
     setDualGestureStatus('recording');
-  } else if(!faceSeen){
-    setDualGestureStatus('noFace');
-  } else if(!handSeen){
-    setDualGestureStatus('noHand');
-  } else {
+  } else if(handSeen){
+    // Face not required — a hand sign alone starts/stops recording.
     setDualGestureStatus('handSeen', handSeenKey ? camLabel(handSeenKey) : '');
+  } else {
+    setDualGestureStatus('noHand');
   }
 }
 function startDualGestures(){
@@ -930,7 +934,7 @@ function runLocalAnalysis(){
   var pose;
   try{
     pose = new Pose({ locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/' + f; } });
-    pose.setOptions({ modelComplexity: 0, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    pose.setOptions({ modelComplexity: 0, smoothLandmarks: false, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
     pose.onResults(function(res){ if(res && res.poseLandmarks){ var f = extractDualFeatures(res.poseLandmarks); if(f) feats.push(f); } });
   }catch(e){ D.localAnalysis = { label: D.localLabel, score: 0, metrics: [0, 0, 0], issue: 'projection', headline: 'Analyzer didn\u2019t start for this clip', fix: DUAL_FIX.projection, frames: 0 }; finishLocalAnalysis(); return; }
   function finish(){

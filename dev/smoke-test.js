@@ -1,4 +1,4 @@
-/* Track Analyzer v2.1.7 smoke harness — stubbed DOM/navigator/Pose.
+/* Track Analyzer v2.1.8 smoke harness — stubbed DOM/navigator/Pose.
  * Run: node /tmp/track-smoke.js ; exit code 0 = all pass. */
 const fs = require('fs'), vm = require('vm');
 const ROOT = '/home/hatch/workspace/track-analyzer-private/';
@@ -92,7 +92,7 @@ const sandbox = { console, setTimeout, clearTimeout, setInterval: () => 999, cle
   speechSynthesis: { speak(){}, cancel(){}, getVoices: () => [] },
   Pose: PoseStub, POSE_CONNECTIONS: [], POSE_LANDMARKS: {}, Peer: PeerStub,
   RTCPeerConnection: class { getSenders(){ return []; } },
-  fetch: async () => ({ ok: true, json: async () => ({ version: '2.1.7' }), text: async () => '{}' }),
+  fetch: async () => ({ ok: true, json: async () => ({ version: '2.1.8' }), text: async () => '{}' }),
   alert(){}, confirm: () => true,
   getComputedStyle: () => ({ objectFit: stubFit }) };
 sandbox.window = sandbox; sandbox.globalThis = sandbox;
@@ -389,14 +389,14 @@ const W = sandbox;
   W.TrackDual._test.gestureTick();
   t('gesture: face visible, no hand -> "No hand seen"',
     ($('dualGestureStatus').textContent || '').indexOf('No hand seen') >= 0, $('dualGestureStatus').textContent);
-  // Face not visible (nose visibility low) -> "Face not visible".
+  // v2.1.8: face is NOT required — face not visible + no hand -> "No hand seen" (not "Face not visible").
   const noFaceDict = Object.assign({}, poseDict);
   noFaceDict[0] = { x: 0.5, y: 0.1, v: 0.1 };
   W.TrackRig.setTarget(dualRig1.canvas, noFaceDict, [], []);
   W.TrackRig.setTarget(dualRig2.canvas, noFaceDict, [], []);
   W.TrackDual._test.gestureTick();
-  t('gesture: face not visible -> "Face not visible"',
-    ($('dualGestureStatus').textContent || '').indexOf('Face not visible') >= 0, $('dualGestureStatus').textContent);
+  t('gesture: face not visible, no hand -> "No hand seen" (face not required in v2.1.8)',
+    ($('dualGestureStatus').textContent || '').indexOf('No hand seen') >= 0, $('dualGestureStatus').textContent);
   // Skeleton status lines.
   W.TrackDual._test.setRigStatus('poseFail');
   t('status: poseFail -> "Skeleton couldn\'t load — check your connection and reload"',
@@ -550,8 +550,16 @@ const W = sandbox;
 
   /* ---------- Version / files ---------- */
   const versionJson = JSON.parse(fs.readFileSync(ROOT + 'version.json', 'utf8'));
-  t('version.json = 2.1.7', versionJson.version === '2.1.7');
+  t('version.json = 2.1.8', versionJson.version === '2.1.8');
   const changelog = JSON.parse(fs.readFileSync(ROOT + 'changelog.json', 'utf8'));
+  const entry218 = changelog.find(e => e.version === '2.1.8');
+  t('changelog 2.1.8 has 5 notes incl. camera-off + black preview + any finger + torso anchors + snap',
+    entry218 && entry218.notes.length === 5 &&
+    entry218.notes.some(n => n.indexOf('Camera starts OFF') >= 0) &&
+    entry218.notes.some(n => n.indexOf('Black preview fixed') >= 0) &&
+    entry218.notes.some(n => n.indexOf('ANY extended finger') >= 0) &&
+    entry218.notes.some(n => n.indexOf('shoulder AND') >= 0) &&
+    entry218.notes.some(n => n.indexOf('snaps to the latest landmarks') >= 0));
   const entry217 = changelog.find(e => e.version === '2.1.7');
   t('changelog 2.1.7 has 6 notes incl. only-seen joints + head marker + truthful status + both-camera signs + 640px hands + rig sits ON you',
     entry217 && entry217.notes.length === 6 &&
@@ -570,10 +578,10 @@ const W = sandbox;
     entry216.notes.some(n => n.indexOf('No more silent failures') >= 0) &&
     entry216.notes.some(n => n.indexOf('Recording has ended') >= 0));
   const updateSrc = fs.readFileSync(ROOT + 'js/update.js', 'utf8');
-  t('update.js fallback history 2.1.7 matches changelog + VERSION = 2.1.7',
-    updateSrc.indexOf('actually sees') >= 0 &&
-    updateSrc.indexOf("var VERSION = '2.1.7'") >= 0 &&
-    W.TrackUpdate.getVersion() === '2.1.7');
+  t('update.js fallback history 2.1.8 matches changelog + VERSION = 2.1.8',
+    updateSrc.indexOf('Camera starts OFF') >= 0 &&
+    updateSrc.indexOf("var VERSION = '2.1.8'") >= 0 &&
+    W.TrackUpdate.getVersion() === '2.1.8');
   const html = fs.readFileSync(ROOT + 'index.html', 'utf8');
   t('index.html: Camera 1 / Camera 2 labels present', html.indexOf('Camera 1') >= 0 && html.indexOf('Camera 2') >= 0);
   t('index.html: no "Second camera" / "Main phone" wording left', html.indexOf('Second camera') < 0 && html.indexOf('Main phone') < 0);
@@ -586,12 +594,56 @@ const W = sandbox;
     html.indexOf('js/rig.js') >= 0);
   t('index.html: rig + gesture status lines on both dual panels',
     ['dualRigStatus', 'dualGestureStatus', 'dualJoinRigStatus', 'dualJoinGestureStatus'].every(s => html.indexOf('id="' + s + '"') >= 0));
-  t('index.html: version strings 2.1.7', html.indexOf('v2.1.7') >= 0 && html.indexOf('v2.1.6') < 0);
+  t('index.html: version strings 2.1.8', html.indexOf('v2.1.8') >= 0 && html.indexOf('v2.1.7') < 0);
   const css = fs.readFileSync(ROOT + 'css/app.css', 'utf8');
   t('Guide CSS: bigger readable text (.cue p 17px) + annotated-figure styles',
     css.indexOf('.cue p') >= 0 && css.indexOf('ai-frame-stage') >= 0);
   const kb = W.TrackKB.all;
   t('Guide KB still 40 entries', kb.length === 40, 'count=' + kb.length);
+
+  /* ---------- v2.1.8: camera off by default, any-finger signs, torso anchors, snap-to-latest ---------- */
+  t('v2.1.8 any finger: thumb only = 1', W.TrackRig.countFingers(makeHand([1,0,0,0,0])) === 1);
+  t('v2.1.8 any finger: pinky only = 1', W.TrackRig.countFingers(makeHand([0,0,0,0,1])) === 1);
+  t('v2.1.8 any finger: ring only = 1', W.TrackRig.countFingers(makeHand([0,0,0,1,0])) === 1);
+  t('v2.1.8 any finger: thumb + index = 2', W.TrackRig.countFingers(makeHand([1,1,0,0,0])) === 2);
+  // Fresh feed: the earlier 'test-rig' was unregistered by the unregisterFeed test above.
+  const v8Video = makeEl('v8Video'); v8Video.readyState = 4; v8Video.clientWidth = 320; v8Video.clientHeight = 240;
+  const v8Canvas = makeEl('v8Canvas'); v8Canvas.clientWidth = 320; v8Canvas.clientHeight = 240;
+  W.TrackRig.registerFeed('v218-rig', v8Video, v8Canvas, {});
+  const v8Rig = W.TrackRig._test.getRigByKey('v218-rig');
+  // Torso anchors: 6+ visible joints but no shoulder -> no rig; no hip -> no rig.
+  const noShoulder = {}; for(let i = 0; i < 33; i++) noShoulder[i] = { x: 0.5, y: 0.5, v: 0.9 };
+  noShoulder[11] = { x: 0.5, y: 0.5, v: 0.1 }; noShoulder[12] = { x: 0.5, y: 0.5, v: 0.1 };
+  W.TrackRig.setTarget(v8Canvas, noShoulder, [], []);
+  t('v2.1.8 torso gate: 6+ joints but no shoulder seen -> no rig', v8Rig.hasTarget === false);
+  const noHip = {}; for(let i = 0; i < 33; i++) noHip[i] = { x: 0.5, y: 0.5, v: 0.9 };
+  noHip[23] = { x: 0.5, y: 0.5, v: 0.1 }; noHip[24] = { x: 0.5, y: 0.5, v: 0.1 };
+  W.TrackRig.setTarget(v8Canvas, noHip, [], []);
+  t('v2.1.8 torso gate: 6+ joints but no hip seen -> no rig', v8Rig.hasTarget === false);
+  // Snap: one advance puts display on the latest target (Float32 stores round, so compare with tolerance).
+  W.TrackRig.setTarget(v8Canvas, poseDict, [], []);
+  W.TrackRig._test.advanceRig(v8Rig, 1);
+  t('v2.1.8 snap: display equals latest target after one advance (no lag)',
+    v8Rig.poseDisplay.has[11] === 1 && Math.abs(v8Rig.poseDisplay.x[11] - poseDict[11].x) < 1e-6);
+  // Vanish: body gone but a hand stays -> body joints clear the same frame, hand stays.
+  W.TrackRig.setTarget(v8Canvas, null, [makeHand([0,1,0,0,0])], []);
+  W.TrackRig._test.advanceRig(v8Rig, 1);
+  t('v2.1.8 vanish: body gone -> body joints cleared same frame, hand dots stay',
+    v8Rig.poseDisplay.has[11] === 0 && v8Rig.handDisplay[0].has[8] === 1);
+  // Camera off by default + robust play helper + face-free gestures.
+  const aiSrc = fs.readFileSync(ROOT + 'js/ai-analyzer.js', 'utf8');
+  const camKitSrc = fs.readFileSync(ROOT + 'js/camera-kit.js', 'utf8');
+  const dualSrc = fs.readFileSync(ROOT + 'js/dualcam.js', 'utf8');
+  const showAISrc = aiSrc.slice(aiSrc.indexOf('function showAI()'), aiSrc.indexOf('function showAI()') + 800);
+  t('v2.1.8 camera off: HTML button says Camera: off + placeholder text',
+    html.indexOf('Camera: off') >= 0 && html.indexOf('Camera off — turn it on to start') >= 0);
+  t('v2.1.8 camera off: AI state starts camOff true, showAI sets off state, never auto-starts',
+    aiSrc.indexOf('camOff: true') >= 0 && showAISrc.indexOf('startWatching') < 0 && showAISrc.indexOf('setSingleCamera(false)') >= 0);
+  t('v2.1.8 black preview: kit has playVideo retry helper + both attach paths use it',
+    camKitSrc.indexOf('playVideo: function') >= 0 &&
+    aiSrc.indexOf('TrackCam.playVideo') >= 0 && dualSrc.indexOf('TrackCam.playVideo') >= 0);
+  t('v2.1.8 gestures need no face: single + dual gates have no frontal/faceSeen requirement',
+    aiSrc.indexOf('AI.lastFrontal && g.lastCount') < 0 && dualSrc.indexOf('(g.frontal || g.faceSeen)') < 0);
 
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
