@@ -1,5 +1,9 @@
 /* Track Analyzer — private build. Nike-style dark athletic theme. */
 @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700;800&display=swap');
+/* v2.7.1: blanket hidden rule. Author display rules (e.g. .ai-section's
+ * display:flex) beat the UA [hidden] style, so hidden sections like the
+ * Two Cameras panel stayed visible in Solo mode. This wins everywhere. */
+[hidden]{display:none!important}
 
 :root{
   color-scheme:dark;
@@ -579,6 +583,15 @@ body[data-active-view="nutrition"] .view-nutrition{display:block;animation:secti
 .ai-focus-label select{padding:9px 10px;border-radius:10px;border:1px solid var(--hairline);background:var(--surface-raised);color:var(--ink);font-size:14px;min-width:180px;max-width:100%}
 .ai-previews{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
 .ai-preview-card{position:relative;background:#000;border-radius:14px;overflow:hidden;aspect-ratio:4/3}
+/* v2.7.1: tap-to-play overlay for uploaded clips. iOS often rejects
+ * programmatic play() after the file picker, freezing the clip on frame
+ * 0 (pose then sees a motionless person: "Resting", no score). A tap IS
+ * a user gesture, so this button always works. */
+.ai-clip-play{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:6;
+  min-width:200px;min-height:56px;padding:14px 28px;border-radius:999px;border:0;
+  background:var(--volt);color:#111;font:800 18px/1.2 "Barlow",sans-serif;cursor:pointer;
+  box-shadow:0 8px 30px rgba(0,0,0,.5)}
+.ai-clip-play:active{transform:translate(-50%,-50%) scale(.96)}
 .ai-preview-card video{width:100%;height:100%;object-fit:contain;display:block}
 .ai-angle-tag{position:absolute;left:8px;bottom:8px;background:rgba(0,0,0,.65);color:#fff;font-size:12px;font-weight:700;padding:4px 8px;border-radius:999px}
 .ai-state{display:grid;gap:8px;font-size:15px;line-height:1.5}

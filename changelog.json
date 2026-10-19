@@ -1,5 +1,13 @@
 [
   {
+    "version": "2.7.1",
+    "date": "2026-10-19",
+    "notes": [
+      "FIX: the Two Cameras section no longer shows in Solo mode (a missing blanket [hidden] CSS rule let it stay visible).",
+      "FIX: uploaded clips that freeze on iOS now show a ▶ Play clip button — tap it and the AI analyzes the full clip with a form score, key fix, and rep count."
+    ]
+  },
+  {
     "version": "2.7.0",
     "date": "2026-10-19",
     "notes": [

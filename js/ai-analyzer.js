@@ -1985,6 +1985,7 @@ function startAI(reuseStream, opts){
   AI.keepClip = false;
   AI.clipMode = !!(opts && opts.clipUrl);
   AI.clipUrl = (opts && opts.clipUrl) || null;
+  if(!AI.clipMode) showEl($('aiClipPlay'), false);
   AI.lastClassic = null; AI.lastTripped = null; AI.lastGuideIssue = '';
   renderClassicMetrics(null);
   AI.session = { startedAt: Date.now(), reps: {}, faultCounts: {}, fixes: [], bestFrames: [] };
@@ -2028,21 +2029,52 @@ function startAI(reuseStream, opts){
         cv.src = AI.clipUrl;
         cv.muted = true;
         cv.setAttribute('playsinline', '');
-        if(window.TrackCam && window.TrackCam.playVideo) window.TrackCam.playVideo(cv);
-        else { var cp = cv.play(); if(cp && cp.catch) cp.catch(function(){}); }
-        // Same pipeline as a live recording: pose on every frame, deep
-        // check at the end. Two safety nets so a bad or stalled clip
-        // can never hang in "recording" forever — an unreadable file
-        // finishes the analysis with what it has, and a clip that
-        // never fires "ended" is finished by its own length + 5s.
+        /* v2.7.1: iOS often rejects play() after the file picker (no user
+         * gesture), freezing the clip on frame 0 — pose then sees a
+         * motionless person and reports "Resting" with no score. Watch for
+         * a stalled clip and offer a tap-to-play button (a tap IS a
+         * gesture, so it always works on iOS). */
+        AI.clipPlaying = false;
+        var playBtn = $('aiClipPlay');
+        var hidePlayBtn = function(){ showEl(playBtn, false); };
+        var showPlayBtn = function(){
+          if(AI.clipPlaying || !AI.running || !AI.clipMode) return;
+          showEl(playBtn, true);
+          setText('aiSeeing', 'Clip loaded — tap "Play clip" to run the analysis.');
+        };
+        var watchStall = function(){
+          setTimeout(function(){
+            if(cv.paused && !AI.clipPlaying && AI.running && AI.clipMode) showPlayBtn();
+          }, 2500);
+        };
+        cv.onplaying = function(){ AI.clipPlaying = true; hidePlayBtn(); };
         cv.onended = function(){ if(AI.running) stopAndAnalyze(); };
         cv.onerror = function(){ if(AI.running) stopAndAnalyze(); };
         cv.onloadedmetadata = function(){
           var dur = cv.duration;
           if(isFinite(dur) && dur > 0){
-            setTimeout(function(){ if(AI.running && AI.clipMode) stopAndAnalyze(); }, (dur * 1000) + 5000);
+            /* Only auto-finish if the clip actually played: a frozen clip
+             * would otherwise "analyze" identical frames into nothing. */
+            setTimeout(function(){
+              if(!(AI.running && AI.clipMode)) return;
+              if(AI.clipPlaying || cv.currentTime > 0.1) stopAndAnalyze();
+              else showPlayBtn();
+            }, (dur * 1000) + 5000);
           }
         };
+        if(playBtn) playBtn.onclick = function(){
+          hidePlayBtn();
+          setText('aiSeeing', 'Playing clip — analyzing…');
+          try{ var pp = cv.play(); if(pp && pp.catch) pp.catch(showPlayBtn); }catch(e){ showPlayBtn(); }
+        };
+        if(window.TrackCam && window.TrackCam.playVideo) window.TrackCam.playVideo(cv);
+        else { try{ var cp = cv.play(); if(cp && cp.catch) cp.catch(showPlayBtn); }catch(e){ showPlayBtn(); } }
+        /* Stall check runs regardless: if canplay already fired, a
+         * listener would never run. The 2.5s delay + state checks inside
+         * watchStall make the extra call harmless. */
+        watchStall();
+        // Same pipeline as a live recording: pose on every frame, deep
+        // check at the end.
       }
       showEl($('aiPreview2Wrap'), false);
       setText('aiAngleTag', 'Uploaded clip');
@@ -2118,6 +2150,8 @@ function stopAI(){
   if(!(AI.clipMode && AI.keepClip)) AI.clipMode = false;
   AI.keepClip = false;
   var slowBtn = $('aiSlowReview'); if(slowBtn) slowBtn.setAttribute('aria-pressed', 'false');
+  /* v2.7.1: never leave the tap-to-play button stranded. */
+  showEl($('aiClipPlay'), false);
   var sb = $('aiStartBtn'); if(sb){ sb.textContent = 'Start recording'; showEl(sb, true); }
   showEl($('aiStopBtn'), false);
   showEl($('aiEndSessionBtn'), false);
