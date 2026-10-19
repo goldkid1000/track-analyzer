@@ -2148,6 +2148,17 @@ function aiTeardown(){
   if(AI.running || AI.mode === 'watching') stopAI();
 }
 
+/* v2.3.0: rig redraw-rate pref ('120' | '60'), shared across tabs. */
+function rigFpsPref(){
+  try{ return localStorage.getItem('trackAnalyzer.rigFps') || '120'; }catch(e){ return '120'; }
+}
+function applyRigFps(mode){
+  mode = String(mode) === '60' ? '60' : '120';
+  try{ localStorage.setItem('trackAnalyzer.rigFps', mode); }catch(e){}
+  if(window.TrackRig && window.TrackRig.setRigFpsMode) window.TrackRig.setRigFpsMode(Number(mode));
+  var sels = document.querySelectorAll('.rig-fps-select');
+  for(var i = 0; i < sels.length; i++) sels[i].value = mode;
+}
 function initAI(){
   restoreBadges();
   // Live rigs draw through the shared smooth rig engine (interpolated
@@ -2220,6 +2231,17 @@ function initAI(){
    * notification permission on this tap (a tap is the only way the
    * browser grants it). If permission is denied, the button says so
    * and the on-screen toast still fires. */
+  /* v2.3.0 rig redraw-rate selector: one shared pref, every .rig-fps-select
+   * on the page stays in sync. This only changes how smoothly the rig
+   * REDRAWS — pose inference stays device-limited (see rig.js). */
+  var rigFpsSels = document.querySelectorAll('.rig-fps-select');
+  for(var rfi = 0; rfi < rigFpsSels.length; rfi++){
+    (function(sel){
+      sel.value = rigFpsPref();
+      sel.addEventListener('change', function(){ applyRigFps(sel.value); });
+    })(rigFpsSels[rfi]);
+  }
+  applyRigFps(rigFpsPref());
   var notifyBtn = $('aiNotifyToggle');
   if(notifyBtn){
     paintNotifyToggle();

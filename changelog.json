@@ -1,5 +1,13 @@
 [
   {
+    "version": "2.3.0",
+    "date": "2026-10-18",
+    "notes": [
+      "Rig smoothness picker: 120 fps or 60 fps for the skeleton rig redraw (honest labeling — redraw only, pose detection stays device-limited). Fixed: manual 'Send best frame to AI Photo' + auto-send delivered the frame twice; now marked sent on landing, failed grabs still retry."
+    ],
+    "notify": true
+  },
+  {
     "version": "2.2.0",
     "date": "2026-10-17",
     "notes": [

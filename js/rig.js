@@ -315,6 +315,19 @@ var lastRafT = 0;
 /* v2.2.0 fps readout: draw = display refresh rate of the rig loop
  * (EMA), infer = successful inferences in the last second, all feeds. */
 var drawEma = 0;
+/* v2.3.0 rig redraw-rate selector: 120 = every display frame (up to 120Hz
+ * on ProMotion), 60 = every other display frame (<=60 fps). This controls
+ * the RIG REDRAW only — pose inference stays device-limited (typically
+ * 15-30/sec per feed on a phone running two feeds). Never promise 120fps
+ * inference; the label in the UI says exactly this. */
+var rigFpsMode = 120;
+var lastDrawT = 0;
+function setRigFpsMode(m){
+  m = Number(m);
+  rigFpsMode = (m === 60) ? 60 : 120;
+  lastDrawT = 0; /* let the next frame draw immediately */
+}
+function getRigFpsMode(){ return rigFpsMode; }
 var inferTimes = [];
 var inferTimer = null;
 var inferIdx = 0;
@@ -600,10 +613,17 @@ function frame(ts){
   lastRafT = ts;
   if(dt < 0) dt = 16;
   if(dt > 100) dt = 100;
+  /* v2.3.0: honor the redraw-rate selector. At 60 the loop skips frames
+   * so the rig draws at most 60/sec; interpolation uses wall-clock time
+   * so skipping frames never makes the rig jump. */
+  var minInterval = 1000 / rigFpsMode;
+  if(lastDrawT && ts - lastDrawT < minInterval) return;
+  var drawDt = lastDrawT ? (ts - lastDrawT) : dt;
+  lastDrawT = ts;
   /* v2.2.0: draw fps (EMA) + interpolate between the last two
    * inference results at the display refresh rate, so the rig glides
    * at up to 120Hz on ProMotion instead of jumping pose to pose. */
-  if(dt > 0) drawEma = drawEma ? drawEma * 0.95 + (1000 / dt) * 0.05 : 1000 / dt;
+  if(drawDt > 0) drawEma = drawEma ? drawEma * 0.95 + (1000 / drawDt) * 0.05 : 1000 / drawDt;
   for(var i = 0; i < rigs.length; i++){
     advanceRigInterp(rigs[i]);
     paintRig(rigs[i]);
@@ -977,6 +997,8 @@ window.TrackRig = {
   getFps: function(){
     return { draw: Math.round(drawEma || 0), infer: inferTimes.length };
   },
+  setRigFpsMode: setRigFpsMode,
+  getRigFpsMode: getRigFpsMode,
   /* Test hooks (smoke tests only — the app never calls these on its own). */
   _test: {
     advanceRigInterp: advanceRigInterp,

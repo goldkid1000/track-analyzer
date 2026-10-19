@@ -1,4 +1,4 @@
-/* Track Analyzer v2.2.0 smoke harness — stubbed DOM/navigator/Pose.
+/* Track Analyzer v2.3.0 smoke harness — stubbed DOM/navigator/Pose.
  * Run: node /tmp/track-smoke.js ; exit code 0 = all pass. */
 const fs = require('fs'), vm = require('vm');
 const ROOT = '/home/hatch/workspace/track-analyzer-private/';
@@ -556,7 +556,7 @@ const W = sandbox;
 
   /* ---------- Version / files ---------- */
   const versionJson = JSON.parse(fs.readFileSync(ROOT + 'version.json', 'utf8'));
-  t('version.json = 2.2.0', versionJson.version === '2.2.0');
+  t('version.json = 2.3.0', versionJson.version === '2.3.0');
   const changelog = JSON.parse(fs.readFileSync(ROOT + 'changelog.json', 'utf8'));
   const entry219 = changelog.find(e => e.version === '2.1.9');
   t('changelog 2.1.9 has 4 notes incl. host-only gestures + no step-down + voice on iPhone + wait line clears',
@@ -583,10 +583,10 @@ const W = sandbox;
     entry216.notes.some(n => n.indexOf('No more silent failures') >= 0) &&
     entry216.notes.some(n => n.indexOf('Recording has ended') >= 0));
   const updateSrc = fs.readFileSync(ROOT + 'js/update.js', 'utf8');
-  t('update.js fallback history 2.1.9 matches changelog + VERSION = 2.2.0',
+  t('update.js fallback history 2.1.9 matches changelog + VERSION = 2.3.0',
     updateSrc.indexOf('ONLY the main camera') >= 0 &&
-    updateSrc.indexOf("var VERSION = '2.2.0'") >= 0 &&
-    W.TrackUpdate.getVersion() === '2.2.0');
+    updateSrc.indexOf("var VERSION = '2.3.0'") >= 0 &&
+    W.TrackUpdate.getVersion() === '2.3.0');
   const entry220 = changelog.find(e => e.version === '2.2.0');
   t('changelog 2.2.0 has 7 notes incl. no cap + stop-sync + arm swings + no-shape + AI Photo + notifications + slow-mo/markers + smooth rig',
     entry220 && entry220.notes.length === 7 &&
@@ -614,7 +614,7 @@ const W = sandbox;
     html.indexOf('js/rig.js') >= 0);
   t('index.html: rig + gesture status lines on both dual panels',
     ['dualRigStatus', 'dualGestureStatus', 'dualJoinRigStatus', 'dualJoinGestureStatus'].every(s => html.indexOf('id="' + s + '"') >= 0));
-  t('index.html: version strings 2.2.0', html.indexOf('v2.2.0') >= 0 && html.indexOf('v2.1.9') < 0);
+  t('index.html: version strings 2.3.0', html.indexOf('v2.3.0') >= 0 && html.indexOf('v2.2.9') < 0);
   t('index.html: wait line has id dualWaitLine (hidden once Camera 2 connects)',
     html.indexOf('id="dualWaitLine"') >= 0);
   const css = fs.readFileSync(ROOT + 'css/app.css', 'utf8');
@@ -850,6 +850,49 @@ const W = sandbox;
     t('v2.2.0 IDs: #' + id + ' exists in HTML and is referenced in JS',
       html.indexOf('id="' + id + '"') >= 0 &&
       (aiSrc.indexOf(id) >= 0 || dualSrc220.indexOf(id) >= 0 || appSrc.indexOf(id) >= 0));
+  });
+
+  /* ---------- v2.3.0: rig fps selector, photoSent dup fix ---------- */
+  // Redraw-rate API: default 120, 60 sticks, junk falls back to 120.
+  W.TrackRig.setRigFpsMode(120);
+  t('v2.3.0 fps: default/set 120', W.TrackRig.getRigFpsMode() === 120);
+  W.TrackRig.setRigFpsMode(60);
+  t('v2.3.0 fps: set 60 sticks', W.TrackRig.getRigFpsMode() === 60);
+  W.TrackRig.setRigFpsMode('banana');
+  t('v2.3.0 fps: invalid input falls back to 120', W.TrackRig.getRigFpsMode() === 120);
+  W.TrackRig.setRigFpsMode(120);
+  // frame() honors the mode: source-level check on the throttle.
+  t('v2.3.0 fps: frame() throttles by rigFpsMode (skips frames at 60, wall-clock interp)',
+    rigSrc220.indexOf('1000 / rigFpsMode') >= 0 &&
+    rigSrc220.indexOf('ts - lastDrawT < minInterval') >= 0 &&
+    rigSrc220.indexOf('advanceRigInterp(rigs[i])') >= 0);
+  // Honest labeling: UI + notes never promise 120fps inference.
+  t('v2.3.0 fps: honest label in HTML (redraw only, device-limited inference)',
+    html.indexOf('Rig redraw rate only') >= 0 && html.indexOf('pose detection still runs at your device') >= 0);
+  t('v2.3.0 fps: version.json + notes never claim 120fps inference',
+    !/120\s?fps\s+inference/i.test(fs.readFileSync(ROOT + 'version.json', 'utf8')));
+  // Selects exist in both tabs and stay in sync via the shared class.
+  t('v2.3.0 fps: selects in HTML (analyzer + dual) with shared class',
+    html.indexOf('id="rigFpsSelect"') >= 0 && html.indexOf('id="dualRigFpsSelect"') >= 0 &&
+    html.indexOf('class="rig-fps-select"') >= 0);
+  t('v2.3.0 fps: ai-analyzer wires all .rig-fps-select with pref trackAnalyzer.rigFps',
+    aiSrc.indexOf('rig-fps-select') >= 0 && aiSrc.indexOf('trackAnalyzer.rigFps') >= 0 &&
+    aiSrc.indexOf('setRigFpsMode') >= 0);
+  // photoSent dup fix: success path marks sent inside sendBestFrameToPhoto;
+  // the auto path no longer marks it before the snapshot lands.
+  t('v2.3.0 photoSent: manual send marks D.photoSent=true on success',
+    dualSrc220.indexOf("D.photoSent = true;\n      setText('dualRecState', 'Sent to AI Photo") >= 0);
+  t('v2.3.0 photoSent: auto-send no longer pre-marks photoSent before the snapshot',
+    !/D\.photoSent = true;\s*\n\s*sendBestFrameToPhoto\(\);/.test(dualSrc220));
+  // Version strings.
+  t('v2.3.0 version: version.json + update.js + footer all say 2.3.0',
+    JSON.parse(fs.readFileSync(ROOT + 'version.json', 'utf8')).version === '2.3.0' &&
+    fs.readFileSync(ROOT + 'js/update.js', 'utf8').indexOf("var VERSION = '2.3.0'") >= 0 &&
+    html.indexOf('id="appVersion">v2.3.0<') >= 0);
+  // ID cross-check for the new elements (wired by shared class in JS).
+  ['rigFpsSelect', 'dualRigFpsSelect'].forEach(id => {
+    t('v2.3.0 IDs: #' + id + ' exists in HTML and is wired via .rig-fps-select in JS',
+      html.indexOf('id="' + id + '"') >= 0 && aiSrc.indexOf('rig-fps-select') >= 0);
   });
 
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');

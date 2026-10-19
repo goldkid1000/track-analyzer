@@ -1,4 +1,4 @@
-/* Track Analyzer — update system (v2.2.0)
+/* Track Analyzer — update system (v2.3.0)
  *
  * Tenno Vault-style: visible version, What's New panel, Check for updates,
  * and an update banner. The banner fires ONLY when version.json reports a
@@ -47,9 +47,14 @@
  */
 (function(){
 'use strict';
-var VERSION = '2.2.0';
+var VERSION = '2.3.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: '2.3.0', date: '2026-10-18', notes: [
+    'Rig smoothness picker: choose 120 fps or 60 fps for the skeleton rig redraw (AI Analyzer controls, and next to the two-camera fps line). This controls redraw smoothness only \u2014 pose detection still runs at your device\'s speed (usually 15\u201330/sec), so 120 means a smoother glide, not faster detection. Your choice is remembered.',
+    'Fixed: tapping \'Send best frame to AI Photo\' by hand and then letting the auto-send run delivered the same frame to AI Photo twice. The frame is now marked sent the moment it lands, and a failed grab still retries on the next analysis.',
+    'The rig draw loop now skips frames cleanly at the 60 fps setting \u2014 interpolation runs on wall-clock time, so the rig never jumps when frames are skipped.'
+  ]},
   { version: '2.2.0', date: '2026-10-17', notes: [
     'Two cameras: no more clip-length cap and no more auto-stop. Recording runs until you tap Stop video, hold 2 fingers, turn a camera off, or disconnect. The old 10-second cap and the \'you left the frame\' auto-stop are gone.',
     'Two cameras: Stop now really stops BOTH cameras. The host sends Stop again if the second camera doesn\'t answer, sends a heartbeat while recording, and a closing connection stops a running recording — the second camera no longer keeps rolling after you ended the video on the main.',

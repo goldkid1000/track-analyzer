@@ -1270,6 +1270,10 @@ function sendBestFrameToPhoto(){
     if(!url){ setText('dualRecState', 'Couldn’t grab that frame — try again.'); return; }
     if(window.TrackPhoto && window.TrackPhoto.receiveFrame){
       window.TrackPhoto.receiveFrame({ url: url, label: 'Best frame from your two-camera recording' });
+      /* v2.3.0: mark sent HERE (not in the caller) so a manual tap and the
+       * auto-send can never deliver the same frame twice, while a failed
+       * snapshot leaves photoSent false so the next analysis retries. */
+      D.photoSent = true;
       setText('dualRecState', 'Sent to AI Photo ✓ — open the AI Photo tab.');
     }
   });
@@ -1281,8 +1285,7 @@ function maybeAutoSendPhoto(){
   var va = $('dualReplayA');
   if(!va || !va.src) return;
   if(!window.TrackPhoto || !window.TrackPhoto.receiveFrame) return;
-  D.photoSent = true;
-  sendBestFrameToPhoto();
+  sendBestFrameToPhoto(); /* sets D.photoSent on success */
 }
 function updateDualFps(){
   if(!window.TrackRig || !window.TrackRig.getFps) return;
