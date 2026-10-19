@@ -1,5 +1,13 @@
 [
   {
+    "version": "2.3.2",
+    "date": "2026-10-19",
+    "notes": [
+      "Version numbers are now written by the app itself at startup, so the footer and What's New can never show a stale version after an update. Asset version tags bumped with the release so new builds always load fresh files."
+    ],
+    "notify": true
+  },
+  {
     "version": "2.3.1",
     "date": "2026-10-19",
     "notes": [
