@@ -1,4 +1,4 @@
-/* Track Analyzer v2.3.2 smoke harness — stubbed DOM/navigator/Pose.
+/* Track Analyzer v2.3.3 smoke harness — stubbed DOM/navigator/Pose.
  * Run: node /tmp/track-smoke.js ; exit code 0 = all pass. */
 const fs = require('fs'), vm = require('vm');
 const ROOT = '/home/hatch/workspace/track-analyzer-private/';
@@ -556,7 +556,7 @@ const W = sandbox;
 
   /* ---------- Version / files ---------- */
   const versionJson = JSON.parse(fs.readFileSync(ROOT + 'version.json', 'utf8'));
-  t('version.json = 2.3.2', versionJson.version === '2.3.2');
+  t('version.json = 2.3.3', versionJson.version === '2.3.3');
   const changelog = JSON.parse(fs.readFileSync(ROOT + 'changelog.json', 'utf8'));
   const entry219 = changelog.find(e => e.version === '2.1.9');
   t('changelog 2.1.9 has 4 notes incl. host-only gestures + no step-down + voice on iPhone + wait line clears',
@@ -583,10 +583,10 @@ const W = sandbox;
     entry216.notes.some(n => n.indexOf('No more silent failures') >= 0) &&
     entry216.notes.some(n => n.indexOf('Recording has ended') >= 0));
   const updateSrc = fs.readFileSync(ROOT + 'js/update.js', 'utf8');
-  t('update.js fallback history 2.1.9 matches changelog + VERSION = 2.3.0',
+  t('update.js fallback history 2.1.9 matches changelog + VERSION = 2.3.3',
     updateSrc.indexOf('ONLY the main camera') >= 0 &&
-    updateSrc.indexOf("var VERSION = '2.3.2'") >= 0 &&
-    W.TrackUpdate.getVersion() === '2.3.2');
+    updateSrc.indexOf("var VERSION = '2.3.3'") >= 0 &&
+    W.TrackUpdate.getVersion() === '2.3.3');
   const entry220 = changelog.find(e => e.version === '2.2.0');
   t('changelog 2.2.0 has 7 notes incl. no cap + stop-sync + arm swings + no-shape + AI Photo + notifications + slow-mo/markers + smooth rig',
     entry220 && entry220.notes.length === 7 &&
@@ -885,14 +885,46 @@ const W = sandbox;
   t('v2.3.0 photoSent: auto-send no longer pre-marks photoSent before the snapshot',
     !/D\.photoSent = true;\s*\n\s*sendBestFrameToPhoto\(\);/.test(dualSrc220));
   // Version strings.
-  t('v2.3.2 version: version.json + update.js say 2.3.2, footer stamped at runtime',
-    JSON.parse(fs.readFileSync(ROOT + 'version.json', 'utf8')).version === '2.3.2' &&
-    fs.readFileSync(ROOT + 'js/update.js', 'utf8').indexOf("var VERSION = '2.3.2'") >= 0 &&
+  t('v2.3.3 version: version.json + update.js say 2.3.3, footer stamped at runtime',
+    JSON.parse(fs.readFileSync(ROOT + 'version.json', 'utf8')).version === '2.3.3' &&
+    fs.readFileSync(ROOT + 'js/update.js', 'utf8').indexOf("var VERSION = '2.3.3'") >= 0 &&
     true); // footer is stamped at runtime from VERSION — see the no-hardcode check above
+  /* ---------- v2.3.3: mobile pass ---------- */
+  const entry233 = changelog.find(e => e.version === '2.3.3');
+  t('changelog 2.3.3 present, notify:true, 2 notes (no sideways scroll + tap targets / styled unstyled pieces)',
+    entry233 && entry233.notify === true && entry233.notes.length === 2 &&
+    entry233.notes.some(n => n.indexOf('sideways scrolling') >= 0) &&
+    entry233.notes.some(n => n.indexOf('theme variables') >= 0));
+  t('update.js fallback history has a 2.3.3 entry on top',
+    updateSrc.indexOf("{ version: '2.3.3'") >= 0 &&
+    updateSrc.indexOf('Mobile layout pass') >= 0);
+  t('v2.3.3 mobile: zero page-level horizontal scroll at phone width',
+    /@media\s*\(\s*max-width:\s*760px\s*\)[\s\S]{0,4000}?\.page\s*\{\s*overflow-x\s*:\s*clip\s*;?/.test(css));
+  t('v2.3.3 mobile: small controls + toggles + footer + selects all reach 44px tap targets',
+    css.indexOf('.ghost-control.small{min-height:44px}') >= 0 &&
+    css.indexOf('.photo-source-toggle button{min-height:44px}') >= 0 &&
+    css.indexOf('.runway-view-toggle button{min-height:44px}') >= 0 &&
+    css.indexOf('.app-footer button{min-height:44px') >= 0 &&
+    css.indexOf('.dual-preview-head select,.dual-record-row select,.ai-focus-label select,.rig-fps-select{min-height:44px}') >= 0);
+  t('v2.3.3 mobile: previously unstyled pieces now styled (speed row, rig picker, marker rows)',
+    css.indexOf('.dual-speed-row{display:flex') >= 0 &&
+    css.indexOf('.rig-fps-select{') >= 0 &&
+    css.indexOf('.dual-markers-label{') >= 0 &&
+    css.indexOf('.ai-clip-markers,.dual-markers{display:flex') >= 0);
+  t('v2.3.3 theme vars: no undefined var(--text)/var(--panel) left; bubble on dark surface',
+    css.indexOf('var(--text)') < 0 && css.indexOf('var(--panel)') < 0 &&
+    css.indexOf('.ai-bubble{background:var(--surface-raised)') >= 0);
+  t('v2.3.3 mobile: readable control text on phones (ghost-control 14px, tab labels 11px)',
+    css.indexOf('.ghost-control{font-size:14px}') >= 0 &&
+    css.indexOf('.tab-item span{font-size:11px}') >= 0);
+  t('v2.3.3 assets: all local script/css URLs carry ?v=2.3.3, none stale',
+    (html.match(/<script src="js\/[a-z-]+\.js\?v=2\.3\.3"><\/script>/g) || []).length === 9 &&
+    html.indexOf('css/app.css?v=2.3.3') >= 0 &&
+    html.indexOf('?v=2.3.2') < 0);
   /* ---------- v2.3.1: update reliability ---------- */
-  t('v2.3.2 assets: all local script/css URLs carry ?v=2.3.2',
-    (html.match(/<script src="js\/[a-z-]+\.js\?v=2\.3\.2"><\/script>/g) || []).length === 9 &&
-    html.indexOf('css/app.css?v=2.3.2') >= 0);
+  t('v2.3.3 assets (moved): all local script/css URLs carry ?v=2.3.3 — see the v2.3.3 section above',
+    (html.match(/<script src="js\/[a-z-]+\.js\?v=2\.3\.3"><\/script>/g) || []).length === 9 &&
+    html.indexOf('css/app.css?v=2.3.3') >= 0);
   t('v2.3.1 update: button sets pending flag instead of markSeen',
     updateSrc.indexOf("sessionStorage.setItem('trackAnalyzer.update.pending'") >= 0);
   t('v2.3.1 update: boot confirms pending version before marking seen',
@@ -902,6 +934,26 @@ const W = sandbox;
     t('v2.3.0 IDs: #' + id + ' exists in HTML and is wired via .rig-fps-select in JS',
       html.indexOf('id="' + id + '"') >= 0 && aiSrc.indexOf('rig-fps-select') >= 0);
   });
+  /* ---------- v2.3.3: full ID cross-check (0 dangling) ----------
+   * Every static ID referenced via $('id')/getElementById('id') in the JS
+   * must exist in index.html or be injected dynamically (id="x" in a JS
+   * string, e.g. aiSkelDetail). */
+  t('v2.3.3 IDs: 0 dangling — every JS-referenced ID exists in HTML or is JS-injected',
+    (() => {
+      const jsFiles = ['js/ai-analyzer.js','js/ai-knowledge.js','js/app.js','js/camera-kit.js',
+        'js/dualcam.js','js/mediapipe-draw.js','js/mediapipe-pose.js','js/rig.js','js/update.js'];
+      const jsAll = jsFiles.map(f => fs.readFileSync(ROOT + f, 'utf8')).join('\n');
+      const htmlIds = new Set();
+      let m; const htmlIdRe = /id="([\w-]+)"/g;
+      while((m = htmlIdRe.exec(html))) htmlIds.add(m[1]);
+      const dynIds = new Set(); const dynRe = /id\\?="([\w-]+)/g;
+      while((m = dynRe.exec(jsAll))) dynIds.add(m[1]);
+      const refIds = new Set(); const refRe = /(?:getElementById|\$\()\s*['"]([\w-]+)['"]/g;
+      while((m = refRe.exec(jsAll))) refIds.add(m[1]);
+      const dangling = [...refIds].filter(id => !htmlIds.has(id) && !dynIds.has(id));
+      if(dangling.length) console.log('   dangling IDs: ' + dangling.join(', '));
+      return dangling.length === 0;
+    })());
 
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);

@@ -1,4 +1,4 @@
-/* Track Analyzer — update system (v2.3.2)
+/* Track Analyzer — update system (v2.3.3)
  *
  * Tenno Vault-style: visible version, What's New panel, Check for updates,
  * and an update banner. The banner fires ONLY when version.json reports a
@@ -47,9 +47,13 @@
  */
 (function(){
 'use strict';
-var VERSION = '2.3.2';
+var VERSION = '2.3.3';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: '2.3.3', date: '2026-10-19', notes: [
+    'Mobile layout pass at phone width: no sideways scrolling \u2014 camera tiles, controls, and results stack and fit. Every tap target is thumb-size (44px+) including the small two-camera, photo, and replay buttons and all dropdowns.',
+    'Styled the pieces that had no styles before (replay speed row, rig-smoothness picker, AI-moment marker rows), and fixed callout bubbles and text that were using missing theme variables (white text on a light bubble).'
+  ]},
   { version: '2.3.1', date: '2026-10-19', notes: [
     'Update reliability fix: tapping Update can no longer leave you stuck on the old version. App files now carry a version tag so an update always loads fresh files instead of stale cached ones, and the update notice stays up until the new version is confirmed running.'
   ]},

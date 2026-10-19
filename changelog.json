@@ -1,5 +1,14 @@
 [
   {
+    "version": "2.3.3",
+    "date": "2026-10-19",
+    "notes": [
+      "Mobile layout pass at phone width: no sideways scrolling — camera tiles, controls, and results stack and fit. Every tap target is thumb-size (44px+) including the small two-camera, photo, and replay buttons and all dropdowns.",
+      "Styled the pieces that had no styles before (replay speed row, rig-smoothness picker, AI-moment marker rows), and fixed callout bubbles and text that were using missing theme variables (white text on a light bubble)."
+    ],
+    "notify": true
+  },
+  {
     "version": "2.3.2",
     "date": "2026-10-19",
     "notes": [
