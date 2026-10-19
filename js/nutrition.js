@@ -58,6 +58,12 @@ function calc(){
     '</div>' +
     '<p class="nut-note">Ranges, not exact prescriptions — land inside them most days and you are covered.</p>';
   renderWater(waterMl);
+  var tT = $('nutTimingTraining'), tR = $('nutTimingRest'), tN = $('nutTimingNote');
+  if(tT) tT.hidden = !training;
+  if(tR) tR.hidden = training;
+  if(tN) tN.textContent = training
+    ? 'Skip greasy food and big fiber loads right before sprinting — both slow you down and upset the stomach.'
+    : 'Rest days are for recovery — keep protein high, sleep well, and stay hydrated.';
   try{
     localStorage.setItem(LS_WEIGHT, String(w));
     localStorage.setItem(LS_UNIT, unit);

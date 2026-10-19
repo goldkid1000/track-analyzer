@@ -1,5 +1,13 @@
 [
   {
+    "version": "2.4.1",
+    "date": "2026-10-19",
+    "notes": [
+      "Rest day fix: the Meal timing section now shows rest-day guidance (morning protein, regular meals, bedtime protein) instead of pre/post-workout timing when Rest day is selected."
+    ],
+    "notify": true
+  },
+  {
     "version": "2.4.0",
     "date": "2026-10-19",
     "notes": [

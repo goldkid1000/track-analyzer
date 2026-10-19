@@ -384,7 +384,7 @@
 
         <div class="panel">
           <h2>⏱️ Meal timing</h2>
-          <div class="nut-timing">
+          <div class="nut-timing" id="nutTimingTraining">
             <div class="nut-time-card">
               <h3>2–3 hours before</h3>
               <p>Full meal: carbs + protein, low fat, low fiber. Example: rice + grilled chicken + banana.</p>
@@ -398,7 +398,21 @@
               <p>Protein + carbs to recover. The classic: chocolate milk + banana, or eggs + oatmeal.</p>
             </div>
           </div>
-          <p class="ai-note">Skip greasy food and big fiber loads right before sprinting — both slow you down and upset the stomach.</p>
+          <div class="nut-timing" id="nutTimingRest" hidden>
+            <div class="nut-time-card">
+              <h3>Morning</h3>
+              <p>Protein-rich breakfast within an hour of waking — eggs, Greek yogurt, or oatmeal with peanut butter.</p>
+            </div>
+            <div class="nut-time-card">
+              <h3>Through the day</h3>
+              <p>3–4 balanced meals, don't skip. Keep protein high for recovery; carbs can run lighter than training days.</p>
+            </div>
+            <div class="nut-time-card">
+              <h3>Before bed</h3>
+              <p>Slow-digesting protein (Greek yogurt, cottage cheese, or milk) to feed muscles overnight.</p>
+            </div>
+          </div>
+          <p class="ai-note" id="nutTimingNote">Skip greasy food and big fiber loads right before sprinting — both slow you down and upset the stomach.</p>
         </div>
 
         <div class="panel">
@@ -489,9 +503,9 @@
   <script src="js/rig.js?v=2.4.0"></script>
   <script src="js/app.js?v=2.4.0"></script>
   <script src="js/dualcam.js?v=2.4.0"></script>
-  <script src="js/update.js?v=2.4.0"></script>
+  <script src="js/update.js?v=2.4.1"></script>
   <script src="js/ai-knowledge.js?v=2.4.0"></script>
   <script src="js/ai-analyzer.js?v=2.4.0"></script>
-  <script src="js/nutrition.js?v=2.4.0"></script>
+  <script src="js/nutrition.js?v=2.4.1"></script>
 </body>
 </html>
