@@ -1,9 +1,9 @@
 {
   "notes": [
-    "REDLINE rework: motorsport-telemetry look \u2014 carbon black base with a subtle carbon weave, racing red + optic white accents, condensed tabular numerals, thin red timing-line dividers.",
-    "True fullscreen on mobile: edge-to-edge display, safe-area-aware header and tab bar, full-bleed camera at 390px."
+    "Fixed stuck NEW badges: the notification object was being overwritten, breaking badge-clearing when tabs open \u2014 badges now clear properly.",
+    "Notification system audit: device notifications, permission flow, and badges all verified working."
   ],
   "notify": true,
   "updated": "2026-10-19",
-  "version": "2.8.1"
+  "version": "2.8.2"
 }

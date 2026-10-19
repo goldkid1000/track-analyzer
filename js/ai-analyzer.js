@@ -2394,7 +2394,8 @@ function initAI(){
 
 // Test hooks (smoke tests only — the app never calls these on its own).
 window.TrackNotify = { notifyDone: notifyAnalysisDone, clear: function(which){ setBadge(which, false); },
-  has: function(which){ var els = badgeEls(which); return els.some(function(el){ return el && !el.hidden; }); } };
+  has: function(which){ var els = badgeEls(which); return els.some(function(el){ return el && !el.hidden; }); },
+  scanDone: notifyScanDone, paintToggle: paintNotifyToggle };
 window.TrackRunway = { render: renderRunway, draw: runwayDraw, start: runwayStart, pause: runwayPause, replay: runwayReplay,
   getState: function(){ return { playing: runway.playing, phase: runway.phase, your: runway.your, fix: runway.fix }; },
   setView: function(v){ runway.view = v; applyRunwayView(); },
@@ -2415,7 +2416,7 @@ window.TrackFrameMarks = { build: buildFrameMarks, draw: drawFrameMarks, at: fra
   getAnnotations: function(){ return AI.frameAnnotations; } };
 window.TrackAIAnnounce = { announce: announce, speakNow: announce };
 /* v2.2.0: the two-camera side reuses the same scan-done signal. */
-window.TrackNotify = { scanDone: notifyScanDone, paintToggle: paintNotifyToggle };
+/* v2.8.2: merged into the TrackNotify above — was overwriting .clear()/.notifyDone() */
 window.TrackAIGesture = { countFingers: countFingers, isFrontal: isFrontal,
   tick: gestureTick, setStatus: setGestureStatus, bestHandCount: bestHandCount };
 window.TrackAIDeep = { segmentReps: segmentReps, buildDeepReport: buildDeepReport, pickVideos: pickVideos, absorbFrame: absorbFrame };
