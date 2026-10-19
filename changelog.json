@@ -1,5 +1,13 @@
 [
   {
+    "version": "2.3.5",
+    "date": "2026-10-19",
+    "notes": [
+      "Home-screen logo now embedded directly in the app (same trick as StudyLens) — shows reliably when adding to Home Screen."
+    ],
+    "notify": true
+  },
+  {
     "version": "2.3.4",
     "date": "2026-10-19",
     "notes": [
