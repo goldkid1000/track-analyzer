@@ -47,7 +47,7 @@
  */
 (function(){
 'use strict';
-var VERSION = '2.4.1';
+var VERSION = '2.5.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
   { version: '2.4.0', date: '2026-10-19', notes: [

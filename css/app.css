@@ -769,3 +769,219 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{
   .nut-day-toggle{align-self:stretch}
   .nut-day-toggle button{flex:1}
 }
+
+/* ============ v2.5.0 "Volt Rework" — deeper athletic redesign ============
+ * Same volt-orange/mint identity, evolved: richer background depth, tiered
+ * panel hierarchy, bolder tab bar, polished cards + controls, tighter
+ * mobile fit. CSS-only: no selectors JS depends on were renamed. */
+:root{
+  --bg:#06090c;
+  --surface:#0d1210;
+  --surface-raised:#151b17;
+  --surface-pressed:#1f2622;
+  --ink:#f6faf7;
+  --muted:#a3ada6;
+  --hairline:rgba(255,255,255,.09);
+  --accent-deep:#d9480f;
+  --accent-glow:rgba(255,92,31,.4);
+  --volt-deep:#a8c22e;
+  --volt-glow:rgba(212,245,66,.22);
+  --mint-glow:rgba(61,220,151,.18);
+  --card-top:rgba(255,255,255,.055);
+  --card-shadow:0 14px 44px rgba(0,0,0,.5);
+}
+
+/* stadium-night background: layered volt/orange/mint glows, fixed */
+html{background:#04060a}
+body{
+  background:
+    radial-gradient(900px 420px at 12% -6%,rgba(255,92,31,.13),transparent 60%),
+    radial-gradient(760px 380px at 92% 8%,rgba(212,245,66,.07),transparent 60%),
+    radial-gradient(880px 520px at 50% 112%,rgba(61,220,151,.08),transparent 62%),
+    linear-gradient(180deg,#06090c,#05070a);
+  background-attachment:fixed;
+}
+.app-shell,.app-main{background:transparent}
+
+/* ---- topbar: stronger glass + volt hairline ---- */
+.app-topbar{
+  background:rgba(8,12,10,.86);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  border-bottom:1px solid transparent;
+  border-image:linear-gradient(90deg,transparent,rgba(212,245,66,.35) 30%,rgba(255,92,31,.35) 70%,transparent) 1;
+  box-shadow:0 8px 28px rgba(0,0,0,.45);
+}
+.screen-title h1{
+  background:linear-gradient(180deg,#fff 30%,#cfd8d1);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+}
+.topbar-status{background:rgba(61,220,151,.1);border:1px solid rgba(61,220,151,.3);padding:8px 12px;border-radius:999px}
+
+/* ---- sidebar: brand + nav polish ---- */
+.app-sidebar{background:rgba(8,11,9,.72);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.brand-name{background:linear-gradient(90deg,var(--volt),#fff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.nav-item{min-height:54px;border-radius:14px}
+.nav-item:hover{background:rgba(255,255,255,.05)}
+.nav-item[aria-current="page"]{background:rgba(212,245,66,.1);box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
+.nav-item[aria-current="page"] svg{color:var(--volt)}
+
+/* ---- tabbar (mobile): bolder — real volt pill for active ---- */
+.app-tabbar{
+  background:rgba(9,12,10,.94);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  border-top:1px solid rgba(255,255,255,.1);
+  box-shadow:0 -10px 30px rgba(0,0,0,.5);
+  padding:10px 10px calc(10px + env(safe-area-inset-bottom));
+}
+.tab-item{min-height:60px;border-radius:16px;font-size:12px}
+.tab-item svg{width:23px;height:23px}
+.tab-item[aria-current="page"]{
+  background:linear-gradient(180deg,var(--volt),var(--volt-deep));color:#0b0d08;
+  box-shadow:0 6px 18px var(--volt-glow);
+}
+.tab-item[aria-current="page"] svg{filter:none}
+
+/* ---- tiered panel hierarchy ---- */
+.panel,.coach,.photo-slot,.dual-card{
+  background:
+    linear-gradient(180deg,var(--card-top),transparent 130px),
+    linear-gradient(180deg,#101512,var(--surface));
+  border-color:rgba(255,255,255,.13);
+  box-shadow:var(--card-shadow),inset 0 1px 0 rgba(255,255,255,.05);
+}
+.panel:hover,.photo-slot:hover{transform:translateY(-2px);box-shadow:0 18px 48px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.06)}
+.panel h2,.coach h2,.photo-head h2{
+  background:linear-gradient(180deg,#fff 25%,#b9c4bc);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  padding-bottom:12px;
+}
+.panel h2::after{width:52px;height:4px}
+.nut-hero{border-color:rgba(255,92,31,.45);box-shadow:0 14px 44px rgba(255,92,31,.12),inset 0 1px 0 rgba(255,255,255,.06)}
+
+/* ---- buttons: deeper, sheen on hover ---- */
+.primary{
+  background:linear-gradient(180deg,#ff7040,var(--accent) 55%,var(--accent-deep));
+  box-shadow:0 10px 28px var(--accent-glow),inset 0 1px 0 rgba(255,255,255,.3),inset 0 -2px 6px rgba(0,0,0,.2);
+  position:relative;overflow:hidden;
+}
+.primary::after{
+  content:"";position:absolute;inset:0;background:linear-gradient(105deg,transparent 40%,rgba(255,255,255,.25) 50%,transparent 60%);
+  transform:translateX(-120%);transition:transform .5s var(--ease-out);pointer-events:none;
+}
+.primary:hover::after{transform:translateX(120%)}
+.primary:hover{background:linear-gradient(180deg,#ff7d4d,#ff5c1f 55%,#d9480f)}
+.primary:active{transform:scale(.96);box-shadow:0 4px 14px var(--accent-glow)}
+.volt-start{
+  background:linear-gradient(180deg,#e6ff70,var(--volt) 55%,var(--volt-deep))!important;
+  box-shadow:0 10px 28px var(--volt-glow),inset 0 1px 0 rgba(255,255,255,.4)!important;
+  color:#0b0d08!important;
+}
+.photo-pick{
+  background:linear-gradient(180deg,#e6ff70,var(--volt) 60%,var(--volt-deep));
+  box-shadow:0 6px 18px var(--volt-glow),inset 0 1px 0 rgba(255,255,255,.35);
+}
+.ghost-control{
+  background:rgba(10,16,13,.82);border:1px solid rgba(255,255,255,.2);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 4px 14px rgba(0,0,0,.35);
+}
+.ghost-control:hover{border-color:rgba(212,245,66,.55);box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 4px 18px rgba(212,245,66,.18)}
+
+/* ---- controls: inputs, selects, toggles ---- */
+.nut-weight-field input,.dual-join-row input,.ai-ref-label input{
+  background:linear-gradient(180deg,#101512,#0b0f0c);
+  border:1px solid rgba(255,255,255,.14);
+  box-shadow:inset 0 2px 8px rgba(0,0,0,.45);
+  transition:border-color .2s,box-shadow .2s;
+}
+.nut-weight-field input:focus,.dual-join-row input:focus,.ai-ref-label input:focus{
+  border-color:var(--volt);box-shadow:inset 0 2px 8px rgba(0,0,0,.45),0 0 0 3px var(--volt-glow);outline:none;
+}
+select{background:linear-gradient(180deg,#161b18,#0e120f)!important}
+select:focus{border-color:var(--volt);outline:none;box-shadow:0 0 0 3px var(--volt-glow)}
+.nut-unit-toggle,.nut-day-toggle,.runway-view-toggle,.photo-source-toggle{
+  background:rgba(0,0,0,.35);box-shadow:inset 0 2px 8px rgba(0,0,0,.4);
+}
+.nut-unit-toggle button[aria-pressed="true"],.nut-day-toggle button[aria-pressed="true"]{
+  background:linear-gradient(180deg,#ff7040,var(--accent) 60%,var(--accent-deep));
+}
+.mode-picker{
+  background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.1);
+  box-shadow:inset 0 2px 10px rgba(0,0,0,.4);
+  padding:6px;
+}
+.mode{min-height:48px}
+.mode[aria-pressed="true"]{
+  background:linear-gradient(180deg,#e6ff70,var(--volt) 60%,var(--volt-deep));
+  box-shadow:0 6px 18px var(--volt-glow),inset 0 1px 0 rgba(255,255,255,.35);
+}
+
+/* ---- score ring + metrics: volt energy ---- */
+.score{background:conic-gradient(var(--volt) 0deg,#232a25 0deg);box-shadow:0 0 24px var(--volt-glow)}
+.score::after{background:#0c100d}
+.score b{background:linear-gradient(180deg,#fff,var(--volt));-webkit-background-clip:text;background-clip:text;color:transparent}
+.metric{background:linear-gradient(180deg,rgba(255,255,255,.04),transparent),var(--surface-raised)}
+.bar i,.ai-metric-bar i,.analysis-track i{
+  background:linear-gradient(90deg,var(--accent),#ff9a3d 45%,var(--volt));
+  box-shadow:0 0 10px rgba(255,92,31,.4);
+}
+.nut-target{
+  background:linear-gradient(180deg,rgba(255,255,255,.05),transparent 60%),var(--surface-raised);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 8px 22px rgba(0,0,0,.35);
+  border-color:rgba(255,255,255,.12);
+}
+.nut-target:hover{transform:translateY(-2px);border-color:rgba(212,245,66,.4)}
+.nut-water-track i{box-shadow:0 0 10px rgba(56,182,255,.5)}
+.cue{box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
+.video{border-color:rgba(255,255,255,.1)}
+.video:hover{border-color:var(--accent);box-shadow:0 10px 28px rgba(255,92,31,.18)}
+
+/* ---- camera card: frame it like broadcast ---- */
+.camera-card{
+  border-color:rgba(212,245,66,.28);
+  box-shadow:0 18px 60px rgba(0,0,0,.6),0 0 0 1px rgba(0,0,0,.6),0 0 34px rgba(212,245,66,.07);
+}
+.status-pill{box-shadow:0 6px 18px rgba(0,0,0,.5)}
+
+/* ---- section kickers ---- */
+.ai-section-title,.dual-intro h2{
+  display:flex;align-items:center;gap:10px;
+}
+.ai-section-title::before{
+  content:"";width:5px;height:1.2em;border-radius:99px;flex:0 0 auto;
+  background:linear-gradient(180deg,var(--accent),var(--volt));
+}
+.sheet-score{background:linear-gradient(180deg,#fff,var(--volt));-webkit-background-clip:text;background-clip:text;color:transparent}
+.dual-code{
+  background:linear-gradient(180deg,#141a16,#0c100d);letter-spacing:.16em;
+  box-shadow:inset 0 2px 10px rgba(0,0,0,.5),0 0 22px rgba(212,245,66,.08);
+  border-color:rgba(212,245,66,.3);
+}
+.update-banner{
+  background:linear-gradient(180deg,#232b24,#1a201b);
+  border-color:rgba(212,245,66,.55);
+  box-shadow:0 18px 50px rgba(0,0,0,.6),0 0 26px rgba(212,245,66,.1);
+}
+.ai-toast{background:linear-gradient(180deg,#232b24,#1a201b)}
+.review-dialog{box-shadow:0 24px 70px rgba(0,0,0,.7)}
+.intent-bubble{border-left-width:4px}
+
+/* ---- mobile fit: tighter, full-bleed actions ---- */
+@media (max-width:760px){
+  .page{padding:14px 12px calc(118px + env(safe-area-inset-bottom))}
+  .screen-title h1{font-size:clamp(24px,6.4vw,30px)}
+  .camera-controls{left:8px;right:8px;bottom:8px;gap:8px}
+  .camera-controls .primary,.camera-controls .ghost-control{flex:1 1 140px}
+  .dual-join-row input{width:100%;letter-spacing:.22em;text-align:center}
+  .dual-code{letter-spacing:.1em;padding:12px 6px}
+  .tab-item{min-height:62px}
+  .nut-targets{gap:8px}
+  .coach{padding:16px}
+  .photo-slot{padding:14px}
+  .ai-previews{grid-template-columns:1fr}
+  .dual-replay-grid{grid-template-columns:1fr}
+  .mode-picker{margin:0 -2px 12px;scroll-snap-type:x mandatory}
+  .mode{scroll-snap-align:start}
+  .runway-controls .ghost-control,.runway-controls .primary{flex:1 1 140px}
+  .ai-controls .ghost-control,.ai-controls .primary{flex:1 1 150px}
+  .nut-water-btns .ghost-control{flex:1 1 130px}
+  .photo-pick{width:100%;justify-content:center}
+  .sheet-score{font-size:48px}
+}

@@ -1,1 +1,8 @@
-{"notes": ["Rest day fix: the Meal timing section now shows rest-day guidance (morning protein, regular meals, bedtime protein) instead of pre/post-workout timing when Rest day is selected."], "notify": true, "updated": "2026-10-19", "version": "2.4.1"}
+{
+  "notes": [
+    "Volt Rework: deeper stadium-night redesign \u2014 richer background depth, tiered card hierarchy, bolder mobile tab bar, gradient buttons with sheen, polished inputs and score ring, tighter mobile fit. All features work exactly as before."
+  ],
+  "notify": true,
+  "updated": "2026-10-19",
+  "version": "2.5.0"
+}
