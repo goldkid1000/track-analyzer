@@ -1,5 +1,12 @@
 [
   {
+    "version": "2.8.1",
+    "date": "2026-10-19",
+    "notes": [
+      "Runway animation reliability: the Your-form-vs-Pro-form runner no longer freezes \u2014 the frame loop now survives bad frames (a throw can't kill it), recovers automatically from iOS WebGL context loss by falling back to 2D, and resumes after background tabs. Play always revives the animation."
+    ]
+  },
+  {
     "version": "2.8.0",
     "date": "2026-10-19",
     "notes": [

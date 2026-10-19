@@ -1013,8 +1013,8 @@ function applyRunwayView(){
   var youLabel = $('runway3dLabelYou'), proLabel = $('runway3dLabelPro');
   if(youLabel) youLabel.style.left = picked === 'solo' ? '50%' : '25%';
   if(proLabel) proLabel.style.display = picked === 'solo' ? 'none' : '';
-  if(runway3d.active) runway3dDraw();
-  else runwayDraw();
+  if(runway3d.active){ try{ runway3dDraw(); }catch(e){ runway3dFailover(); } }
+  else{ try{ runwayDraw(); }catch(e){} }
 }
 function runwayMedians(){
   var frames = AI.deep.frames1 || [];
@@ -1118,25 +1118,33 @@ function runwayDraw(){
 }
 function runwayTick(ts){
   if(!runway.playing) return;
+  /* v2.8.1: schedule the next frame FIRST and guard the draw — one bad
+   * frame (WebGL context loss on iOS, a partial 3D object) used to throw
+   * before the next raf was queued, freezing the runway forever. */
+  if(typeof requestAnimationFrame === 'function') runway.raf = requestAnimationFrame(runwayTick);
   var now = ts || 0;
   var dt = runway.lastT ? Math.min(50, now - runway.lastT) : 16;
   runway.lastT = now;
   runway.phase += dt * 0.006;
-  runwayDraw();
-  if(typeof requestAnimationFrame === 'function') runway.raf = requestAnimationFrame(runwayTick);
+  try{ runwayDraw(); }catch(e){ /* a bad frame never kills the run */ }
 }
 function runwayStart(){
-  if(runway.playing) return;
+  /* v2.8.1: idempotent + self-healing — tapping Play always revives the
+   * loop, even if a previous raf chain died while playing stayed true. */
   runway.playing = true; runway.lastT = 0;
+  if(runway.raf && typeof cancelAnimationFrame === 'function'){ try{ cancelAnimationFrame(runway.raf); }catch(e){} }
+  runway.raf = 0;
   if(typeof requestAnimationFrame === 'function') runway.raf = requestAnimationFrame(runwayTick);
-  else runwayDraw();
+  else{ try{ runwayDraw(); }catch(e){} }
 }
 function runwayPause(){
   runway.playing = false;
   if(typeof cancelAnimationFrame === 'function' && runway.raf) cancelAnimationFrame(runway.raf);
 }
 function runwayReplay(){
-  runway.phase = 0; runwayDraw(); runwayStart();
+  runway.phase = 0;
+  try{ runwayDraw(); }catch(e){}
+  runwayStart();
 }
 
 /* ================= Runway 3D: cartoon runners (Three.js via CDN) =================
@@ -1286,6 +1294,9 @@ function initRunway3D(){
     runway3d.divider = divider;
     var you = buildRunner(0xffd23d);
     var pro = buildRunner(0x3ddc97);
+    /* v2.8.1: validate the runners before going live — a partial build
+     * used to pass init and then throw every frame. */
+    if(!you || !pro || !you.root || !pro.root) return false;
     scene.add(you.root);
     scene.add(pro.root);
     runway3d.you = you;
@@ -1296,6 +1307,12 @@ function initRunway3D(){
     renderer.domElement.style.inset = '0';
     renderer.domElement.style.width = '100%';
     renderer.domElement.style.height = '100%';
+    /* v2.8.1: iOS loves to kill WebGL contexts (tab switch, memory
+     * pressure). Fail over to 2D instead of freezing on a dead canvas. */
+    renderer.domElement.addEventListener('webglcontextlost', function(e){
+      try{ e.preventDefault(); }catch(e2){}
+      runway3dFailover();
+    }, false);
     wrap.appendChild(renderer.domElement);
     runway3d.renderer = renderer;
     runway3d.scene = scene;
@@ -1308,6 +1325,10 @@ function initRunway3D(){
 }
 function runway3dDraw(){
   if(!runway3d.renderer || !runway3d.scene) return;
+  /* v2.8.1: validate the runner objects — a partial init used to throw
+   * here every frame, which (before the tick guard) froze the runway. */
+  var you0 = runway3d.you, pro0 = runway3d.pro;
+  if(!you0 || !pro0 || !you0.root || !pro0.root){ runway3dFailover(); return; }
   var wrap = runway3d.wrap;
   var w = (wrap && wrap.clientWidth) || 640, h = (wrap && wrap.clientHeight) || 280;
   if(w !== runway3d.lastW || h !== runway3d.lastH){
@@ -1333,6 +1354,16 @@ function runway3dDraw(){
     if(d.position.x < -9.5) d.position.x += 14 * 1.4;
   }
   runway3d.renderer.render(runway3d.scene, runway3d.camera);
+}
+/* v2.8.1: clean 2D failover — when 3D breaks mid-run (WebGL context loss
+ * on iOS is the classic), drop back to the 2D canvas instead of freezing. */
+function runway3dFailover(){
+  runway3d.active = false; runway3d.failed = true;
+  try{
+    var canvas = $('runwayCanvas'); if(canvas) canvas.hidden = false;
+    var wrap = $('runway3dWrap'); if(wrap) wrap.hidden = true;
+  }catch(e){}
+  setRunwayHonesty();
 }
 function ensureRunway3D(){
   if(runway3d.active || runway3d.failed) return;
@@ -2240,6 +2271,16 @@ function initAI(){
   if(pauseBtn) pauseBtn.addEventListener('click', runwayPause);
   var replayBtn = $('runwayReplay');
   if(replayBtn) replayBtn.addEventListener('click', runwayReplay);
+  /* v2.8.1: browsers pause rAF in background tabs; if the chain got
+   * dropped, resume the runway automatically when the page is visible
+   * again instead of sitting frozen with playing=true. */
+  if(typeof document !== 'undefined' && document.addEventListener){
+    document.addEventListener('visibilitychange', function(){
+      if(!document.hidden && runway.playing && runway.hasRun){
+        try{ runwayStart(); }catch(e){}
+      }
+    });
+  }
   var startBtn = $('aiStartBtn');
   if(startBtn) startBtn.addEventListener('click', function(){
     if(AI.mode === 'watching') startCoachingFromWatch();
