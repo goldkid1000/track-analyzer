@@ -1014,3 +1014,229 @@ select:focus{border-color:var(--volt);outline:none;box-shadow:0 0 0 3px var(--vo
 .cam-mode-btn[aria-pressed="true"] .cam-mode-sub{color:#3a4020}
 .cam-mode-btn:focus-visible{outline:2px solid var(--volt);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){.cam-mode-btn{transition:none}}
+
+/* ============ v2.8.0 "Redline" — motorsport telemetry rework ============
+ * Carbon black base, racing red (#e10600) + optic white accents, condensed
+ * tabular numerals, thin timing-line dividers, subtle carbon weave.
+ * CSS-only: no selectors JS depends on were renamed; the v2.7.1 blanket
+ * [hidden] rule and cam-mode visibility are untouched. */
+:root{
+  --bg:#08090b;
+  --surface:#0e0f12;
+  --surface-raised:#15171c;
+  --surface-pressed:#1e2127;
+  --ink:#f5f6f7;
+  --muted:#9aa0a8;
+  --hairline:rgba(255,255,255,.08);
+  --accent:#e10600;            /* racing red */
+  --accent-2:#e8eaed;          /* optic white (gradient partner) */
+  --volt:#e10600;              /* primary highlight -> racing red */
+  --good:#00d084;              /* telemetry green */
+  --warn:#ffb020;
+  --danger:#ff2d2d;
+  --shadow:0 20px 60px rgba(0,0,0,.65);
+  --accent-deep:#a80400;
+  --accent-glow:rgba(225,6,0,.42);
+  --volt-deep:#8f0500;
+  --volt-glow:rgba(225,6,0,.25);
+  --redline-hairline:rgba(225,6,0,.35);
+  --card-top:rgba(255,255,255,.05);
+  --card-shadow:0 14px 44px rgba(0,0,0,.55);
+}
+
+/* carbon weave + redline glow backdrop */
+html{background:#060708}
+body{
+  background:
+    repeating-linear-gradient(45deg,rgba(255,255,255,.014) 0 2px,transparent 2px 4px),
+    repeating-linear-gradient(-45deg,rgba(255,255,255,.014) 0 2px,transparent 2px 4px),
+    radial-gradient(1000px 460px at 50% -8%,rgba(225,6,0,.11),transparent 62%),
+    radial-gradient(700px 400px at 100% 100%,rgba(225,6,0,.05),transparent 60%),
+    linear-gradient(180deg,#0a0b0e,#060708);
+  background-attachment:fixed;
+  min-height:100vh;min-height:100dvh;
+}
+.app-shell,.app-main{background:transparent}
+
+/* condensed tabular numerals everywhere numbers matter */
+.score b,.sheet-score,.dual-code,.nut-target-num,.nut-water-text,
+.metric-row span:last-child,.ai-metric-row span:last-child,
+#analysisProgressPercent,.ai-sum-row span:last-child,.sheet-metric span:last-child{
+  font-variant-numeric:tabular-nums;
+}
+
+/* ---- topbar: glass + redline hairline ---- */
+.app-topbar{
+  background:rgba(8,9,11,.88);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  border-bottom:1px solid transparent;
+  border-image:linear-gradient(90deg,transparent,rgba(225,6,0,.55) 50%,transparent) 1;
+  box-shadow:0 8px 28px rgba(0,0,0,.5);
+  padding-top:calc(10px + env(safe-area-inset-top));
+}
+.screen-title h1{
+  background:linear-gradient(180deg,#fff 30%,#c9ced4);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+}
+.topbar-status{background:rgba(0,208,132,.1);border:1px solid rgba(0,208,132,.3);padding:8px 12px;border-radius:999px}
+
+/* ---- sidebar ---- */
+.app-sidebar{background:rgba(7,8,10,.75);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.brand-name{background:linear-gradient(90deg,#ff2a1e,#fff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.brand-mark{color:var(--accent);animation:none}
+.nav-item[aria-current="page"]{background:rgba(225,6,0,.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
+.nav-item[aria-current="page"]::before{background:linear-gradient(180deg,#ff2a1e,var(--accent-deep))}
+.nav-item[aria-current="page"] svg{color:#ff2a1e}
+
+/* ---- tabbar: red pill active ---- */
+.app-tabbar{
+  background:rgba(8,9,11,.96);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  border-top:1px solid rgba(255,255,255,.09);
+  box-shadow:0 -10px 30px rgba(0,0,0,.55);
+  padding:10px 10px calc(10px + env(safe-area-inset-bottom));
+}
+.tab-item[aria-current="page"]{
+  background:linear-gradient(180deg,#f31a10,var(--accent) 60%,var(--accent-deep));color:#fff;
+  box-shadow:0 6px 18px var(--volt-glow);
+}
+.tab-item[aria-current="page"] svg{filter:none}
+
+/* ---- timing-line dividers ---- */
+.ai-section{border-top:1px solid var(--hairline);position:relative}
+.ai-section::before{
+  content:"";position:absolute;top:-1px;left:0;width:64px;height:2px;border-radius:99px;
+  background:linear-gradient(90deg,var(--accent),transparent);
+}
+.ai-section-title::before,.dual-intro h2::before{
+  background:linear-gradient(180deg,#ff2a1e,var(--accent-deep))!important;
+}
+.panel h2::after,.coach h2::after,.photo-head h2::after{
+  background:linear-gradient(90deg,var(--accent),rgba(225,6,0,0))!important;
+}
+
+/* ---- panels: carbon cards ---- */
+.panel,.coach,.photo-slot,.dual-card{
+  background:
+    linear-gradient(180deg,var(--card-top),transparent 130px),
+    linear-gradient(180deg,#111318,var(--surface));
+  border-color:rgba(255,255,255,.12);
+  box-shadow:var(--card-shadow),inset 0 1px 0 rgba(255,255,255,.05);
+}
+.panel h2,.coach h2,.photo-head h2{
+  background:linear-gradient(180deg,#fff 25%,#b9bfc7);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+}
+
+/* ---- buttons: racing red primary, optic white start ---- */
+.primary{
+  background:linear-gradient(180deg,#ff2a1e,var(--accent) 55%,var(--accent-deep));
+  box-shadow:0 10px 28px var(--accent-glow),inset 0 1px 0 rgba(255,255,255,.3),inset 0 -2px 6px rgba(0,0,0,.25);
+}
+.primary:hover{background:linear-gradient(180deg,#ff4034,#e10600 55%,#a80400)}
+.volt-start{
+  background:linear-gradient(180deg,#ffffff,#e8eaed 60%,#c9ced4)!important;
+  color:#0b0c0e!important;
+  box-shadow:0 10px 28px rgba(255,255,255,.14),inset 0 1px 0 rgba(255,255,255,.6)!important;
+}
+.photo-pick{
+  background:linear-gradient(180deg,#ffffff,#e8eaed 60%,#c9ced4);
+  color:#0b0c0e;
+  box-shadow:0 6px 18px rgba(255,255,255,.12),inset 0 1px 0 rgba(255,255,255,.5);
+}
+.ghost-control:hover{border-color:rgba(225,6,0,.6);box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 4px 18px rgba(225,6,0,.2)}
+.ghost-control[aria-pressed="true"],#blockStartsToggle[aria-pressed="true"]{
+  background:linear-gradient(180deg,#ff2a1e,var(--accent-deep));border-color:transparent;color:#fff;
+}
+.watch-fix{background:linear-gradient(180deg,#ff2a1e,var(--accent-deep))}
+.watch-fix:hover{background:linear-gradient(180deg,#ff4034,#c00500)}
+
+/* ---- mode pickers: red active pill ---- */
+.mode[aria-pressed="true"]{
+  background:linear-gradient(180deg,#ff2a1e,var(--accent) 60%,var(--accent-deep));
+  color:#fff;box-shadow:0 6px 18px var(--volt-glow),inset 0 1px 0 rgba(255,255,255,.3);
+}
+.cam-mode-btn[aria-pressed="true"]{
+  background:linear-gradient(135deg,#ff2a1e,var(--accent-deep));
+  border-color:transparent;color:#fff;box-shadow:0 6px 22px rgba(225,6,0,.3);
+}
+.cam-mode-btn[aria-pressed="true"] .cam-mode-sub{color:rgba(255,255,255,.75)}
+
+/* ---- score ring + bars: redline ---- */
+.score{background:conic-gradient(var(--accent) 0deg,#22262c 0deg);box-shadow:0 0 24px var(--volt-glow)}
+.score::after{background:#0b0d10}
+.score b{background:linear-gradient(180deg,#fff,#ff6a5e);-webkit-background-clip:text;background-clip:text;color:transparent}
+.bar i,.ai-metric-bar i{background:linear-gradient(90deg,var(--accent-deep),var(--accent) 55%,#ff6a5e);box-shadow:0 0 10px rgba(225,6,0,.45)}
+.analysis-track i{background:linear-gradient(90deg,var(--accent-deep),var(--accent) 55%,#ff6a5e)}
+#analysisProgressPercent{color:#ff6a5e}
+.sheet-score{background:linear-gradient(180deg,#fff,#ff6a5e);-webkit-background-clip:text;background-clip:text;color:transparent}
+.metric-row span:last-child,.ai-metric-row span:last-child{color:#ff6a5e}
+.nut-target-num{background:linear-gradient(90deg,#fff,#ff6a5e);-webkit-background-clip:text;background-clip:text;color:transparent}
+
+/* ---- camera card: broadcast frame, red trim ---- */
+.camera-card{
+  border-color:rgba(225,6,0,.35);
+  box-shadow:0 18px 60px rgba(0,0,0,.65),0 0 0 1px rgba(0,0,0,.6),0 0 34px rgba(225,6,0,.08);
+}
+.spinner{border-top-color:var(--accent)}
+.status-pill.live::before{background:var(--danger)}
+.record-ring::after{background:var(--accent)}
+.dual-code{
+  border-color:rgba(225,6,0,.4);color:#ff6a5e;
+  box-shadow:inset 0 2px 10px rgba(0,0,0,.5),0 0 22px rgba(225,6,0,.1);
+}
+
+/* ---- toggles, cues, misc accents ---- */
+.nut-unit-toggle button[aria-pressed="true"],.nut-day-toggle button[aria-pressed="true"],
+.photo-source-toggle button[aria-pressed="true"],.runway-view-toggle button[aria-pressed="true"]{
+  background:linear-gradient(180deg,#ff2a1e,var(--accent-deep));color:#fff;
+  box-shadow:0 4px 14px var(--accent-glow);
+}
+.nut-weight-field input:focus,.dual-join-row input:focus,.ai-ref-label input:focus{
+  border-color:var(--accent);box-shadow:inset 0 2px 8px rgba(0,0,0,.45),0 0 0 3px rgba(225,6,0,.22);outline:none;
+}
+select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(225,6,0,.22)}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{
+  outline:2px solid #ff2a1e;outline-offset:2px;
+}
+.cue-num{background:linear-gradient(180deg,#ff2a1e,var(--accent-deep));color:#fff}
+.intent-dot{background:var(--accent);box-shadow:0 0 0 4px rgba(225,6,0,.16)}
+.intent-bubble{border-left-color:var(--accent)}
+.intent-bubble strong{color:#ff6a5e}
+.focus-label{color:#ff6a5e}
+.nut-time-card{border-left-color:var(--accent)}
+.nut-time-card h3{color:#ff6a5e}
+.nut-meal-card li::marker{color:var(--accent)}
+.cue:first-child{border-top-color:var(--hairline)}
+.tips{background:rgba(225,6,0,.08);border-color:rgba(225,6,0,.3)}
+.tips strong{color:#ff6a5e}
+.video:hover{border-color:var(--accent);box-shadow:0 10px 28px rgba(225,6,0,.2)}
+.thumb::before{background:linear-gradient(145deg,transparent 40%,rgba(225,6,0,.75))}
+.app-footer button{color:#ff6a5e}
+.update-banner{border-color:rgba(225,6,0,.55);box-shadow:0 18px 50px rgba(0,0,0,.6),0 0 26px rgba(225,6,0,.12)}
+.ai-toast{border-color:rgba(225,6,0,.5)}
+#dualScrub{accent-color:var(--accent)}
+.nut-hero{border-color:rgba(225,6,0,.45);box-shadow:0 14px 44px rgba(225,6,0,.12),inset 0 1px 0 rgba(255,255,255,.06)}
+.nut-hero-icon{filter:drop-shadow(0 0 10px var(--accent-glow));animation:none}
+.brand-mark{animation:none}
+
+/* ---- true fullscreen mobile: edge-to-edge, safe-area aware ---- */
+@media (max-width:760px){
+  html,body{min-height:100dvh}
+  .page{
+    padding-left:0;padding-right:0;
+    padding-top:14px;padding-bottom:calc(118px + env(safe-area-inset-bottom));
+  }
+  .page>.view-section,.page>section{padding-left:14px;padding-right:14px}
+  .app-topbar{
+    padding-left:calc(14px + env(safe-area-inset-left));
+    padding-right:calc(14px + env(safe-area-inset-right));
+  }
+  .app-tabbar{
+    padding-left:calc(10px + env(safe-area-inset-left));
+    padding-right:calc(10px + env(safe-area-inset-right));
+  }
+  .camera-card{border-radius:0;border-left:0;border-right:0}
+  .update-banner{
+    left:calc(10px + env(safe-area-inset-left));
+    right:calc(10px + env(safe-area-inset-right));
+  }
+}

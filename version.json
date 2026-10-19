@@ -1,9 +1,9 @@
 {
   "notes": [
-    "FIX: the Two Cameras section no longer shows in Solo mode (a missing blanket [hidden] CSS rule let it stay visible).",
-    "FIX: uploaded clips that freeze on iOS now show a 'Play clip' button \u2014 tap it and the AI analyzes the full clip with a form score, key fix, and rep count."
+    "REDLINE rework: motorsport-telemetry look \u2014 carbon black base with a subtle carbon weave, racing red + optic white accents, condensed tabular numerals, thin red timing-line dividers.",
+    "True fullscreen on mobile: edge-to-edge display, safe-area-aware header and tab bar, full-bleed camera at 390px."
   ],
   "notify": true,
   "updated": "2026-10-19",
-  "version": "2.7.1"
+  "version": "2.8.0"
 }

@@ -1,18 +1,26 @@
 [
   {
+    "version": "2.8.0",
+    "date": "2026-10-19",
+    "notes": [
+      "REDLINE rework: motorsport-telemetry look \u2014 carbon black base with a subtle carbon weave, racing red + optic white accents, condensed tabular numerals, thin red timing-line dividers.",
+      "True fullscreen on mobile: edge-to-edge display, safe-area-aware header and tab bar, full-bleed camera at 390px."
+    ]
+  },
+  {
     "version": "2.7.1",
     "date": "2026-10-19",
     "notes": [
       "FIX: the Two Cameras section no longer shows in Solo mode (a missing blanket [hidden] CSS rule let it stay visible).",
-      "FIX: uploaded clips that freeze on iOS now show a ▶ Play clip button — tap it and the AI analyzes the full clip with a form score, key fix, and rep count."
+      "FIX: uploaded clips that freeze on iOS now show a \u25b6 Play clip button \u2014 tap it and the AI analyzes the full clip with a form score, key fix, and rep count."
     ]
   },
   {
     "version": "2.7.0",
     "date": "2026-10-19",
     "notes": [
-      "NEW: Solo vs Two-cameras mode picker at the top of the AI Analyzer tab — solo records and analyzes on one phone (default), two cameras connects both sides of the body. Choice is remembered.",
-      "NEW: 🔁 Double-check button on solo results — re-runs the AI on your rep and reports whether both passes agree.",
+      "NEW: Solo vs Two-cameras mode picker at the top of the AI Analyzer tab \u2014 solo records and analyzes on one phone (default), two cameras connects both sides of the body. Choice is remembered.",
+      "NEW: \ud83d\udd01 Double-check button on solo results \u2014 re-runs the AI on your rep and reports whether both passes agree.",
       "Coaching panel bug fixes: the \"Can't see\" row no longer doubles its label, and Good / One fix / Form score / Can't see reset when the camera turns off or a new recording starts."
     ],
     "notify": true
@@ -21,8 +29,8 @@
     "version": "2.6.0",
     "date": "2026-10-19",
     "notes": [
-      "Clip reliability: replay hardening — stale clip URLs are revoked before new ones load, preload=metadata on replay videos, and sync listeners can no longer stack up across recordings.",
-      "iOS analysis fix: the pose-sampling video is now attached to the page (hidden) during analysis — iOS Safari refused to decode detached videos, which made clips score \"unavailable\".",
+      "Clip reliability: replay hardening \u2014 stale clip URLs are revoked before new ones load, preload=metadata on replay videos, and sync listeners can no longer stack up across recordings.",
+      "iOS analysis fix: the pose-sampling video is now attached to the page (hidden) during analysis \u2014 iOS Safari refused to decode detached videos, which made clips score \"unavailable\".",
       "NEW Double-check: re-runs the AI analysis on your saved clip and tells you whether both checks agree or disagree, so you know when to trust the number or retake.",
       "Slow motion upgrade: new 0.1x ultra-slow replay speed for frame-level inspection (both clips follow the speed)."
     ],
@@ -32,7 +40,7 @@
     "version": "2.5.0",
     "date": "2026-10-19",
     "notes": [
-      "Volt Rework — deeper athletic redesign: layered stadium-night background glows, tiered panel/card hierarchy with top-light and depth, bolder bottom tab bar (real volt pill on active), gradient action buttons with hover sheen, polished inputs with volt focus glow, gradient score ring, kicker-accented section titles.",
+      "Volt Rework \u2014 deeper athletic redesign: layered stadium-night background glows, tiered panel/card hierarchy with top-light and depth, bolder bottom tab bar (real volt pill on active), gradient action buttons with hover sheen, polished inputs with volt focus glow, gradient score ring, kicker-accented section titles.",
       "Tighter mobile fit: full-width camera actions, bolder 62px tab targets, snap-scrolling mode picker, 100% join-code input, zero horizontal scroll. Every feature works exactly as before."
     ],
     "notify": true
@@ -49,7 +57,7 @@
     "version": "2.4.0",
     "date": "2026-10-19",
     "notes": [
-      "New Nutrition tab: daily protein, carb, and water targets computed from your body weight (training vs rest day), pre/post-workout meal timing, dorm-friendly meal ideas (dining hall, microwave, no-cook), and a hydration tracker that resets daily — all on-device.",
+      "New Nutrition tab: daily protein, carb, and water targets computed from your body weight (training vs rest day), pre/post-workout meal timing, dorm-friendly meal ideas (dining hall, microwave, no-cook), and a hydration tracker that resets daily \u2014 all on-device.",
       "Full UI refresh: richer cards with depth, gradient action buttons, a sharper bottom tab bar and sidebar, smoother transitions, and refined typography across every screen. Every feature works exactly as before."
     ],
     "notify": true
@@ -58,7 +66,7 @@
     "version": "2.3.5",
     "date": "2026-10-19",
     "notes": [
-      "Home-screen logo now embedded directly in the app (same trick as StudyLens) — shows reliably when adding to Home Screen."
+      "Home-screen logo now embedded directly in the app (same trick as StudyLens) \u2014 shows reliably when adding to Home Screen."
     ],
     "notify": true
   },
@@ -74,7 +82,7 @@
     "version": "2.3.3",
     "date": "2026-10-19",
     "notes": [
-      "Mobile layout pass at phone width: no sideways scrolling — camera tiles, controls, and results stack and fit. Every tap target is thumb-size (44px+) including the small two-camera, photo, and replay buttons and all dropdowns.",
+      "Mobile layout pass at phone width: no sideways scrolling \u2014 camera tiles, controls, and results stack and fit. Every tap target is thumb-size (44px+) including the small two-camera, photo, and replay buttons and all dropdowns.",
       "Styled the pieces that had no styles before (replay speed row, rig-smoothness picker, AI-moment marker rows), and fixed callout bubbles and text that were using missing theme variables (white text on a light bubble)."
     ],
     "notify": true
@@ -91,7 +99,7 @@
     "version": "2.3.1",
     "date": "2026-10-19",
     "notes": [
-      "Update reliability fix: tapping Update can no longer strand you on the old version — app files now carry a version tag so updates always load fresh, and the update notice stays until the new version is confirmed running."
+      "Update reliability fix: tapping Update can no longer strand you on the old version \u2014 app files now carry a version tag so updates always load fresh, and the update notice stays until the new version is confirmed running."
     ],
     "notify": true
   },
@@ -99,7 +107,7 @@
     "version": "2.3.0",
     "date": "2026-10-18",
     "notes": [
-      "Rig smoothness picker: 120 fps or 60 fps for the skeleton rig redraw (honest labeling — redraw only, pose detection stays device-limited). Fixed: manual 'Send best frame to AI Photo' + auto-send delivered the frame twice; now marked sent on landing, failed grabs still retry."
+      "Rig smoothness picker: 120 fps or 60 fps for the skeleton rig redraw (honest labeling \u2014 redraw only, pose detection stays device-limited). Fixed: manual 'Send best frame to AI Photo' + auto-send delivered the frame twice; now marked sent on landing, failed grabs still retry."
     ],
     "notify": true
   },
@@ -108,12 +116,12 @@
     "date": "2026-10-17",
     "notes": [
       "Two cameras: no more clip-length cap and no more auto-stop. Recording runs until you tap Stop video, hold 2 fingers, turn a camera off, or disconnect. The old 10-second cap and the 'you left the frame' auto-stop are gone.",
-      "Two cameras: Stop now really stops BOTH cameras. The host sends Stop again if the second camera doesn't answer, sends a heartbeat while recording, and a closing connection stops a running recording — the second camera no longer keeps rolling after you ended the video on the main.",
+      "Two cameras: Stop now really stops BOTH cameras. The host sends Stop again if the second camera doesn't answer, sends a heartbeat while recording, and a closing connection stops a running recording \u2014 the second camera no longer keeps rolling after you ended the video on the main.",
       "Arm swings are now a real activity: the camera scores your arm action (elbow angle, hands on your own side, hand height) instead of reading arm practice as rest with no reps. A clip where the camera can't see your full body now says 'Couldn't score' instead of 0%.",
-      "Your recording's best frame now goes to AI Photo on its own — with markers and You vs Pro — and the two-camera replay has a 'Send best frame to AI Photo' button.",
+      "Your recording's best frame now goes to AI Photo on its own \u2014 with markers and You vs Pro \u2014 and the two-camera replay has a 'Send best frame to AI Photo' button.",
       "Scans tell you when they're done: 'Analysis complete' speaks out loud, and the new 'Notify me when scans finish' button can send a device notification too (tap it once to allow).",
-      "Replay now has slow motion (0.25× / 0.5× / 1×) plus AI moments — tap a red 'Needs work' or green 'Looks good' marker to jump both clips to that moment. Uploaded clips keep playing after analysis with their own moments.",
-      "The rig is smooth now: it glides between camera frames at your screen's refresh rate (up to 120 fps) instead of jumping, with a live 'Rig drawing ~X fps · pose ~Y/sec' line. It also clears itself if the feed freezes or goes black, and hands no longer draw alone on a face close-up (that was the tangled knot)."
+      "Replay now has slow motion (0.25\u00d7 / 0.5\u00d7 / 1\u00d7) plus AI moments \u2014 tap a red 'Needs work' or green 'Looks good' marker to jump both clips to that moment. Uploaded clips keep playing after analysis with their own moments.",
+      "The rig is smooth now: it glides between camera frames at your screen's refresh rate (up to 120 fps) instead of jumping, with a live 'Rig drawing ~X fps \u00b7 pose ~Y/sec' line. It also clears itself if the feed freezes or goes black, and hands no longer draw alone on a face close-up (that was the tangled knot)."
     ],
     "notify": true
   },
@@ -121,10 +129,10 @@
     "version": "2.1.9",
     "date": "2026-10-17",
     "notes": [
-      "Two cameras: ONLY the main camera (Camera 1) starts and stops recording now. Camera 2 never starts or stops — its hand signs used to cancel Camera 1’s hold, because the other hand hanging at your side reads as a different sign and reset the hold before it could fire. Hold 1 finger up to Camera 1 to start, 2 fingers to stop. The Camera 2 screen says the main camera controls recording.",
-      "The rig is no longer throttled in two-camera mode: the old step-down cut each camera to about 2 fresh poses per second on slower phones, which read as a laggy rig. Inference now runs at full rate on both cameras, and “smooth mode” is gone — a rig that draws just says it’s on.",
-      "Voice now speaks on iPhone: turning Voice coaching on says “Voice coaching on” out loud, which proves voice works and unlocks the phone’s speech audio. The old code cancelled speech right before speaking, which iOS silently swallowed, so the start/stop announcements never sounded.",
-      "The “Waiting for Camera 2…” line now disappears the moment Camera 2 connects, instead of sitting there under a live Camera 2 feed."
+      "Two cameras: ONLY the main camera (Camera 1) starts and stops recording now. Camera 2 never starts or stops \u2014 its hand signs used to cancel Camera 1\u2019s hold, because the other hand hanging at your side reads as a different sign and reset the hold before it could fire. Hold 1 finger up to Camera 1 to start, 2 fingers to stop. The Camera 2 screen says the main camera controls recording.",
+      "The rig is no longer throttled in two-camera mode: the old step-down cut each camera to about 2 fresh poses per second on slower phones, which read as a laggy rig. Inference now runs at full rate on both cameras, and \u201csmooth mode\u201d is gone \u2014 a rig that draws just says it\u2019s on.",
+      "Voice now speaks on iPhone: turning Voice coaching on says \u201cVoice coaching on\u201d out loud, which proves voice works and unlocks the phone\u2019s speech audio. The old code cancelled speech right before speaking, which iOS silently swallowed, so the start/stop announcements never sounded.",
+      "The \u201cWaiting for Camera 2\u2026\u201d line now disappears the moment Camera 2 connects, instead of sitting there under a live Camera 2 feed."
     ],
     "notify": true
   },
@@ -132,11 +140,11 @@
     "version": "2.1.8",
     "date": "2026-10-17",
     "notes": [
-      "Camera starts OFF. Opening the app or the AI Analyzer tab never starts the camera or asks for permission — the preview shows “Camera off — turn it on to start” until you tap “Camera: on”. Stopping a recording turns the camera off too, and the button tells the truth.",
-      "Black preview fixed at the real broken step: the video used to be told to play while its panel was still hidden, and that failed play was silently swallowed, so the preview stayed black forever under a “Watching” line. Play now retries once the panel is visible, and if the preview is still black 2 seconds later the status line says so and tells you to toggle the camera off and on.",
-      "Hand signs work on the hand alone: ANY extended finger counts (thumb or any finger — the count comes from finger joints, tip vs middle joint), 1 finger starts recording, 2 fingers stop, same rule for both, on either camera. The face is no longer required — a hand held up with your face turned or out of frame still fires.",
+      "Camera starts OFF. Opening the app or the AI Analyzer tab never starts the camera or asks for permission \u2014 the preview shows \u201cCamera off \u2014 turn it on to start\u201d until you tap \u201cCamera: on\u201d. Stopping a recording turns the camera off too, and the button tells the truth.",
+      "Black preview fixed at the real broken step: the video used to be told to play while its panel was still hidden, and that failed play was silently swallowed, so the preview stayed black forever under a \u201cWatching\u201d line. Play now retries once the panel is visible, and if the preview is still black 2 seconds later the status line says so and tells you to toggle the camera off and on.",
+      "Hand signs work on the hand alone: ANY extended finger counts (thumb or any finger \u2014 the count comes from finger joints, tip vs middle joint), 1 finger starts recording, 2 fingers stop, same rule for both, on either camera. The face is no longer required \u2014 a hand held up with your face turned or out of frame still fires.",
       "The body rig only draws when a real body is detected: at least one shoulder AND at least one hip must be actually seen, on top of the existing 6-visible-joint rule. When the body leaves the frame, the rig vanishes with it instead of hanging on guessed points.",
-      "The rig is in sync with your body now: it snaps to the latest landmarks every frame — no interpolation glide, no grace delay, no model smoothing. It still maps through the video's real on-screen shape, so it sits on you, not beside you."
+      "The rig is in sync with your body now: it snaps to the latest landmarks every frame \u2014 no interpolation glide, no grace delay, no model smoothing. It still maps through the video's real on-screen shape, so it sits on you, not beside you."
     ],
     "notify": true
   },
@@ -144,11 +152,11 @@
     "version": "2.1.7",
     "date": "2026-10-17",
     "notes": [
-      "The rig only draws joints the camera actually sees. A joint that is hidden, behind you, or out of frame gets no dot and no line — no more head blob on your back, no more tangled knot on close-ups. If too few joints are visible, that feed draws nothing instead of garbage.",
-      "Face is now one small head marker instead of a blob of face dots. Hands are small dots with thin lines, and the finger skeleton only shows when a hand is confidently detected — no more spiderwebs.",
-      "Status lines now tell the truth: “Skeleton on” shows only when the rig is really drawing on that camera, and it names the camera (“Skeleton on — rig follows you on Camera 1.”). “Skeleton couldn't load” only shows when no rig is drawing. Hand signs name the camera that sees them (“Camera 1: I see your hand…”).",
-      "Hand signs really work from BOTH cameras now — whichever camera sees your hand drives start/stop. A new finger count must hold for 2 frames before it counts, and one dropped frame no longer resets your ~1 second hold.",
-      "Hands are read on a bigger picture (640px instead of 320px), so a hand at arm's length is actually seen — that was why the app said “No hand seen” while a hand was plainly up.",
+      "The rig only draws joints the camera actually sees. A joint that is hidden, behind you, or out of frame gets no dot and no line \u2014 no more head blob on your back, no more tangled knot on close-ups. If too few joints are visible, that feed draws nothing instead of garbage.",
+      "Face is now one small head marker instead of a blob of face dots. Hands are small dots with thin lines, and the finger skeleton only shows when a hand is confidently detected \u2014 no more spiderwebs.",
+      "Status lines now tell the truth: \u201cSkeleton on\u201d shows only when the rig is really drawing on that camera, and it names the camera (\u201cSkeleton on \u2014 rig follows you on Camera 1.\u201d). \u201cSkeleton couldn't load\u201d only shows when no rig is drawing. Hand signs name the camera that sees them (\u201cCamera 1: I see your hand\u2026\u201d).",
+      "Hand signs really work from BOTH cameras now \u2014 whichever camera sees your hand drives start/stop. A new finger count must hold for 2 frames before it counts, and one dropped frame no longer resets your ~1 second hold.",
+      "Hands are read on a bigger picture (640px instead of 320px), so a hand at arm's length is actually seen \u2014 that was why the app said \u201cNo hand seen\u201d while a hand was plainly up.",
       "The rig sits ON you now: it maps through the video's real on-screen shape instead of guessing, and the full camera frame is shown (no more cropping the body off). Unseen joints get a short grace before they disappear, so the rig stays steady instead of popping."
     ],
     "notify": true
@@ -157,11 +165,11 @@
     "version": "2.1.6",
     "date": "2026-10-17",
     "notes": [
-      "Two cameras: the skeleton rig now draws on BOTH cameras — Camera 1 AND Camera 2 — live whenever the camera is on. The rig now shows your full body plus every finger joint on both hands.",
-      "Hand signs now work in two-camera mode: hold up 1 finger to start or 2 fingers to stop on EITHER camera — whichever camera sees your hand.",
+      "Two cameras: the skeleton rig now draws on BOTH cameras \u2014 Camera 1 AND Camera 2 \u2014 live whenever the camera is on. The rig now shows your full body plus every finger joint on both hands.",
+      "Hand signs now work in two-camera mode: hold up 1 finger to start or 2 fingers to stop on EITHER camera \u2014 whichever camera sees your hand.",
       "The skeleton rig is now smooth, not jumpy: it glides between camera frames, and if your device gets slow it drops to a lighter mode on its own instead of lagging the preview.",
-      "No more silent failures: a status line under the two-camera views says what the camera actually sees — no hand, face not visible, I see your hand — and if the skeleton cannot load it says so and tells you to check your connection and reload.",
-      "In two-camera mode, starting and stopping now speak “Recording has started.” and “Recording has ended.” on both devices, even with voice coaching off."
+      "No more silent failures: a status line under the two-camera views says what the camera actually sees \u2014 no hand, face not visible, I see your hand \u2014 and if the skeleton cannot load it says so and tells you to check your connection and reload.",
+      "In two-camera mode, starting and stopping now speak \u201cRecording has started.\u201d and \u201cRecording has ended.\u201d on both devices, even with voice coaching off."
     ],
     "notify": true
   },
@@ -169,15 +177,15 @@
     "version": "2.1.5",
     "date": "2026-10-17",
     "notes": [
-      "Camera works on PC too — if there is no back camera, the app just uses whatever camera is there. If the camera does not start, it tells you exactly why (in use, permission off, no camera, or needs the secure link).",
+      "Camera works on PC too \u2014 if there is no back camera, the app just uses whatever camera is there. If the camera does not start, it tells you exactly why (in use, permission off, no camera, or needs the secure link).",
       "Two cameras: the live views are now plainly labeled Camera 1 and Camera 2. You can see skeleton lines on you in the Camera 2 video.",
       "Every camera can now switch: tap Switch camera to move between the front camera, the back camera, and any webcam on that device. Each camera can also be turned off and back on.",
-      "Two-camera join is one straight flow: open Two cameras, tap Join as second camera, type the code, tap Join — that camera turns on and connects.",
+      "Two-camera join is one straight flow: open Two cameras, tap Join as second camera, type the code, tap Join \u2014 that camera turns on and connects.",
       "Recording never records a black feed: if a camera is off, recording waits until it is back on.",
-      "Guide tab is simpler and easier to read: bigger text, more space, one fix per card. Same 40 entries — presentation only.",
-      "Your form vs Pro form is now a 3D-style side-by-side comparison — cartoon runners, not your real video, not motion capture. New view toggle: AI picks (the AI picks a view by a plain rule on your top fix and says why), You vs Pro, or Just me (your form alone, bigger).",
-      "AI Photo results now draw circles, lines, and short labels right on your best and worst photos — green for what looks good, yellow for needs work, red for the top fix. Tap a circle to see its cue and drill. A toggle hides the markings to see the clean photo. A joint that cannot be seen clearly in a photo is never marked.",
-      "Uploaded clips now get the full analysis — same pose and skeleton analysis, deep check, per-rep breakdown, and best/worst photos as a live recording, with results in AI Photo and Guide."
+      "Guide tab is simpler and easier to read: bigger text, more space, one fix per card. Same 40 entries \u2014 presentation only.",
+      "Your form vs Pro form is now a 3D-style side-by-side comparison \u2014 cartoon runners, not your real video, not motion capture. New view toggle: AI picks (the AI picks a view by a plain rule on your top fix and says why), You vs Pro, or Just me (your form alone, bigger).",
+      "AI Photo results now draw circles, lines, and short labels right on your best and worst photos \u2014 green for what looks good, yellow for needs work, red for the top fix. Tap a circle to see its cue and drill. A toggle hides the markings to see the clean photo. A joint that cannot be seen clearly in a photo is never marked.",
+      "Uploaded clips now get the full analysis \u2014 same pose and skeleton analysis, deep check, per-rep breakdown, and best/worst photos as a live recording, with results in AI Photo and Guide."
     ],
     "notify": true
   },
@@ -185,8 +193,8 @@
     "version": "2.1.4",
     "date": "2026-10-17",
     "notes": [
-      "Update notice shows once per update (what changed), then never again until the next update — works on PC and phone.",
-      "Removed activity pickers — the AI auto-detects what you are doing (sprint, drill, squat, and more). One Block Starts toggle: turn it on for block starts, off for everything else.",
+      "Update notice shows once per update (what changed), then never again until the next update \u2014 works on PC and phone.",
+      "Removed activity pickers \u2014 the AI auto-detects what you are doing (sprint, drill, squat, and more). One Block Starts toggle: turn it on for block starts, off for everything else.",
       "Works on PC and phone: same tabs, same controls, same one-time update notice on both."
     ],
     "notify": true
@@ -195,12 +203,12 @@
     "version": "2.1.3",
     "date": "2026-10-17",
     "notes": [
-      "Three tabs now: AI Analyzer, AI Photo, Guide. The Side View tab is gone — its side-view tip (phone square to the lane, 10–15 ft away, full body in frame) lives in the AI Analyzer.",
-      "When an analysis finishes, AI Photo and Guide get a red “New” badge, and the AI Analyzer shows “Analysis done — see your AI Photo report and your new fix in Guide.” Opening a tab clears its badge.",
-      "Guide now shows “Your latest fix” from the run you just finished, at the top.",
-      "AI Photo is connected to the AI Analyzer: it shows your latest run (reps, top fixes, best/worst frames), and every photo gets pointing markers — green checks where form looks good, a red mark where to work — plus “What looks good” and “Work on” lists in plain words. If a joint is out of frame, it says which one instead of guessing.",
-      "Your form vs Pro form — watch the run: a 2D animated demo on a runway in AI Photo. Your character runs with your measured angles, the pro runs with ideal angles, and the callout shows your actual top fix. 2D drawing from measured angles — not real 3D, not your real video. Play / Pause / Replay included.",
-      "Knowledge base grown from 26 to 40 entries: finish & lean, sprint hurdles, 400m hurdles, 4×100m, 4×400m, pole vault basics, safe jump landings, shot put glide + rotation, hammer basics, javelin approach, 800m, 1500m / mile, 5000m."
+      "Three tabs now: AI Analyzer, AI Photo, Guide. The Side View tab is gone \u2014 its side-view tip (phone square to the lane, 10\u201315 ft away, full body in frame) lives in the AI Analyzer.",
+      "When an analysis finishes, AI Photo and Guide get a red \u201cNew\u201d badge, and the AI Analyzer shows \u201cAnalysis done \u2014 see your AI Photo report and your new fix in Guide.\u201d Opening a tab clears its badge.",
+      "Guide now shows \u201cYour latest fix\u201d from the run you just finished, at the top.",
+      "AI Photo is connected to the AI Analyzer: it shows your latest run (reps, top fixes, best/worst frames), and every photo gets pointing markers \u2014 green checks where form looks good, a red mark where to work \u2014 plus \u201cWhat looks good\u201d and \u201cWork on\u201d lists in plain words. If a joint is out of frame, it says which one instead of guessing.",
+      "Your form vs Pro form \u2014 watch the run: a 2D animated demo on a runway in AI Photo. Your character runs with your measured angles, the pro runs with ideal angles, and the callout shows your actual top fix. 2D drawing from measured angles \u2014 not real 3D, not your real video. Play / Pause / Replay included.",
+      "Knowledge base grown from 26 to 40 entries: finish & lean, sprint hurdles, 400m hurdles, 4\u00d7100m, 4\u00d7400m, pole vault basics, safe jump landings, shot put glide + rotation, hammer basics, javelin approach, 800m, 1500m / mile, 5000m."
     ],
     "notify": true
   },
@@ -209,9 +217,9 @@
     "date": "2026-10-17",
     "notes": [
       "Rep check merged into AI Analyzer: the separate block is gone. One pick sets both the live coaching and the rep check. One camera, one Start / Stop flow, one score + one fix.",
-      "Live skeleton on the camera: a flat 2D drawing sits on top of the preview while you record — problem joint in red, good joints in green. Still in your results on best + worst frames too. Never fake 3D.",
-      "Recording, plainly named: the button says “Start recording”, the status says “Recording…”, and 1 finger starts recording + analyzing while 2 fingers stop it. Buttons do exactly what the hand signs do.",
-      "Voice says “Recording has started” and “Recording has ended” when recording starts and stops — with the hand signs or the buttons — even when voice coaching is off.",
+      "Live skeleton on the camera: a flat 2D drawing sits on top of the preview while you record \u2014 problem joint in red, good joints in green. Still in your results on best + worst frames too. Never fake 3D.",
+      "Recording, plainly named: the button says \u201cStart recording\u201d, the status says \u201cRecording\u2026\u201d, and 1 finger starts recording + analyzing while 2 fingers stop it. Buttons do exactly what the hand signs do.",
+      "Voice says \u201cRecording has started\u201d and \u201cRecording has ended\u201d when recording starts and stops \u2014 with the hand signs or the buttons \u2014 even when voice coaching is off.",
       "Upload a clip lives inside the AI Analyzer now (one option, same analysis), plus slow review and switch camera in the same controls."
     ],
     "notify": true
@@ -220,10 +228,10 @@
     "version": "2.1.1",
     "date": "2026-10-17",
     "notes": [
-      "One AI Analyzer screen: the old Analyze tab and the two-camera tab are gone — live coaching, two cameras, photo check, and your results all live here now. Nothing was removed.",
+      "One AI Analyzer screen: the old Analyze tab and the two-camera tab are gone \u2014 live coaching, two cameras, photo check, and your results all live here now. Nothing was removed.",
       "Hands-free gestures: look at the camera and hold up 1 finger to start coaching, 2 fingers to stop. Hold about 1 second. Buttons always work too.",
-      "Deep check after every workout: after you stop, the app re-reads the full clip and gives a per-rep breakdown, best + worst frames, and measurements it can actually support — estimates are labeled, and it never invents a speed or a distance.",
-      "Videos to watch: after the deep check, 1–2 videos matched to your top fix, from the videos already in the app.",
+      "Deep check after every workout: after you stop, the app re-reads the full clip and gives a per-rep breakdown, best + worst frames, and measurements it can actually support \u2014 estimates are labeled, and it never invents a speed or a distance.",
+      "Videos to watch: after the deep check, 1\u20132 videos matched to your top fix, from the videos already in the app.",
       "Skeleton drawings in your results: a flat 2D drawing from the camera (never fake 3D) on the best and worst frames, with the joint to fix in red. Tap a red joint to see its fix.",
       "Simpler words everywhere: buttons say what they do, errors say what happened and what to tap next."
     ],
@@ -232,7 +240,7 @@
   {
     "date": "2026-10-17",
     "notes": [
-      "AI Analyzer tab: live on-device coaching — watches you through the camera (one or both angles), names the activity, gives one fix at a time with cue + drill, rep counting, voice coaching, and a session summary. Embedded track-and-field + workouts knowledge, no API key, never guesses unseen body parts.",
+      "AI Analyzer tab: live on-device coaching \u2014 watches you through the camera (one or both angles), names the activity, gives one fix at a time with cue + drill, rep counting, voice coaching, and a session summary. Embedded track-and-field + workouts knowledge, no API key, never guesses unseen body parts.",
       "Dual-Angle two-camera analysis: connect an iPad as a second camera with a 6-character code, synced recording + auto-stop + synced replay + combined verdict (two 2D views, never fake 3D).",
       "Photo access asks once: Camera / Photo Library preference is remembered, the picker only opens on your tap, and a cancelled pick shows a retry line instead of re-prompting.",
       "Update system: visible version, What's New panel, Check for updates, and an update banner that fires only on real version bumps."

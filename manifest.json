@@ -1,0 +1,17 @@
+{
+  "name": "Track Analyzer",
+  "short_name": "Track Analyzer",
+  "description": "On-device AI sprint coaching: live form analysis, two-camera reps, photo form check, sprinter nutrition.",
+  "start_url": "index.html",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#08090b",
+  "theme_color": "#08090b",
+  "icons": [
+    {
+      "src": "icons/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}
