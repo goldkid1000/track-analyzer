@@ -1,8 +1,1 @@
-{
-  "notes": [
-    "Volt Rework: deeper stadium-night redesign \u2014 richer background depth, tiered card hierarchy, bolder mobile tab bar, gradient buttons with sheen, polished inputs and score ring, tighter mobile fit. All features work exactly as before."
-  ],
-  "notify": true,
-  "updated": "2026-10-19",
-  "version": "2.5.0"
-}
+{"notes": ["Clip reliability: replay hardening — stale clip URLs are revoked before new ones load, preload=metadata on replay videos, and sync listeners can no longer stack up across recordings.", "iOS analysis fix: the pose-sampling video is now attached to the page (hidden) during analysis — iOS Safari refused to decode detached videos, which made clips score \"unavailable\".", "NEW Double-check: re-runs the AI analysis on your saved clip and tells you whether both checks agree or disagree, so you know when to trust the number or retake.", "Slow motion upgrade: new 0.1x ultra-slow replay speed for frame-level inspection (both clips follow the speed)."], "notify": true, "updated": "2026-10-19", "version": "2.6.0"}

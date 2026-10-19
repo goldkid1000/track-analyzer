@@ -1055,22 +1055,33 @@ function runLocalAnalysis(){
   var url = URL.createObjectURL(D.localBlob);
   var v = document.createElement('video');
   v.src = url; v.muted = true; v.setAttribute('playsinline', '');
+  /* v2.6.0: iOS Safari often refuses to decode a video that was never added
+   * to the DOM, so v.play() rejects and the clip scores "unavailable".
+   * Attach it hidden; finish() removes it. */
+  v.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none;';
+  v.setAttribute('aria-hidden', 'true');
+  try{ document.body.appendChild(v); }catch(e){}
   var feats = [], samples = [], timer = null, done = false;
   var pose;
   try{
     pose = new Pose({ locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/' + f; } });
     pose.setOptions({ modelComplexity: 0, smoothLandmarks: false, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
     pose.onResults(function(res){ if(res && res.poseLandmarks){ var f = extractDualFeatures(res.poseLandmarks); samples.push({ t: v.currentTime || 0, f: f }); if(f) feats.push(f); } });
-  }catch(e){ D.localAnalysis = { label: D.localLabel, score: null, metrics: [0, 0, 0], issue: 'unavailable', headline: 'Analyzer didn\u2019t start for this clip', fix: DUAL_FIX.unavailable, frames: 0, activity: 'none', moments: [] }; finishLocalAnalysis(); return; }
+  }catch(e){ try{ if(v.parentNode) v.parentNode.removeChild(v); }catch(_){} URL.revokeObjectURL(url); D.localAnalysis = { label: D.localLabel, score: null, metrics: [0, 0, 0], issue: 'unavailable', headline: 'Analyzer didn\u2019t start for this clip', fix: DUAL_FIX.unavailable, frames: 0, activity: 'none', moments: [] }; finishLocalAnalysis(); return; }
   function finish(){
     if(done) return; done = true;
     clearInterval(timer);
     try{ v.pause(); }catch(e){}
+    try{ if(v.parentNode) v.parentNode.removeChild(v); }catch(e){}
     URL.revokeObjectURL(url);
     D.localAnalysis = summarizeDual(currentMode(), feats);
     /* v2.2.0: replay moments (worst/best frames) ride on the analysis,
      * so the host can render marker buttons that seek the replay. */
     D.localAnalysis.moments = dualMoments(D.localAnalysis.activity || currentMode(), samples, D.localAnalysis);
+    if(D.doubleChecking){
+      D.doubleChecking = false;
+      renderDoubleCheck(D.checkA, D.localAnalysis);
+    }
     finishLocalAnalysis();
   }
   v.addEventListener('play', function(){
@@ -1094,6 +1105,38 @@ function finishLocalAnalysis(){
   }
 }
 function dualScoreText(s){ return s.score === null || s.score === undefined ? 'Couldn\u2019t score' : s.score + '%'; }
+/* v2.6.0: Double-check — re-runs the analysis on the saved clip and compares
+ * the second score with the first, so Giel can see whether the AI agrees
+ * with itself before trusting a number. */
+function doubleCheckLocal(){
+  if(D.role === 'join'){ setText('dualRecState', 'Double-check runs on the host\u2019s camera.'); return; }
+  if(!D.localBlob || !D.localAnalysis){ setText('dualRecState', 'Record and analyze a clip first, then double-check it.'); return; }
+  if(D.doubleChecking) return;
+  D.checkA = D.localAnalysis;
+  D.doubleChecking = true;
+  setText('dualCheckResult', '');
+  setText('dualRecState', 'Double-checking your clip\u2026 running the analysis a second time.');
+  runLocalAnalysis();
+}
+function renderDoubleCheck(a, b){
+  var el = $('dualCheckResult');
+  if(!el) return;
+  var as = (a && a.score !== null && a.score !== undefined) ? a.score : null;
+  var bs = (b && b.score !== null && b.score !== undefined) ? b.score : null;
+  var msg;
+  if(as === null && bs === null){
+    msg = 'Both checks couldn\u2019t score this clip \u2014 consider a retake with better light and your full body in frame.';
+  } else if(as === null || bs === null){
+    msg = 'Checks disagree (one couldn\u2019t score) \u2014 consider a retake.';
+  } else if(Math.abs(as - bs) <= 5){
+    var avg = Math.round((as + bs) / 2);
+    msg = 'Both checks agree \u2014 ' + avg + '% (' + as + '% vs ' + bs + '%).';
+  } else {
+    msg = 'Checks disagree (' + as + '% vs ' + bs + '%) \u2014 consider a retake.';
+  }
+  el.textContent = msg;
+  showEl(el, true);
+}
 function maybeRenderVerdict(){
   if(D.localAnalysis && D.remoteAnalysis) renderVerdict([D.localAnalysis, D.remoteAnalysis], null);
   else if(D.localAnalysis && !D.remoteAnalysis) setText('dualVerdict', 'This camera scored ' + dualScoreText(D.localAnalysis) + '. Waiting on Camera 2\u2026');
@@ -1138,6 +1181,8 @@ function renderVerdict(list, note){
       combined.innerHTML = note + '<span class="dual-disclaimer">Two camera views, not 3D.</span>';
     }
   }
+  var dc = $('dualDoubleCheckBtn');
+  if(dc) showEl(dc, D.role !== 'join' && !!(D.localAnalysis && D.localBlob));
   showEl($('dualVerdictBox'), true);
 }
 
@@ -1152,12 +1197,16 @@ function showOwnReplay(){
   if(!D.localBlob) return;
   showReplay(D.localBlob, null);
 }
+function revokeBlobSrc(v){
+  try{ if(v && v.src && v.src.indexOf('blob:') === 0) URL.revokeObjectURL(v.src); }catch(e){}
+}
 function showReplay(blobA, blobB){
   var sec = $('dualReplay'); showEl(sec, true);
   var va = $('dualReplayA'), vb = $('dualReplayB');
+  revokeBlobSrc(va); revokeBlobSrc(vb);
   if(va){ va.src = URL.createObjectURL(blobA); va.muted = true; va.setAttribute('playsinline', ''); }
   if(vb && blobB){ vb.src = URL.createObjectURL(blobB); vb.muted = true; vb.setAttribute('playsinline', ''); showEl(vb.closest('.dual-replay-slot'), true); }
-  else if(vb){ showEl(vb.closest('.dual-replay-slot'), false); }
+  else if(vb){ vb.src = ''; showEl(vb.closest('.dual-replay-slot'), false); }
   var scrub = $('dualScrub');
   function syncFrom(a, b){
     if(!a.duration || !b.duration) return;
@@ -1165,10 +1214,10 @@ function showReplay(blobA, blobB){
     var target = frac * b.duration;
     if(Math.abs(b.currentTime - target) > 0.12) b.currentTime = target;
   }
-  if(va && vb){
-    va.addEventListener('timeupdate', function(){ syncFrom(va, vb); });
-    vb.addEventListener('timeupdate', function(){ syncFrom(vb, va); });
-  }
+  /* v2.6.0: on* property (not addEventListener) so re-recordings can't
+   * stack duplicate timeupdate handlers on the same elements. */
+  if(va) va.ontimeupdate = (vb && blobB) ? function(){ syncFrom(va, vb); } : null;
+  if(vb) vb.ontimeupdate = (blobB) ? function(){ syncFrom(vb, va); } : null;
   if(scrub){
     scrub.value = 0;
     scrub.oninput = function(){
@@ -1314,6 +1363,11 @@ function dualTeardown(){
   try{ if(D.pendingCall) D.pendingCall.close(); }catch(e){}
   D.peer = null; D.conn = null; D.call = null; D.pendingCall = null; D.pc = null; D.dc = null;
   D.remoteStream = null; D.remoteBlob = null; D.remoteAnalysis = null;
+  /* v2.6.0: release replay resources on disconnect. */
+  var _ra = $('dualReplayA'), _rb = $('dualReplayB');
+  revokeBlobSrc(_ra); revokeBlobSrc(_rb);
+  if(_ra){ _ra.ontimeupdate = null; _ra.removeAttribute('src'); }
+  if(_rb){ _rb.ontimeupdate = null; _rb.removeAttribute('src'); }
   stopLocalCamera();
   stopPoseWatch();
   stopDualRig();
@@ -1351,6 +1405,7 @@ function initDual(){
   var recBtn = $('dualRecordBtn'); if(recBtn) recBtn.addEventListener('click', hostRecord);
   var stopBtn = $('dualStopBtn'); if(stopBtn) stopBtn.addEventListener('click', function(){ stopRecording('Stop button'); });
   var replayOwn = $('dualReplayOwnBtn'); if(replayOwn) replayOwn.addEventListener('click', showOwnReplay);
+  var dcBtn = $('dualDoubleCheckBtn'); if(dcBtn) dcBtn.addEventListener('click', doubleCheckLocal);
   var disc = $('dualDisconnect'); if(disc) disc.addEventListener('click', function(){ dualTeardown(); dualStatus('Disconnected.'); showEl($('dualHostPanel'), false); showEl($('dualJoinPanel'), false); });
   var discJ = $('dualJoinDisconnect'); if(discJ) discJ.addEventListener('click', function(){ dualTeardown(); dualStatus('Disconnected.'); showEl($('dualHostPanel'), false); showEl($('dualJoinPanel'), false); });
   var calib = $('dualCalibrate'); if(calib) calib.addEventListener('click', function(){ D.calibPending = true; setText('dualCalibState', 'Stand in frame \u2014 lining up\u2026'); startPoseWatchOnce(); });
