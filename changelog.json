@@ -1,5 +1,13 @@
 [
   {
+    "version": "2.3.1",
+    "date": "2026-10-19",
+    "notes": [
+      "Update reliability fix: tapping Update can no longer strand you on the old version — app files now carry a version tag so updates always load fresh, and the update notice stays until the new version is confirmed running."
+    ],
+    "notify": true
+  },
+  {
     "version": "2.3.0",
     "date": "2026-10-18",
     "notes": [

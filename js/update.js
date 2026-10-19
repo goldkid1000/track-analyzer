@@ -1,4 +1,4 @@
-/* Track Analyzer — update system (v2.3.0)
+/* Track Analyzer — update system (v2.3.1)
  *
  * Tenno Vault-style: visible version, What's New panel, Check for updates,
  * and an update banner. The banner fires ONLY when version.json reports a
@@ -47,9 +47,12 @@
  */
 (function(){
 'use strict';
-var VERSION = '2.3.0';
+var VERSION = '2.3.1';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: '2.3.1', date: '2026-10-19', notes: [
+    'Update reliability fix: tapping Update can no longer leave you stuck on the old version. App files now carry a version tag so an update always loads fresh files instead of stale cached ones, and the update notice stays up until the new version is confirmed running.'
+  ]},
   { version: '2.3.0', date: '2026-10-18', notes: [
     'Rig smoothness picker: choose 120 fps or 60 fps for the skeleton rig redraw (AI Analyzer controls, and next to the two-camera fps line). This controls redraw smoothness only \u2014 pose detection still runs at your device\'s speed (usually 15\u201330/sec), so 120 means a smoother glide, not faster detection. Your choice is remembered.',
     'Fixed: tapping \'Send best frame to AI Photo\' by hand and then letting the auto-send run delivered the same frame to AI Photo twice. The frame is now marked sent the moment it lands, and a failed grab still retries on the next analysis.',
@@ -251,6 +254,13 @@ function checkForUpdates(manual, opts){
 function initUpdates(){
   var verEl = $('appVersion');
   if(verEl) verEl.textContent = 'v' + VERSION;
+  try{
+    var pend = sessionStorage.getItem('trackAnalyzer.update.pending');
+    if(pend && String(pend) === String(VERSION)){
+      markSeen(VERSION);
+      sessionStorage.removeItem('trackAnalyzer.update.pending');
+    }
+  }catch(e){}
   renderWhatsNew(FALLBACK_HISTORY, VERSION);
   var checkBtn = $('checkUpdatesBtn');
   if(checkBtn) checkBtn.addEventListener('click', function(){ checkForUpdates(true); });
@@ -266,9 +276,12 @@ function initUpdates(){
   if(dialog) dialog.addEventListener('click', function(e){ if(e.target === dialog){ if(dialog.close) dialog.close(); else dialog.removeAttribute('open'); } });
   var updateBtn = $('updateNowBtn');
   if(updateBtn) updateBtn.addEventListener('click', function(){
-    // Marking seen first: after the reload, this version's notice stays gone.
-    markSeen(pendingUpdateVersion);
+    // v2.3.1: do NOT mark seen yet — only consume the notice once the new
+    // build actually boots (stale caches used to eat the notice and strand
+    // the user on the old version with no way back to the banner).
+    try{ sessionStorage.setItem('trackAnalyzer.update.pending', pendingUpdateVersion || ''); }catch(e){}
     // Hard reload past the cache: bump the ?v= query so the new build loads.
+    // Asset URLs in index.html also carry ?v= so the JS/CSS come fresh too.
     try{
       var u = new URL(location.href);
       u.searchParams.set('v', Date.now().toString());

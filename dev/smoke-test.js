@@ -1,4 +1,4 @@
-/* Track Analyzer v2.3.0 smoke harness — stubbed DOM/navigator/Pose.
+/* Track Analyzer v2.3.1 smoke harness — stubbed DOM/navigator/Pose.
  * Run: node /tmp/track-smoke.js ; exit code 0 = all pass. */
 const fs = require('fs'), vm = require('vm');
 const ROOT = '/home/hatch/workspace/track-analyzer-private/';
@@ -556,7 +556,7 @@ const W = sandbox;
 
   /* ---------- Version / files ---------- */
   const versionJson = JSON.parse(fs.readFileSync(ROOT + 'version.json', 'utf8'));
-  t('version.json = 2.3.0', versionJson.version === '2.3.0');
+  t('version.json = 2.3.1', versionJson.version === '2.3.1');
   const changelog = JSON.parse(fs.readFileSync(ROOT + 'changelog.json', 'utf8'));
   const entry219 = changelog.find(e => e.version === '2.1.9');
   t('changelog 2.1.9 has 4 notes incl. host-only gestures + no step-down + voice on iPhone + wait line clears',
@@ -585,8 +585,8 @@ const W = sandbox;
   const updateSrc = fs.readFileSync(ROOT + 'js/update.js', 'utf8');
   t('update.js fallback history 2.1.9 matches changelog + VERSION = 2.3.0',
     updateSrc.indexOf('ONLY the main camera') >= 0 &&
-    updateSrc.indexOf("var VERSION = '2.3.0'") >= 0 &&
-    W.TrackUpdate.getVersion() === '2.3.0');
+    updateSrc.indexOf("var VERSION = '2.3.1'") >= 0 &&
+    W.TrackUpdate.getVersion() === '2.3.1');
   const entry220 = changelog.find(e => e.version === '2.2.0');
   t('changelog 2.2.0 has 7 notes incl. no cap + stop-sync + arm swings + no-shape + AI Photo + notifications + slow-mo/markers + smooth rig',
     entry220 && entry220.notes.length === 7 &&
@@ -614,7 +614,7 @@ const W = sandbox;
     html.indexOf('js/rig.js') >= 0);
   t('index.html: rig + gesture status lines on both dual panels',
     ['dualRigStatus', 'dualGestureStatus', 'dualJoinRigStatus', 'dualJoinGestureStatus'].every(s => html.indexOf('id="' + s + '"') >= 0));
-  t('index.html: version strings 2.3.0', html.indexOf('v2.3.0') >= 0 && html.indexOf('v2.2.9') < 0);
+  t('index.html: version strings 2.3.1', html.indexOf('v2.3.1') >= 0 && html.indexOf('v2.3.0') < 0);
   t('index.html: wait line has id dualWaitLine (hidden once Camera 2 connects)',
     html.indexOf('id="dualWaitLine"') >= 0);
   const css = fs.readFileSync(ROOT + 'css/app.css', 'utf8');
@@ -885,10 +885,18 @@ const W = sandbox;
   t('v2.3.0 photoSent: auto-send no longer pre-marks photoSent before the snapshot',
     !/D\.photoSent = true;\s*\n\s*sendBestFrameToPhoto\(\);/.test(dualSrc220));
   // Version strings.
-  t('v2.3.0 version: version.json + update.js + footer all say 2.3.0',
-    JSON.parse(fs.readFileSync(ROOT + 'version.json', 'utf8')).version === '2.3.0' &&
-    fs.readFileSync(ROOT + 'js/update.js', 'utf8').indexOf("var VERSION = '2.3.0'") >= 0 &&
-    html.indexOf('id="appVersion">v2.3.0<') >= 0);
+  t('v2.3.1 version: version.json + update.js + footer all say 2.3.1',
+    JSON.parse(fs.readFileSync(ROOT + 'version.json', 'utf8')).version === '2.3.1' &&
+    fs.readFileSync(ROOT + 'js/update.js', 'utf8').indexOf("var VERSION = '2.3.1'") >= 0 &&
+    html.indexOf('id="appVersion">v2.3.1<') >= 0);
+  /* ---------- v2.3.1: update reliability ---------- */
+  t('v2.3.1 assets: all local script/css URLs carry ?v=2.3.1',
+    (html.match(/<script src="js\/[a-z-]+\.js\?v=2\.3\.1"><\/script>/g) || []).length === 9 &&
+    html.indexOf('css/app.css?v=2.3.1') >= 0);
+  t('v2.3.1 update: button sets pending flag instead of markSeen',
+    updateSrc.indexOf("sessionStorage.setItem('trackAnalyzer.update.pending'") >= 0);
+  t('v2.3.1 update: boot confirms pending version before marking seen',
+    updateSrc.indexOf("String(pend) === String(VERSION)") >= 0);
   // ID cross-check for the new elements (wired by shared class in JS).
   ['rigFpsSelect', 'dualRigFpsSelect'].forEach(id => {
     t('v2.3.0 IDs: #' + id + ' exists in HTML and is wired via .rig-fps-select in JS',
