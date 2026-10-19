@@ -47,9 +47,13 @@
  */
 (function(){
 'use strict';
-var VERSION = '2.3.5';
+var VERSION = '2.4.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: '2.4.0', date: '2026-10-19', notes: [
+    'New Nutrition tab: daily protein, carb, and water targets computed from your body weight (training vs rest day), pre/post-workout meal timing, dorm-friendly meal ideas (dining hall, microwave, no-cook), and a hydration tracker that resets daily \u2014 all on-device.',
+    'Full UI refresh: richer cards with depth, gradient action buttons, a sharper bottom tab bar and sidebar, smoother transitions, and refined typography across every screen. Every feature works exactly as before.'
+  ]},
   { version: '2.3.3', date: '2026-10-19', notes: [
     'Mobile layout pass at phone width: no sideways scrolling \u2014 camera tiles, controls, and results stack and fit. Every tap target is thumb-size (44px+) including the small two-camera, photo, and replay buttons and all dropdowns.',
     'Styled the pieces that had no styles before (replay speed row, rig-smoothness picker, AI-moment marker rows), and fixed callout bubbles and text that were using missing theme variables (white text on a light bubble).'

@@ -93,7 +93,8 @@ html,body{height:100%;overflow:hidden}
 .view-section{display:none}
 body[data-active-view="ai"] .view-ai,
 body[data-active-view="ai-photo"] .view-ai-photo,
-body[data-active-view="guide"] .view-guide{display:block;animation:sectionIn .35s var(--ease-out)}
+body[data-active-view="guide"] .view-guide,
+body[data-active-view="nutrition"] .view-nutrition{display:block;animation:sectionIn .35s var(--ease-out)}
 @keyframes sectionIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
 
 /* staggered card entrance */
@@ -348,7 +349,7 @@ body[data-active-view="guide"] .view-guide{display:block;animation:sectionIn .35
 .sheet-metric{display:flex;justify-content:space-between;gap:10px;background:var(--surface-raised);border:1px solid var(--hairline);border-radius:10px;padding:10px 12px;font-size:13px;font-weight:700}
 
 /* ============ Tabbar (mobile bottom nav) ============ */
-.app-tabbar{display:none;position:fixed;left:0;right:0;bottom:0;z-index:50;background:rgba(13,15,14,.96);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-top:1px solid var(--hairline);padding:8px 8px calc(8px + env(safe-area-inset-bottom));grid-template-columns:repeat(3,1fr);gap:4px}
+.app-tabbar{display:none;position:fixed;left:0;right:0;bottom:0;z-index:50;background:rgba(13,15,14,.96);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-top:1px solid var(--hairline);padding:8px 8px calc(8px + env(safe-area-inset-bottom));grid-template-columns:repeat(4,1fr);gap:4px}
 .tab-item{appearance:none;border:0;background:transparent;color:var(--muted);min-height:56px;border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:11px;font-weight:700}
 .tab-item svg{width:22px;height:22px}
 .tab-item[aria-current="page"]{color:var(--volt)}
@@ -410,7 +411,7 @@ body[data-active-view="guide"] .view-guide{display:block;animation:sectionIn .35
 }
 
 /* ============ Two cameras (v2.1.1 — lives inside AI Analyzer) ============ */
-.app-tabbar{grid-template-columns:repeat(3,1fr)}
+.app-tabbar{grid-template-columns:repeat(4,1fr)}
 .ghost-control.small{min-height:40px;padding:0 14px;font-size:13px}
 .dual-wrap{max-width:1200px;margin:0 auto;display:grid;gap:18px}
 .dual-intro h2{font-family:"Barlow Condensed",sans-serif;font-size:30px;text-transform:uppercase;margin:0 0 8px}
@@ -652,4 +653,119 @@ body[data-active-view="guide"] .view-guide{display:block;animation:sectionIn .35
   /* roomier guide cards on narrow screens */
   .view-guide .panel{padding:18px}
   .dual-code{letter-spacing:.12em}
+}
+
+/* ============ v2.4.0 UI refresh — depth, polish, nutrition ============ */
+:root{
+  --accent-deep:#e04e16;
+  --accent-glow:rgba(255,92,31,.35);
+  --card-top:rgba(255,255,255,.045);
+}
+/* richer panels: soft top-light + deeper shadow */
+.panel{
+  background:linear-gradient(180deg,var(--card-top),transparent 120px),var(--surface);
+  box-shadow:0 10px 32px rgba(0,0,0,.35);
+  border-color:rgba(255,255,255,.12);
+}
+.panel h2{
+  position:relative;padding-bottom:10px;
+}
+.panel h2::after{
+  content:"";position:absolute;left:0;bottom:0;width:44px;height:3px;border-radius:99px;
+  background:linear-gradient(90deg,var(--accent),var(--volt));
+}
+/* gradient action buttons */
+.primary{
+  background:linear-gradient(180deg,var(--accent),var(--accent-deep));
+  box-shadow:0 8px 24px var(--accent-glow),inset 0 1px 0 rgba(255,255,255,.22);
+}
+.primary:hover{background:linear-gradient(180deg,#ff6a35,var(--accent-deep))}
+/* sharper nav: active item gets an accent bar */
+.nav-item{position:relative}
+.nav-item[aria-current="page"]{background:var(--surface-raised)}
+.nav-item[aria-current="page"]::before{
+  content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:99px;
+  background:linear-gradient(180deg,var(--accent),var(--volt));
+}
+/* tabbar: crisper active state */
+.tab-item{border-radius:14px;transition:background .2s var(--ease-out),color .2s}
+.tab-item[aria-current="page"]{color:var(--volt);background:rgba(212,245,66,.08)}
+.tab-item[aria-current="page"] svg{filter:drop-shadow(0 0 6px rgba(212,245,66,.5))}
+/* topbar title gets condensed athletic treatment */
+.screen-title h1{font-family:"Barlow Condensed",sans-serif;text-transform:uppercase;letter-spacing:.01em}
+/* review dialog + banners inherit the richer panel look */
+.review-dialog{background:linear-gradient(180deg,var(--card-top),transparent 140px),var(--surface)}
+/* focus visibility */
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{
+  outline:2px solid var(--volt);outline-offset:2px;
+}
+
+/* ============ Nutrition tab ============ */
+.nut-wrap{display:flex;flex-direction:column;gap:18px;max-width:900px;margin:0 auto}
+.nut-hero{
+  background:linear-gradient(135deg,rgba(255,92,31,.16),rgba(61,220,151,.08) 60%),linear-gradient(180deg,var(--card-top),transparent 120px),var(--surface);
+  border-color:rgba(255,92,31,.35);
+}
+.nut-hero h2::after{background:linear-gradient(90deg,var(--accent),var(--accent-2))}
+.nut-hero-top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.nut-hero-icon{font-size:34px;filter:drop-shadow(0 0 10px var(--accent-glow));animation:brandPulse 3s ease-in-out infinite}
+.nut-hero-sub{color:var(--muted);font-size:14px;line-height:1.5;margin:6px 0 0}
+.nut-input-row{display:flex;flex-wrap:wrap;gap:12px;margin-top:16px}
+.nut-weight-label{display:flex;flex-direction:column;gap:8px;font-size:13px;font-weight:700;color:var(--muted);flex:1 1 220px}
+.nut-weight-field{display:flex;gap:8px}
+.nut-weight-field input{
+  flex:1;min-width:0;background:var(--surface-raised);color:var(--ink);
+  border:1px solid var(--hairline);border-radius:12px;padding:0 14px;min-height:52px;
+  font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;
+}
+.nut-unit-toggle,.nut-day-toggle{display:inline-flex;background:var(--surface);border:1px solid var(--hairline);border-radius:12px;padding:4px;gap:4px}
+.nut-unit-toggle button,.nut-day-toggle button{
+  appearance:none;border:0;background:transparent;color:var(--muted);
+  min-height:44px;padding:0 16px;border-radius:9px;font-weight:800;font-size:14px;
+}
+.nut-unit-toggle button[aria-pressed="true"],.nut-day-toggle button[aria-pressed="true"]{
+  background:var(--accent);color:#fff;box-shadow:0 4px 14px var(--accent-glow);
+}
+.nut-day-toggle{align-self:end}
+.nut-targets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:18px}
+.nut-target{
+  background:var(--surface-raised);border:1px solid var(--hairline);border-radius:16px;
+  padding:16px 12px;text-align:center;display:flex;flex-direction:column;gap:4px;
+  animation:staggerIn .45s var(--ease-spring) both;
+}
+.nut-target:nth-child(2){animation-delay:.08s}
+.nut-target:nth-child(3){animation-delay:.16s}
+.nut-target-num{
+  font-family:"Barlow Condensed",sans-serif;font-size:clamp(24px,5vw,34px);font-weight:800;
+  background:linear-gradient(90deg,var(--volt),var(--accent-2));-webkit-background-clip:text;background-clip:text;color:transparent;
+  font-variant-numeric:tabular-nums;
+}
+.nut-target-label{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--ink)}
+.nut-target-sub{font-size:11px;color:var(--muted)}
+.nut-note{color:var(--muted);font-size:13px;margin:12px 0 0}
+.nut-empty{color:var(--muted);font-size:14px;margin:14px 0 0}
+.nut-water-track{height:12px;margin:14px 0 8px;background:rgba(255,255,255,.08);overflow:hidden;border-radius:99px}
+.nut-water-track i{display:block;width:0;height:100%;background:linear-gradient(90deg,#38b6ff,var(--accent-2));border-radius:99px;transition:width .5s var(--ease-out)}
+.nut-water-text{font-size:14px;font-weight:700;margin:0 0 4px;font-variant-numeric:tabular-nums}
+.nut-water-btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+.nut-timing{display:grid;gap:12px;margin-top:6px}
+.nut-time-card{
+  background:var(--surface-raised);border:1px solid var(--hairline);border-radius:14px;
+  padding:14px 16px;border-left:3px solid var(--accent);
+}
+.nut-time-card h3{margin:0 0 6px;font-size:15px;color:var(--volt)}
+.nut-time-card p{margin:0;color:var(--muted);font-size:14px;line-height:1.55}
+.nut-meals{display:grid;gap:12px;margin-top:6px}
+.nut-meal-card{background:var(--surface-raised);border:1px solid var(--hairline);border-radius:14px;padding:14px 16px}
+.nut-meal-card h3{margin:0 0 8px;font-size:15px}
+.nut-meal-card ul{margin:0;padding-left:20px;color:var(--muted);font-size:14px;line-height:1.7}
+.nut-meal-card li::marker{color:var(--accent)}
+.nut-disclaimer{border-color:rgba(255,176,32,.35)}
+.nut-disclaimer h2::after{background:linear-gradient(90deg,var(--warn),var(--accent))}
+.nut-disclaimer p{color:var(--muted);font-size:14px;line-height:1.65;margin:0}
+@media (max-width:640px){
+  .nut-targets{grid-template-columns:1fr 1fr 1fr;gap:8px}
+  .nut-target{padding:12px 8px}
+  .nut-day-toggle{align-self:stretch}
+  .nut-day-toggle button{flex:1}
 }
