@@ -1363,6 +1363,7 @@ function dualTeardown(){
   try{ if(D.pendingCall) D.pendingCall.close(); }catch(e){}
   D.peer = null; D.conn = null; D.call = null; D.pendingCall = null; D.pc = null; D.dc = null;
   D.remoteStream = null; D.remoteBlob = null; D.remoteAnalysis = null;
+  D.localBlob = null; D.localAnalysis = null;
   /* v2.6.0: release replay resources on disconnect. */
   var _ra = $('dualReplayA'), _rb = $('dualReplayB');
   revokeBlobSrc(_ra); revokeBlobSrc(_rb);
@@ -1434,6 +1435,8 @@ initDual();
 // Read-only bridge for the AI Analyzer: it can borrow the live dual-camera
 // streams (if connected) instead of opening a third camera.
 window.TrackDual = {
+  teardown: dualTeardown,
+  stopNow: function(){ if(D.recording) stopRecording('mode switch', true); },
   getState: function(){
     var connected = !!((D.conn && D.conn.open) || (D.dc && D.dc.readyState === 'open'));
     return { connected: connected, role: D.role, localStream: D.localStream, remoteStream: D.remoteStream, localLabel: D.localLabel, remoteLabel: D.remoteLabel, camOff: D.camOff, remoteCamOff: D.remoteCamOff };

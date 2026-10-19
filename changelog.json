@@ -1,5 +1,15 @@
 [
   {
+    "version": "2.7.0",
+    "date": "2026-10-19",
+    "notes": [
+      "NEW: Solo vs Two-cameras mode picker at the top of the AI Analyzer tab — solo records and analyzes on one phone (default), two cameras connects both sides of the body. Choice is remembered.",
+      "NEW: 🔁 Double-check button on solo results — re-runs the AI on your rep and reports whether both passes agree.",
+      "Coaching panel bug fixes: the \"Can't see\" row no longer doubles its label, and Good / One fix / Form score / Can't see reset when the camera turns off or a new recording starts."
+    ],
+    "notify": true
+  },
+  {
     "version": "2.6.0",
     "date": "2026-10-19",
     "notes": [

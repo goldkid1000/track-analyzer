@@ -538,6 +538,8 @@ function setSingleCamera(on){
     else if(AI.ownStream){ AI.ownStream.getTracks().forEach(function(t){ t.stop(); }); AI.ownStream = null; if(v) v.srcObject = null; }
     setGestureStatus('off');
     setText('aiSeeing', 'Camera off.');
+    setText('aiGood', '—'); setText('aiFix', '—');
+    setText('aiScore', '—'); setText('aiCantSee', '—');
   } else if(AI.mode === 'idle'){
     startWatching();
   }
@@ -779,7 +781,7 @@ function onFrame(f, angle){
     if(activity !== 'none' && activity !== 'rest') addBubble('<strong>Seeing:</strong> ' + (ACTIVITY_LABEL[activity] || activity));
   }
   if(f && f.missing && f.missing.length){
-    setText('aiCantSee', 'Can’t see: ' + f.missing.join(', ') + ' — step back so your full body fits.');
+    setText('aiCantSee', f.missing.join(', ') + ' — step back so your full body fits.');
     AI.deep.frames1.push({ t: Date.now(), activity: 'none', score: 0, tripped: null, f: null });
     if(AI.deep.frames1.length > 900) AI.deep.frames1.shift();
     return;
@@ -1874,6 +1876,8 @@ function stopAndAnalyze(){
   runDeepAnalysis().then(function(){
     renderSessionSummary(AI.lastSession);
     showEl($('aiSummary'), true);
+    showEl($('aiSoloDoubleCheck'), true);
+    var scr = $('aiSoloCheckResult'); if(scr) scr.textContent = '';
     notifyAnalysisDone();
     if(AI.clipMode) renderClipMarkers();
     var s = $('aiSummary');
@@ -1926,6 +1930,29 @@ function renderClipMarkers(){
     });
   });
 }
+/* v2.7.0: Solo double-check. Re-runs the deep analysis on the stored
+ * frames and compares the top fault with the first pass. runDeepAnalysis
+ * is deterministic on the same frames, so agreement confirms a stable
+ * verdict; disagreement means the rep was borderline — retake advised.
+ * The FIRST report stays canonical (restored after the comparison). */
+function soloDoubleCheck(){
+  var res = $('aiSoloCheckResult');
+  function say(t){ if(res) res.textContent = t; }
+  var first = AI.deepReport;
+  if(!first || !AI.deep.frames1.length){ say('Record a rep first, then double-check it.'); return; }
+  say('Re-checking…');
+  runDeepAnalysis().then(function(second){
+    var f1 = first.faultList && first.faultList[0], f2 = second.faultList && second.faultList[0];
+    var msg;
+    if(!f1 && !f2) msg = 'Both checks agree — no repeated fault stood out. Clean run.';
+    else if(f1 && f2 && f1.check === f2.check) msg = 'Both checks agree — ' + f1.fault + '.';
+    else msg = 'Checks disagree (' + (f1 ? f1.fault : 'clean') + ' vs ' + (f2 ? f2.fault : 'clean') + ') — consider one more rep.';
+    AI.deepReport = first;
+    renderDeepReport(first);
+    renderLatestFix();
+    say(msg);
+  });
+}
 function renderSessionSummary(s){
   if(!s) return;
   var secs = Math.round((Date.now() - s.startedAt) / 1000);
@@ -1968,9 +1995,12 @@ function startAI(reuseStream, opts){
   AI.squatPhase = 'up'; AI.squatDip = 0;
   AI.mode = 'coaching';
   setText('aiRepCount', '0');
+  setText('aiGood', '—'); setText('aiFix', '—');
+  setText('aiScore', '—'); setText('aiCantSee', '—');
   var box = $('aiCallouts'); if(box) box.innerHTML = '';
   showEl($('aiLivePanel'), true);
   showEl($('aiSummary'), false);
+  showEl($('aiSoloDoubleCheck'), false);
   showEl($('aiStartBtn'), false);
   showEl($('aiStopBtn'), true);
   showEl($('aiEndSessionBtn'), true);
@@ -2182,6 +2212,7 @@ function initAI(){
     else if(AI.mode === 'idle') startAI(false, { announce: true });
   });
   var stopBtn = $('aiStopBtn'); if(stopBtn) stopBtn.addEventListener('click', stopAndAnalyze);
+  var dcBtn = $('aiSoloDoubleCheck'); if(dcBtn) dcBtn.addEventListener('click', soloDoubleCheck);
   var endBtn = $('aiEndSessionBtn'); if(endBtn) endBtn.addEventListener('click', endSession);
   var voiceBtn = $('aiVoiceBtn');
   if(voiceBtn) voiceBtn.addEventListener('click', function(){
@@ -2297,6 +2328,7 @@ window.TrackRunway = { render: renderRunway, draw: runwayDraw, start: runwayStar
   get3D: function(){ return { active: runway3d.active, failed: runway3d.failed }; } };
 window.TrackAI = { setBlockStarts: setBlockStarts, getBlockStarts: function(){ return AI.blockStarts; },
   getLastClassic: function(){ return AI.lastClassic; }, announce: announce,
+  stopNow: function(){ if(AI.running) stopAI(); },
   setCamera: setSingleCamera, switchCamera: switchSingleCamera,
   isCamOff: function(){ return AI.camOff; },
   startClip: function(url){ startAI(false, { clipUrl: url, announce: false }); },

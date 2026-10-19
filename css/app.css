@@ -985,3 +985,19 @@ select:focus{border-color:var(--volt);outline:none;box-shadow:0 0 0 3px var(--vo
   .photo-pick{width:100%;justify-content:center}
   .sheet-score{font-size:48px}
 }
+
+/* v2.7.0: Solo vs Two-cameras mode picker — two large buttons at the top
+ * of the AI Analyzer tab. Active mode gets the volt gradient pill. */
+.cam-mode-picker{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 14px}
+.cam-mode-btn{display:flex;flex-direction:column;align-items:center;gap:2px;
+  min-height:76px;padding:12px 8px;border-radius:16px;cursor:pointer;
+  background:var(--surface);border:1px solid var(--hairline);color:var(--ink);
+  font:inherit;-webkit-tap-highlight-color:transparent}
+.cam-mode-btn .cam-mode-emoji{font-size:22px;line-height:1}
+.cam-mode-btn .cam-mode-label{font-weight:700;font-size:15px}
+.cam-mode-btn .cam-mode-sub{font-size:11px;color:var(--muted);text-align:center}
+.cam-mode-btn[aria-pressed="true"]{background:linear-gradient(135deg,var(--volt),#a8d42e);
+  border-color:transparent;color:#14170a;box-shadow:0 6px 22px rgba(212,245,66,.28)}
+.cam-mode-btn[aria-pressed="true"] .cam-mode-sub{color:#3a4020}
+.cam-mode-btn:focus-visible{outline:2px solid var(--volt);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.cam-mode-btn{transition:none}}
