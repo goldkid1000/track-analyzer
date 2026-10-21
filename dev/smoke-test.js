@@ -556,7 +556,12 @@ const W = sandbox;
 
   /* ---------- Version / files ---------- */
   const versionJson = JSON.parse(fs.readFileSync(ROOT + 'version.json', 'utf8'));
-  t('version.json = 2.3.3', versionJson.version === '2.3.3');
+  /* v2.9.0: version assertions are DYNAMIC — the harness used to pin
+   * '2.3.3' literally and failed on every release after it (5 stale
+   * failures at 2.8.2). CURVER is whatever version.json says; the
+   * consistency checks compare update.js + asset tags against it. */
+  const CURVER = versionJson.version;
+  t('version.json has a version', typeof CURVER === 'string' && CURVER.length > 0, CURVER);
   const changelog = JSON.parse(fs.readFileSync(ROOT + 'changelog.json', 'utf8'));
   const entry219 = changelog.find(e => e.version === '2.1.9');
   t('changelog 2.1.9 has 4 notes incl. host-only gestures + no step-down + voice on iPhone + wait line clears',
@@ -583,10 +588,13 @@ const W = sandbox;
     entry216.notes.some(n => n.indexOf('No more silent failures') >= 0) &&
     entry216.notes.some(n => n.indexOf('Recording has ended') >= 0));
   const updateSrc = fs.readFileSync(ROOT + 'js/update.js', 'utf8');
-  t('update.js fallback history 2.1.9 matches changelog + VERSION = 2.3.3',
+  t('update.js fallback history 2.1.9 matches changelog + VERSION = current',
     updateSrc.indexOf('ONLY the main camera') >= 0 &&
-    updateSrc.indexOf("var VERSION = '2.3.3'") >= 0 &&
-    W.TrackUpdate.getVersion() === '2.3.3');
+    updateSrc.indexOf("var VERSION = '" + CURVER + "'") >= 0 &&
+    W.TrackUpdate.getVersion() === CURVER);
+  t('update.js fallback history tops at the current version (v2.9.0 backfill)',
+    updateSrc.indexOf('version: "' + CURVER + '"') >= 0 &&
+    updateSrc.indexOf('version: "' + CURVER + '"') < updateSrc.indexOf("{ version: '2.4.0'"));
   const entry220 = changelog.find(e => e.version === '2.2.0');
   t('changelog 2.2.0 has 7 notes incl. no cap + stop-sync + arm swings + no-shape + AI Photo + notifications + slow-mo/markers + smooth rig',
     entry220 && entry220.notes.length === 7 &&
@@ -791,9 +799,9 @@ const W = sandbox;
   t('v2.2.0 notifications: "Analysis complete" voice + Notification API + toggle button in HTML',
     aiSrc.indexOf("announce('Analysis complete.')") >= 0 && aiSrc.indexOf('new Notification(') >= 0 &&
     aiSrc.indexOf('aiNotifyToggle') >= 0 && html.indexOf('id="aiNotifyToggle"') >= 0);
-  t('v2.2.0 slow-mo: replay speed buttons in HTML + playbackRate in dualcam; clip slow review cycles 1/0.5/0.25',
+  t('v2.2.0 slow-mo: replay speed buttons in HTML + playbackRate in dualcam; clip slow review cycles 1/0.5/0.25/0.1 (0.1 added v2.9.0)',
     html.indexOf('data-dual-speed="0.25"') >= 0 && html.indexOf('data-dual-speed="0.5"') >= 0 &&
-    dualSrc220.indexOf('playbackRate') >= 0 && aiSrc.indexOf('var rates = [1, 0.5, 0.25]') >= 0 &&
+    dualSrc220.indexOf('playbackRate') >= 0 && aiSrc.indexOf('var rates = [1, 0.5, 0.25, 0.1]') >= 0 &&
     html.indexOf('id="dualMarkers"') >= 0 && html.indexOf('id="aiClipMarkers"') >= 0 &&
     html.indexOf('id="dualSendPhotoBtn"') >= 0);
   // Smooth rig: interpolation + staleness + hand gate + fps.
@@ -885,9 +893,9 @@ const W = sandbox;
   t('v2.3.0 photoSent: auto-send no longer pre-marks photoSent before the snapshot',
     !/D\.photoSent = true;\s*\n\s*sendBestFrameToPhoto\(\);/.test(dualSrc220));
   // Version strings.
-  t('v2.3.3 version: version.json + update.js say 2.3.3, footer stamped at runtime',
-    JSON.parse(fs.readFileSync(ROOT + 'version.json', 'utf8')).version === '2.3.3' &&
-    fs.readFileSync(ROOT + 'js/update.js', 'utf8').indexOf("var VERSION = '2.3.3'") >= 0 &&
+  t('version: version.json + update.js agree (dynamic), footer stamped at runtime',
+    JSON.parse(fs.readFileSync(ROOT + 'version.json', 'utf8')).version === CURVER &&
+    fs.readFileSync(ROOT + 'js/update.js', 'utf8').indexOf("var VERSION = '" + CURVER + "'") >= 0 &&
     true); // footer is stamped at runtime from VERSION — see the no-hardcode check above
   /* ---------- v2.3.3: mobile pass ---------- */
   const entry233 = changelog.find(e => e.version === '2.3.3');
@@ -917,14 +925,14 @@ const W = sandbox;
   t('v2.3.3 mobile: readable control text on phones (ghost-control 14px, tab labels 11px)',
     css.indexOf('.ghost-control{font-size:14px}') >= 0 &&
     css.indexOf('.tab-item span{font-size:11px}') >= 0);
-  t('v2.3.3 assets: all local script/css URLs carry ?v=2.3.3, none stale',
-    (html.match(/<script src="js\/[a-z-]+\.js\?v=2\.3\.3"><\/script>/g) || []).length === 9 &&
-    html.indexOf('css/app.css?v=2.3.3') >= 0 &&
-    html.indexOf('?v=2.3.2') < 0);
+  const escV290 = CURVER.replace(/\./g, '\\.');
+  const curScriptRe = new RegExp('<script src="js/[a-z-]+\\.js\\?v=' + escV290 + '"></script>', 'g');
+  const allScriptTags = (html.match(/<script src="js\/[a-z-]+\.js\?v=[0-9.]+"><\/script>/g) || []).length;
+  t('assets: every local script/css URL carries ?v=<current version>, none stale',
+    allScriptTags > 0 && (html.match(curScriptRe) || []).length === allScriptTags &&
+    html.indexOf('css/app.css?v=' + CURVER) >= 0,
+    'scripts=' + allScriptTags);
   /* ---------- v2.3.1: update reliability ---------- */
-  t('v2.3.3 assets (moved): all local script/css URLs carry ?v=2.3.3 — see the v2.3.3 section above',
-    (html.match(/<script src="js\/[a-z-]+\.js\?v=2\.3\.3"><\/script>/g) || []).length === 9 &&
-    html.indexOf('css/app.css?v=2.3.3') >= 0);
   t('v2.3.1 update: button sets pending flag instead of markSeen',
     updateSrc.indexOf("sessionStorage.setItem('trackAnalyzer.update.pending'") >= 0);
   t('v2.3.1 update: boot confirms pending version before marking seen',
@@ -954,6 +962,83 @@ const W = sandbox;
       if(dangling.length) console.log('   dangling IDs: ' + dangling.join(', '));
       return dangling.length === 0;
     })());
+
+  /* ---------- v2.9.0: honesty fix + badge regression + progress + last session ---------- */
+  const aiSrc290 = fs.readFileSync(ROOT + 'js/ai-analyzer.js', 'utf8');
+  const nutSrc290 = fs.readFileSync(ROOT + 'js/nutrition.js', 'utf8');
+  // Badge regression (the v2.8.2 bug class): exactly ONE TrackNotify
+  // assignment, and clear() really clears — element + storage — while
+  // the other badge stays set.
+  t('v2.9.0 badges: exactly one window.TrackNotify assignment (v2.8.2 regression)',
+    (aiSrc290.match(/window\.TrackNotify\s*=/g) || []).length === 1 &&
+    !!W.TrackNotify && typeof W.TrackNotify.clear === 'function' &&
+    typeof W.TrackNotify.scanDone === 'function' && typeof W.TrackNotify.notifyDone === 'function');
+  W.TrackNotify.notifyDone();
+  t('v2.9.0 badges: notifyDone sets photo + guide badges',
+    W.TrackNotify.has('photo') === true && W.TrackNotify.has('guide') === true);
+  W.TrackNotify.clear('photo');
+  t('v2.9.0 badges: clear(photo) clears photo only; storage key removed (stays cleared)',
+    W.TrackNotify.has('photo') === false && W.TrackNotify.has('guide') === true &&
+    storage.get('trackAnalyzer.notify.photo') === undefined && storage.get('trackAnalyzer.notify.guide') === '1');
+  W.TrackNotify.clear('guide');
+  t('v2.9.0 badges: clear(guide) clears guide too',
+    W.TrackNotify.has('guide') === false && storage.get('trackAnalyzer.notify.guide') === undefined);
+  // Honesty: scoreFrame metrics must be MEASURED — they move when the
+  // measured angles move, and an unmeasurable one is null + excluded.
+  const F290 = { lean: 20, shinReach: 0, thighSep: 90, armSplit: 0.5, kneeL: 100, kneeR: 100,
+    thigh: 90, crossing: 0, hipLift: 1, hipY: 0.5, wristLY: 0.4, wristRY: 0.4, torso: 0.3,
+    kneeX: 0.50, ankleX: 0.50, sideRatio: 0.9, elbow: 90, elbowL: 90, elbowR: 90 };
+  const sqAligned = W.TrackAI._test.scoreFrame('squat', Object.assign({}, F290));
+  const sqDeviated = W.TrackAI._test.scoreFrame('squat', Object.assign({}, F290, { kneeX: 0.59 }));
+  t('v2.9.0 honesty: squat knee tracking measured — aligned knees score 100',
+    sqAligned.metrics[2] === 100, 'got ' + sqAligned.metrics[2]);
+  t('v2.9.0 honesty: squat knee tracking drops when knees drift (no placeholder 100)',
+    typeof sqDeviated.metrics[2] === 'number' && sqDeviated.metrics[2] < 100 && sqDeviated.score < sqAligned.score,
+    'metric=' + sqDeviated.metrics[2] + ' score=' + sqDeviated.score + ' vs ' + sqAligned.score);
+  const sqSide = W.TrackAI._test.scoreFrame('squat', Object.assign({}, F290, { sideRatio: 0.3 }));
+  t('v2.9.0 honesty: squat knee tracking is null from the side + excluded from score',
+    sqSide.metrics[2] === null &&
+    sqSide.score === Math.round((sqSide.metrics[0] + sqSide.metrics[1]) / 2));
+  const hgStraight = W.TrackAI._test.scoreFrame('hinge', Object.assign({}, F290, { kneeL: 170, kneeR: 168, lean: 40 }));
+  const hgBent = W.TrackAI._test.scoreFrame('hinge', Object.assign({}, F290, { kneeL: 110, kneeR: 112, lean: 40 }));
+  t('v2.9.0 honesty: hinge third metric is the measured knee angle (straight 100, bent 0)',
+    hgStraight.metrics[2] === 100 && hgBent.metrics[2] === 0,
+    hgStraight.metrics[2] + '/' + hgBent.metrics[2]);
+  const bnSym = W.TrackAI._test.scoreFrame('bench', Object.assign({}, F290));
+  const bnAsym = W.TrackAI._test.scoreFrame('bench', Object.assign({}, F290, { elbowR: 130 }));
+  t('v2.9.0 honesty: bench third metric is measured elbow symmetry (sym 100, asym < 100)',
+    bnSym.metrics[2] === 100 && typeof bnAsym.metrics[2] === 'number' && bnAsym.metrics[2] < 100,
+    'asym=' + bnAsym.metrics[2]);
+  // Progress bar + slow-mo + reduced motion + nutrition reset.
+  t('v2.9.0 progress: deep analysis drives #aiAnalyzeBar width',
+    aiSrc290.indexOf('aiAnalyzeBar') >= 0 && /aiAnalyzeBar[\s\S]{0,200}style\.width/.test(aiSrc290));
+  t('v2.9.0 slow review: 0.1x in the cycle + rounded % labels (no FP garbage)',
+    aiSrc290.indexOf('var rates = [1, 0.5, 0.25, 0.1]') >= 0 && aiSrc290.indexOf('Math.round(next * 100)') >= 0);
+  t('v2.9.0 reduced motion: runway loop + summary scroll honor the preference',
+    aiSrc290.indexOf("prefers-reduced-motion: reduce") >= 0 &&
+    aiSrc290.indexOf("prefersReducedMotion() ? 'auto' : 'smooth'") >= 0);
+  t('v2.9.0 nutrition: water reset renders through calc() only (no 3000ml flash)',
+    nutSrc290.indexOf('function resetWater()') >= 0 &&
+    !/function resetWater\(\)\{(?:[^}]*)renderWater\(3000\)/.test(nutSrc290));
+  // Last session: persistence + render + delta.
+  storage.delete('trackAnalyzer.lastSession.v1');
+  W.TrackAI._test.renderLastSession();
+  t('v2.9.0 last session: empty state gives guidance when nothing is saved',
+    $('aiLastSessionBody').innerHTML.indexOf('No sessions yet') >= 0);
+  W.TrackAI._test.storeLastSessionRecord({ t: Date.now() - 86400000, reps: { sprint: 3 }, total: 3, best: 82, topFix: 'Overstriding' });
+  W.TrackAI._test.storeLastSessionRecord({ t: Date.now(), reps: { sprint: 5 }, total: 5, best: 88, topFix: 'Overstriding' });
+  W.TrackAI._test.renderLastSession();
+  t('v2.9.0 last session: latest record renders reps + best score + top fix',
+    $('aiLastSessionBody').innerHTML.indexOf('88%') >= 0 &&
+    $('aiLastSessionBody').innerHTML.indexOf('Overstriding') >= 0 &&
+    $('aiLastSessionBody').innerHTML.indexOf('5 reps') >= 0,
+    $('aiLastSessionBody').innerHTML.slice(0, 140));
+  t('v2.9.0 last session: best-score delta vs the previous session is shown',
+    $('aiLastSessionBody').innerHTML.indexOf('up 6 from last session') >= 0,
+    $('aiLastSessionBody').innerHTML.slice(0, 200));
+  t('v2.9.0 last session: records persist in localStorage',
+    W.TrackAI._test.loadLastSessions().length === 2 && !!storage.get('trackAnalyzer.lastSession.v1'));
+  storage.delete('trackAnalyzer.lastSession.v1');
 
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);

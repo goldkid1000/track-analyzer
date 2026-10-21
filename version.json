@@ -1,9 +1,13 @@
 {
   "notes": [
-    "Fixed stuck NEW badges: the notification object was being overwritten, breaking badge-clearing when tabs open \u2014 badges now clear properly.",
-    "Notification system audit: device notifications, permission flow, and badges all verified working."
+    "Honest scores, always: three drill scores (squat, hinge, bench) used to include a placeholder perfect mark that was never measured. Every number in your score now comes from your actual movement — and a metric the camera can't judge from your angle is left out of the score, not filled in.",
+    "New: Last session card on the AI Analyzer tab — your latest session (reps, best frame score, top fix) is saved on this device and shown next time you open the app, with how your best score compares to the session before it.",
+    "The 'Reviewing your reps' progress bar actually fills now, with a percentage — it used to sit empty while the text counted frames.",
+    "Slow review for uploaded clips now goes down to 0.1x, matching the two-camera replay — frame-level inspection of the exact moment a fault lands.",
+    "Reduced-motion friendly: if your phone is set to reduce motion, the form-vs-pro demo holds a still frame instead of looping, and results appear without the scroll jump.",
+    "Small fixes: the nutrition water reset no longer flashes the wrong daily target, and if the analyzer can't start it now says so instead of sitting silent."
   ],
   "notify": true,
-  "updated": "2026-10-19",
-  "version": "2.8.2"
+  "updated": "2026-10-21",
+  "version": "2.9.0"
 }

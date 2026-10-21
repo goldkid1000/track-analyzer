@@ -64,6 +64,13 @@ function median(vals){ var a = vals.slice().sort(function(x, y){ return x - y; }
 function band(v, min, max, fall){ if(v >= min && v <= max) return 100; return clamp(100 - (v < min ? min - v : v - max) / fall * 100, 0, 100); }
 function floorS(v, min, fall){ return v >= min ? 100 : clamp(100 - (min - v) / fall * 100, 0, 100); }
 function ceilS(v, max, fall){ return v <= max ? 100 : clamp(100 - (v - max) / fall * 100, 0, 100); }
+/* v2.9.0: CSS animations already honor prefers-reduced-motion (blanket
+ * rule in app.css), but JS-driven motion did not — the runway loop and
+ * the smooth scroll-into-view ran at full motion regardless. */
+function prefersReducedMotion(){
+  try{ return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
+  catch(e){ return false; }
+}
 function ang(a, b, c){
   var ab = { x: a.x - b.x, y: a.y - b.y }, cb = { x: c.x - b.x, y: c.y - b.y };
   var dot = ab.x * cb.x + ab.y * cb.y, den = Math.hypot(ab.x, ab.y) * Math.hypot(cb.x, cb.y);
@@ -602,6 +609,7 @@ function extractAI(lm){
     missing: [], torso: torso,
     lean: Math.atan2(Math.abs(sh.x - hip.x), Math.abs(sh.y - hip.y)) * 180 / Math.PI,
     elbow: (ang(lm[11], lm[13], lm[15]) + ang(lm[12], lm[14], lm[16])) / 2,
+    elbowL: ang(lm[11], lm[13], lm[15]), elbowR: ang(lm[12], lm[14], lm[16]),
     kneeL: ang(lm[23], lm[25], lm[27]), kneeR: ang(lm[24], lm[26], lm[28]),
     thigh: Math.min(fwdThigh(lm[23], lm[25]), fwdThigh(lm[24], lm[26])),
     thighSep: ang(lm[25], hip, lm[26]),
@@ -670,14 +678,27 @@ function scoreFrame(activity, f){
     metrics = [band(f.lean, 28, 55, 25), floorS(f.armSplit, 0.65, 0.5), floorS(Math.max(f.kneeL, f.kneeR), 150, 35)];
     labels = ['Projection', 'Hand separation', 'Rear-leg extension'];
   } else if(activity === 'squat'){
-    metrics = [floorS(AI.squatDip, 0.08, 0.08), ceilS(f.lean, 30, 25), 100];
+    /* v2.9.0 HONESTY FIX: the third metric used to be a placeholder 100
+     * (a fake perfect "Knee tracking" averaged into the score). Knee
+     * tracking is now MEASURED — knees vs ankles — but only from a
+     * front-ish view; from the side it is null and excluded from the
+     * score, exactly like the photo analyzer's "Side view needed". */
+    metrics = [floorS(AI.squatDip, 0.08, 0.08), ceilS(f.lean, 30, 25),
+      f.sideRatio > 0.58 ? ceilS(Math.abs(f.kneeX - f.ankleX) / (f.torso || 1), 0.08, 0.30) : null];
     labels = ['Depth', 'Back angle', 'Knee tracking'];
   } else if(activity === 'hinge'){
-    metrics = [band(f.lean, 30, 55, 20), ceilS(f.shinReach, 0.2, 0.3), 100];
-    labels = ['Hinge angle', 'Bar path (shin)', 'Back angle'];
+    /* v2.9.0 HONESTY FIX: third metric was a placeholder 100 ("Back
+     * angle", a duplicate of metric 1). It is now the MEASURED knee
+     * angle — a hinge keeps soft, fairly straight knees. */
+    metrics = [band(f.lean, 30, 55, 20), ceilS(f.shinReach, 0.2, 0.3), floorS(Math.min(f.kneeL, f.kneeR), 150, 40)];
+    labels = ['Hinge angle', 'Bar path (shin)', 'Knee angle'];
   } else if(activity === 'bench'){
-    metrics = [band(f.elbow, 70, 110, 40), ceilS(f.crossing, 0.2, 0.4), 100];
-    labels = ['Elbow angle', 'Bar control', 'Shoulder position'];
+    /* v2.9.0 HONESTY FIX: third metric was a placeholder 100
+     * ("Shoulder position", never measured). It is now MEASURED elbow
+     * symmetry — both elbows should open together on the way down. */
+    metrics = [band(f.elbow, 70, 110, 40), ceilS(f.crossing, 0.2, 0.4),
+      (typeof f.elbowL === 'number' && typeof f.elbowR === 'number') ? ceilS(Math.abs(f.elbowL - f.elbowR), 12, 40) : null];
+    labels = ['Elbow angle', 'Bar control', 'Elbow symmetry'];
   } else if(activity === 'arm-swing'){
     /* v2.2.0: arm practice. maxHand = how high the higher hand is,
      * in torso units above the shoulder (chin ≈ +0.25, hip ≈ −1).
@@ -709,7 +730,10 @@ function scoreFrame(activity, f){
   else if(activity === 'squat' && AI.squatDip < 0.08) tripped = 'squatDepth';
   else if(activity === 'hinge' && f.lean > 55) tripped = 'hingeBack';
   else if(f.sideRatio > 0.58 && Math.abs(f.kneeX - f.ankleX) > 0.08 * f.torso) tripped = 'squatKnee';
-  var score = Math.round(metrics.reduce(function(s, v){ return s + v; }, 0) / metrics.length);
+  /* v2.9.0: average only the metrics that were actually measured — a
+   * null metric (can't be judged from this angle) never counts. */
+  var avail = metrics.filter(function(v){ return typeof v === 'number' && isFinite(v); });
+  var score = avail.length ? Math.round(avail.reduce(function(s, v){ return s + v; }, 0) / avail.length) : 0;
   return { score: score, metrics: metrics, labels: labels, tripped: tripped };
 }
 function countRep(activity){
@@ -826,9 +850,12 @@ function onFrame(f, angle){
       var generals = kb.faults.filter(function(x){ return x.check === 'general'; });
       if(generals.length){ fix = generals[AI.cueIdx % generals.length]; AI.cueIdx++; }
     }
-    var bestIdx = 0;
-    for(var j = 1; j < scored.metrics.length; j++) if(scored.metrics[j] > scored.metrics[bestIdx]) bestIdx = j;
-    var praise = scored.labels[bestIdx] ? scored.labels[bestIdx] + ' is looking strong' : 'Good shape';
+    var bestIdx = -1;
+    for(var j = 0; j < scored.metrics.length; j++){
+      if(typeof scored.metrics[j] !== 'number') continue; // null = not measured from this angle
+      if(bestIdx < 0 || scored.metrics[j] > scored.metrics[bestIdx]) bestIdx = j;
+    }
+    var praise = bestIdx >= 0 && scored.labels[bestIdx] ? scored.labels[bestIdx] + ' is looking strong' : 'Good shape';
     setText('aiGood', praise);
     if(fix){
       setText('aiFix', fix.cue + ' — ' + fix.drill);
@@ -1129,6 +1156,15 @@ function runwayTick(ts){
   try{ runwayDraw(); }catch(e){ /* a bad frame never kills the run */ }
 }
 function runwayStart(){
+  /* v2.9.0: reduced-motion — hold one still frame instead of looping
+   * the demo. Play/Replay still draw the current phase, they just
+   * don't animate. */
+  if(prefersReducedMotion()){
+    runway.playing = false;
+    if(runway.raf && typeof cancelAnimationFrame === 'function'){ try{ cancelAnimationFrame(runway.raf); }catch(e){} runway.raf = 0; }
+    try{ runwayDraw(); }catch(e){}
+    return;
+  }
   /* v2.8.1: idempotent + self-healing — tapping Play always revives the
    * loop, even if a previous raf chain died while playing stayed true. */
   runway.playing = true; runway.lastT = 0;
@@ -1871,6 +1907,7 @@ function renderDeepReport(report){
 }
 function runDeepAnalysis(){
   showEl($('aiAnalyzing'), true);
+  var aBarReset = $('aiAnalyzeBar'); if(aBarReset) aBarReset.style.width = '0%';
   var frames1 = AI.deep.frames1.slice();
   var frames2count = AI.deep.frames2.length;
   var ref = ($('aiReference') && $('aiReference').value || '').trim();
@@ -1880,7 +1917,13 @@ function runDeepAnalysis(){
     function step(){
       var end = Math.min(frames1.length, idx + 60);
       for(; idx < end; idx++) absorbFrame(state, frames1[idx]);
-      setText('aiAnalyzeStatus', 'Reviewing frame ' + Math.min(idx, frames1.length) + ' of ' + frames1.length + '…');
+      /* v2.9.0: the progress bar element existed since v2.2.0 but no
+       * code ever set its width — it sat at 0% for the whole review.
+       * Drive it (and the % in the status line) from real frame counts. */
+      var doneCount = Math.min(idx, frames1.length);
+      var pct = frames1.length ? Math.round(doneCount / frames1.length * 100) : 100;
+      setText('aiAnalyzeStatus', 'Reviewing frame ' + doneCount + ' of ' + frames1.length + ' (' + pct + '%)…');
+      var aBar = $('aiAnalyzeBar'); if(aBar) aBar.style.width = pct + '%';
       setText('aiAnalyzeDetail', 'Reps found so far: ' + state.reps.length + '. Camera 2 frames: ' + frames2count + '.');
       if(idx < frames1.length){ setTimeout(step, 0); return; }
       var report = buildDeepReport(state.reps, frames2count, {
@@ -1910,9 +1953,14 @@ function stopAndAnalyze(){
     showEl($('aiSoloDoubleCheck'), true);
     var scr = $('aiSoloCheckResult'); if(scr) scr.textContent = '';
     notifyAnalysisDone();
+    saveLastSession();
+    renderLastSession();
     if(AI.clipMode) renderClipMarkers();
     var s = $('aiSummary');
-    if(s) s.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if(s){
+      s.classList.remove('reveal-pop'); void s.offsetWidth; s.classList.add('reveal-pop');
+      s.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'start' });
+    }
   });
 }
 /* v2.2.0: AI moments for an uploaded clip — the worst frame, the best
@@ -2007,6 +2055,77 @@ function renderSessionSummary(s){
     '<h4>Best frames</h4>' + framesHtml;
 }
 
+/* ================= Last session (v2.9.0) =================
+ * Until now every session vanished on reload — a sprinter training
+ * alone had no continuity between days. The most recent sessions
+ * (last 5) now persist on-device: date, counted reps, the best
+ * MEASURED frame score, and the top fix — nothing estimated, nothing
+ * invented. The card shows the latest plus how its best score
+ * compares with the session before it. */
+var LS_LAST_SESSIONS = 'trackAnalyzer.lastSession.v1';
+function loadLastSessions(){
+  try{
+    var raw = localStorage.getItem(LS_LAST_SESSIONS);
+    var arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  }catch(e){ return []; }
+}
+function storeLastSessionRecord(rec){
+  if(!rec) return null;
+  var arr = loadLastSessions();
+  arr.unshift(rec);
+  arr = arr.slice(0, 5);
+  try{ localStorage.setItem(LS_LAST_SESSIONS, JSON.stringify(arr)); }catch(e){}
+  return rec;
+}
+function buildLastSessionRecord(){
+  var s = AI.lastSession, rep = AI.deepReport;
+  if(!s) return null;
+  var total = totalReps(s);
+  if(!total) return null; // no full reps — nothing truthful to record
+  var best = null;
+  (s.bestFrames || []).forEach(function(fr){
+    if(typeof fr.score === 'number' && (best === null || fr.score > best)) best = fr.score;
+  });
+  var topFix = (rep && rep.faultList && rep.faultList[0]) ? rep.faultList[0].fault
+    : (s.fixes && s.fixes[0] ? s.fixes[0] : null);
+  var rec = { t: Date.now(), reps: {}, total: total, best: best, topFix: topFix };
+  Object.keys(s.reps || {}).forEach(function(k){ if(s.reps[k] > 0) rec.reps[k] = s.reps[k]; });
+  return rec;
+}
+function saveLastSession(){
+  var rec = buildLastSessionRecord();
+  if(rec) storeLastSessionRecord(rec);
+  return rec;
+}
+function lastSessionDelta(r, prev){
+  if(!prev || typeof r.best !== 'number' || typeof prev.best !== 'number') return '';
+  var d = r.best - prev.best;
+  if(d > 0) return ' — up ' + d + ' from last session';
+  if(d < 0) return ' — down ' + Math.abs(d) + ' from last session';
+  return ' — same best as last session';
+}
+function renderLastSession(){
+  var card = $('aiLastSession'), body = $('aiLastSessionBody');
+  if(!card || !body) return;
+  showEl(card, true);
+  var arr = loadLastSessions();
+  if(!arr.length){
+    body.innerHTML = '<p>No sessions yet — record a rep above and your last session will be saved here, on this device only.</p>';
+    return;
+  }
+  var r = arr[0], prev = arr[1];
+  var d = new Date(r.t);
+  var when = d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' · ' +
+    d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  var acts = Object.keys(r.reps || {}).map(function(k){ return (ACTIVITY_LABEL[k] || k) + ' ×' + r.reps[k]; }).join(' · ');
+  var html = '<p><strong>' + escHtml(when) + '</strong> — ' + r.total + ' rep' + (r.total === 1 ? '' : 's') + (acts ? ' (' + escHtml(acts) + ')' : '') + '</p>';
+  if(typeof r.best === 'number') html += '<p>Best frame: <strong>' + r.best + '%</strong>' + escHtml(lastSessionDelta(r, prev)) + '</p>';
+  if(r.topFix) html += '<p>Top fix: ' + escHtml(r.topFix) + '</p>';
+  html += '<p class="ai-note">Saved on this device only — beat the best frame next session.</p>';
+  body.innerHTML = html;
+}
+
 function startAI(reuseStream, opts){
   if(AI.running) return;
   opts = opts || {};
@@ -2046,13 +2165,18 @@ function startAI(reuseStream, opts){
     AI.running = true;
     if(!window.Pose){ setText('aiSeeing', 'Analyzer didn’t start — reload and try again.'); return; }
     if(opts.announce) announce('Recording has started.');
-    AI.poseA = makePose(function(res){
-      var lm = res && res.poseLandmarks;
-      AI.gesture.faceSeen = !!(lm && lm[0] && (lm[0].visibility === undefined || lm[0].visibility > 0.5));
-      if(lm){ AI.lastLandmarks1 = simplifyLm(lm); AI.lastFrontal = isFrontal(lm); AI.lastRawLm = lm; }
-      drawLiveSkeleton(lm || null);
-      if(AI.running) onFrame(lm ? extractAI(lm) : { missing: ['full body'] }, 1);
-    });
+    /* v2.9.0: guard the constructor like startWatching does — a
+     * half-loaded pose library used to throw here and leave a dead
+     * "Starting camera…" with no explanation. */
+    try{
+      AI.poseA = makePose(function(res){
+        var lm = res && res.poseLandmarks;
+        AI.gesture.faceSeen = !!(lm && lm[0] && (lm[0].visibility === undefined || lm[0].visibility > 0.5));
+        if(lm){ AI.lastLandmarks1 = simplifyLm(lm); AI.lastFrontal = isFrontal(lm); AI.lastRawLm = lm; }
+        drawLiveSkeleton(lm || null);
+        if(AI.running) onFrame(lm ? extractAI(lm) : { missing: ['full body'] }, 1);
+      });
+    }catch(e){ setText('aiSeeing', 'Analyzer didn’t start — reload and try again.'); return; }
     if(AI.clipMode){
       var cv = $('aiVideo');
       if(cv){
@@ -2110,20 +2234,24 @@ function startAI(reuseStream, opts){
       showEl($('aiPreview2Wrap'), false);
       setText('aiAngleTag', 'Uploaded clip');
     } else if(useDual && dual.remoteStream){
-      AI.poseB = makePose(function(res){
-        var lm = res && res.poseLandmarks;
-        // Skeleton rig, driven by Camera 2, drawn ON the person in the
-        // Camera 2 video — never a separate drawing.
-        drawLiveSkeleton2(lm || null);
-        if(lm){
-          var ef = extractAI(lm);
-          if(ef && (!ef.missing || !ef.missing.length)){
-            AI.deep.frames2.push({ t: Date.now(), activity: 'camera2', score: 0, tripped: null,
-              f: { lean: ef.lean, kneeL: ef.kneeL, kneeR: ef.kneeR, elbow: ef.elbow, thighSep: ef.thighSep, shinReach: ef.shinReach } });
-            if(AI.deep.frames2.length > 900) AI.deep.frames2.shift();
+      /* v2.9.0: same constructor guard — if Camera 2's pose fails to
+       * start, Camera 1 keeps analyzing instead of dying silently. */
+      try{
+        AI.poseB = makePose(function(res){
+          var lm = res && res.poseLandmarks;
+          // Skeleton rig, driven by Camera 2, drawn ON the person in the
+          // Camera 2 video — never a separate drawing.
+          drawLiveSkeleton2(lm || null);
+          if(lm){
+            var ef = extractAI(lm);
+            if(ef && (!ef.missing || !ef.missing.length)){
+              AI.deep.frames2.push({ t: Date.now(), activity: 'camera2', score: 0, tripped: null,
+                f: { lean: ef.lean, kneeL: ef.kneeL, kneeR: ef.kneeR, elbow: ef.elbow, thighSep: ef.thighSep, shinReach: ef.shinReach } });
+              if(AI.deep.frames2.length > 900) AI.deep.frames2.shift();
+            }
           }
-        }
-      });
+        });
+      }catch(e){ /* Camera 1 continues on its own. */ }
       attachStream($('aiVideo'), dual.localStream);
       attachStream($('aiVideo2'), dual.remoteStream);
       showEl($('aiPreview2Wrap'), true);
@@ -2256,6 +2384,7 @@ function applyRigFps(mode){
 }
 function initAI(){
   restoreBadges();
+  renderLastSession();
   // Live rigs draw through the shared smooth rig engine (interpolated
   // drawing on requestAnimationFrame). If the engine is missing, the
   // draw functions fall back to direct drawing.
@@ -2323,15 +2452,19 @@ function initAI(){
     var v = $('aiVideo');
     if(!v || !AI.clipMode){ setText('aiSeeing', 'Upload a clip to use slow review.'); return; }
     /* v2.2.0: cycle 1× → 0.5× → 0.25× → 1×. The old toggle only did
-     * 0.35×, which was too fast to see the exact moment a fault lands. */
-    var rates = [1, 0.5, 0.25];
+     * 0.35×, which was too fast to see the exact moment a fault lands.
+     * v2.9.0: 0.1× added (the two-camera replay already had it) for
+     * frame-level inspection. Labels use Math.round — 0.1 * 100 is
+     * 10.000000000000002 in floating point and would print garbage. */
+    var rates = [1, 0.5, 0.25, 0.1];
     var idx = rates.indexOf(v.playbackRate);
     var next = rates[(idx + 1) % rates.length];
     v.playbackRate = next;
     slowBtn.setAttribute('aria-pressed', next !== 1 ? 'true' : 'false');
-    slowBtn.textContent = next === 1 ? 'Slow review' : 'Slow review: ' + (next * 100) + '%';
+    slowBtn.textContent = next === 1 ? 'Slow review' : 'Slow review: ' + Math.round(next * 100) + '%';
+    var speedName = next === 0.5 ? 'half' : next === 0.25 ? 'quarter' : 'one-tenth';
     setText('aiSeeing', next === 1 ? 'Recording — clip at normal speed.' :
-      'Slow review — clip at ' + (next === 0.5 ? 'half' : 'quarter') + ' speed.');
+      'Slow review — clip at ' + speedName + ' speed.');
   });
   /* v2.2.0: "Notify me when scans finish" — asks the browser for
    * notification permission on this tap (a tap is the only way the
@@ -2410,7 +2543,10 @@ window.TrackAI = { setBlockStarts: setBlockStarts, getBlockStarts: function(){ r
   startClip: function(url){ startAI(false, { clipUrl: url, announce: false }); },
   endClip: function(){ if(AI.running) stopAndAnalyze(); },
   /* v2.2.0 test hooks (smoke tests only). */
-  _test: { classify: classify, scoreFrame: scoreFrame, notifyScanDone: notifyScanDone } };
+  _test: { classify: classify, scoreFrame: scoreFrame, notifyScanDone: notifyScanDone,
+    /* v2.9.0 */ storeLastSessionRecord: storeLastSessionRecord, loadLastSessions: loadLastSessions,
+    renderLastSession: renderLastSession, lastSessionDelta: lastSessionDelta,
+    prefersReducedMotion: prefersReducedMotion } };
 window.TrackFrameMarks = { build: buildFrameMarks, draw: drawFrameMarks, at: frameMarkAt,
   figureHtml: frameMarksFigureHtml, drawAll: drawAllFrameMarks,
   getAnnotations: function(){ return AI.frameAnnotations; } };

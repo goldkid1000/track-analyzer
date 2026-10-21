@@ -1,4 +1,4 @@
-/* Track Analyzer — update system (v2.3.3)
+/* Track Analyzer — update system (v2.9.0)
  *
  * Tenno Vault-style: visible version, What's New panel, Check for updates,
  * and an update banner. The banner fires ONLY when version.json reports a
@@ -47,9 +47,46 @@
  */
 (function(){
 'use strict';
-var VERSION = '2.8.2';
+var VERSION = '2.9.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "2.9.0", date: "2026-10-21", notes: [
+    "Honest scores, always: three drill scores (squat, hinge, bench) used to include a placeholder perfect mark that was never measured. Every number in your score now comes from your actual movement — and a metric the camera can't judge from your angle is left out of the score, not filled in.",
+    "New: Last session card on the AI Analyzer tab — your latest session (reps, best frame score, top fix) is saved on this device and shown next time you open the app, with how your best score compares to the session before it.",
+    "The 'Reviewing your reps' progress bar actually fills now, with a percentage — it used to sit empty while the text counted frames.",
+    "Slow review for uploaded clips now goes down to 0.1x, matching the two-camera replay — frame-level inspection of the exact moment a fault lands.",
+    "Reduced-motion friendly: if your phone is set to reduce motion, the form-vs-pro demo holds a still frame instead of looping, and results appear without the scroll jump.",
+    "Small fixes: the nutrition water reset no longer flashes the wrong daily target, and if the analyzer can't start it now says so instead of sitting silent."
+  ]},
+  { version: "2.8.2", date: "2026-10-19", notes: [
+    "Fixed stuck NEW badges: the notification object was being overwritten, breaking badge-clearing when tabs open — badges now clear properly.",
+    "Notification system audit: device notifications, permission flow, and badges all verified working."
+  ]},
+  { version: "2.8.1", date: "2026-10-19", notes: [
+    "Runway animation reliability: the Your-form-vs-Pro-form runner no longer freezes — the frame loop now survives bad frames (a throw can't kill it), recovers automatically from iOS WebGL context loss by falling back to 2D, and resumes after background tabs. Play always revives the animation."
+  ]},
+  { version: "2.8.0", date: "2026-10-19", notes: [
+    "REDLINE rework: motorsport-telemetry look — carbon black base with a subtle carbon weave, racing red + optic white accents, condensed tabular numerals, thin red timing-line dividers.",
+    "True fullscreen on mobile: edge-to-edge display, safe-area-aware header and tab bar, full-bleed camera at 390px."
+  ]},
+  { version: "2.7.0", date: "2026-10-19", notes: [
+    "NEW: Solo vs Two-cameras mode picker at the top of the AI Analyzer tab — solo records and analyzes on one phone (default), two cameras connects both sides of the body. Choice is remembered.",
+    "NEW: 🔁 Double-check button on solo results — re-runs the AI on your rep and reports whether both passes agree.",
+    "Coaching panel bug fixes: the \"Can't see\" row no longer doubles its label, and Good / One fix / Form score / Can't see reset when the camera turns off or a new recording starts."
+  ]},
+  { version: "2.6.0", date: "2026-10-19", notes: [
+    "Clip reliability: replay hardening — stale clip URLs are revoked before new ones load, preload=metadata on replay videos, and sync listeners can no longer stack up across recordings.",
+    "iOS analysis fix: the pose-sampling video is now attached to the page (hidden) during analysis — iOS Safari refused to decode detached videos, which made clips score \"unavailable\".",
+    "NEW Double-check: re-runs the AI analysis on your saved clip and tells you whether both checks agree or disagree, so you know when to trust the number or retake.",
+    "Slow motion upgrade: new 0.1x ultra-slow replay speed for frame-level inspection (both clips follow the speed)."
+  ]},
+  { version: "2.5.0", date: "2026-10-19", notes: [
+    "Volt Rework — deeper athletic redesign: layered stadium-night background glows, tiered panel/card hierarchy with top-light and depth, bolder bottom tab bar (real volt pill on active), gradient action buttons with hover sheen, polished inputs with volt focus glow, gradient score ring, kicker-accented section titles.",
+    "Tighter mobile fit: full-width camera actions, bolder 62px tab targets, snap-scrolling mode picker, 100% join-code input, zero horizontal scroll. Every feature works exactly as before."
+  ]},
+  { version: "2.4.1", date: "2026-10-19", notes: [
+    "Rest day fix: the Meal timing section now shows rest-day guidance (morning protein, regular meals, bedtime protein) instead of pre/post-workout timing when Rest day is selected."
+  ]},
   { version: '2.4.0', date: '2026-10-19', notes: [
     'New Nutrition tab: daily protein, carb, and water targets computed from your body weight (training vs rest day), pre/post-workout meal timing, dorm-friendly meal ideas (dining hall, microwave, no-cook), and a hydration tracker that resets daily \u2014 all on-device.',
     'Full UI refresh: richer cards with depth, gradient action buttons, a sharper bottom tab bar and sidebar, smoother transitions, and refined typography across every screen. Every feature works exactly as before.'

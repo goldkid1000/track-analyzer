@@ -97,7 +97,9 @@ function addWater(ml){
 }
 function resetWater(){
   saveWater({ date: todayKey(), ml: 0 });
-  renderWater(3000);
+  /* v2.9.0: render once, through calc() — the old code first painted
+   * the bar against the generic 3000 ml default, flashing the wrong
+   * target for anyone whose real target differs. */
   calc();
 }
 
