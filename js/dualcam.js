@@ -671,7 +671,7 @@ function startPoseWatch(){
   try{
     if(!D.watchPose){
       D.watchPose = new Pose({ locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/' + f; } });
-      D.watchPose.setOptions({ modelComplexity: 0, smoothLandmarks: false, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+      D.watchPose.setOptions({ modelComplexity: 0, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
       D.watchPose.onResults(function(res){
         handlePresencePose(res && res.poseLandmarks);
       });
@@ -1065,7 +1065,7 @@ function runLocalAnalysis(){
   var pose;
   try{
     pose = new Pose({ locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/' + f; } });
-    pose.setOptions({ modelComplexity: 0, smoothLandmarks: false, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    pose.setOptions({ modelComplexity: 0, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
     pose.onResults(function(res){ if(res && res.poseLandmarks){ var f = extractDualFeatures(res.poseLandmarks); samples.push({ t: v.currentTime || 0, f: f }); if(f) feats.push(f); } });
   }catch(e){ try{ if(v.parentNode) v.parentNode.removeChild(v); }catch(_){} URL.revokeObjectURL(url); D.localAnalysis = { label: D.localLabel, score: null, metrics: [0, 0, 0], issue: 'unavailable', headline: 'Analyzer didn\u2019t start for this clip', fix: DUAL_FIX.unavailable, frames: 0, activity: 'none', moments: [] }; finishLocalAnalysis(); return; }
   function finish(){
@@ -1214,9 +1214,31 @@ function showReplay(blobA, blobB){
     var target = frac * b.duration;
     if(Math.abs(b.currentTime - target) > 0.12) b.currentTime = target;
   }
+  /* v3.0.0: replay auto-slow at the worst-scoring moment (from the
+   * analysis moments), restoring full speed after it. It only ever
+   * engages from 1x — a speed the user picked is never fought. */
+  var worstMomentT = null;
+  ((D.localAnalysis && D.localAnalysis.moments) || []).forEach(function(m){
+    if(m.kind === 'fix' && worstMomentT === null) worstMomentT = m.t;
+  });
+  var dualAutoSlowed = false;
+  function autoSlowTick(){
+    if(!va || va.paused || worstMomentT === null) return;
+    var t = va.currentTime || 0;
+    var atWorst = t >= worstMomentT - 0.4 && t <= worstMomentT + 0.8;
+    if(atWorst && va.playbackRate === 1){
+      va.playbackRate = 0.25; if(vb && blobB) vb.playbackRate = 0.25;
+      dualAutoSlowed = true;
+      setText('dualRecState', 'Slowed down — this is the moment that needs work, at quarter speed so you can see it.');
+    } else if(dualAutoSlowed && !atWorst){
+      va.playbackRate = 1; if(vb && blobB) vb.playbackRate = 1;
+      dualAutoSlowed = false;
+      setText('dualRecState', 'Replay ready — one slider moves both clips.');
+    }
+  }
   /* v2.6.0: on* property (not addEventListener) so re-recordings can't
    * stack duplicate timeupdate handlers on the same elements. */
-  if(va) va.ontimeupdate = (vb && blobB) ? function(){ syncFrom(va, vb); } : null;
+  if(va) va.ontimeupdate = (vb && blobB) ? function(){ syncFrom(va, vb); autoSlowTick(); } : function(){ autoSlowTick(); };
   if(vb) vb.ontimeupdate = (blobB) ? function(){ syncFrom(vb, va); } : null;
   if(scrub){
     scrub.value = 0;
@@ -1238,6 +1260,7 @@ function showReplay(blobA, blobB){
   var speedBtns = document.querySelectorAll('[data-dual-speed]');
   speedBtns.forEach(function(b){ b.onclick = function(){
     var r = parseFloat(b.dataset.dualSpeed) || 1;
+    dualAutoSlowed = false; // the user's speed wins — auto-slow stands down
     if(va) va.playbackRate = r;
     if(vb) vb.playbackRate = r;
     speedBtns.forEach(function(x){ x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });

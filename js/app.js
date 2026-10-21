@@ -236,11 +236,145 @@ function analyze(lm){
       }
 
 /* Pointing markers for AI Photo: green checks where form looks good,
- * red marks where to work — drawn on the photo with a short label. */
-var PHOTO_FIX_JOINT = {
-  projection: 23, frontKnee: 25, rearKnee: 26, hipHeight: 23,
-  thighSeparation: 25, underHip: 27, elbowShape: 13, sprintPosture: 23
-};
+ * red marks where to work — drawn on the photo with a short label.
+ *
+ * v3.0.0 ROOT-CAUSE REWORK. The old photo path had three compounding
+ * bugs behind "markers don't appear / land on the wrong body part":
+ *  1. It reused the classic engine's extractFeatures, which returns
+ *     null unless ALL 12 joints (both sides) are clearly visible — on a
+ *     normal side-on photo the far side is always partly hidden, so
+ *     most photos produced NO markers and a "can't see" message.
+ *  2. Marker joints were hardcoded to the LEFT side (front knee = 25,
+ *     rear knee = 26, elbow = 13, ankle = 27) while the checks sorted
+ *     knee angles without remembering which leg was which — when the
+ *     athlete's front leg was the right leg, the marker landed on the
+ *     wrong knee.
+ *  3. Markers drew whenever a landmark object existed — MediaPipe
+ *     returns all 33 landmarks even for joints it cannot see, so
+ *     markers also landed on guessed positions.
+ * assessPhoto below is side-aware: it measures whichever side is
+ * actually visible, names front/rear by the measured angles, anchors
+ * every marker to the joint its text describes, and never anchors to a
+ * joint that isn't clearly visible. */
+function photoVis(lm, i){
+  var p = lm && lm[i];
+  return !!p && (p.visibility === undefined || p.visibility > 0.5);
+}
+function photoPointPx(pt, w, h){ return { x: pt.x * w, y: pt.y * h }; }
+function photoFeatures(lm){
+  if(!lm) return null;
+  function P(i){ return photoVis(lm, i) ? lm[i] : null; }
+  var shL = P(11), shR = P(12), hipL = P(23), hipR = P(24);
+  var shoulder = shL && shR ? { x: (shL.x + shR.x) / 2, y: (shL.y + shR.y) / 2 } : (shL || shR);
+  var hip = hipL && hipR ? { x: (hipL.x + hipR.x) / 2, y: (hipL.y + hipR.y) / 2 } : (hipL || hipR);
+  if(!shoulder || !hip) return null;
+  var torso = Math.hypot(shoulder.x - hip.x, shoulder.y - hip.y);
+  if(torso < 0.04) return null;
+  var trunk = Math.atan2(Math.abs(shoulder.x - hip.x), Math.abs(shoulder.y - hip.y)) * 180 / Math.PI;
+  function sideAngle(h, k, a){ var hp = P(h), kp = P(k), ap = P(a); return (hp && kp && ap) ? angle(hp, kp, ap) : null; }
+  var kneeL = sideAngle(23, 25, 27), kneeR = sideAngle(24, 26, 28);
+  var elbowL = sideAngle(11, 13, 15), elbowR = sideAngle(12, 14, 16);
+  function shinOf(kneeI, ankleI){ var k = P(kneeI), a = P(ankleI); return (k && a) ? Math.atan2(Math.abs(a.x - k.x), Math.abs(a.y - k.y)) * 180 / Math.PI : null; }
+  var shinL = shinOf(25, 27), shinR = shinOf(26, 28);
+  var facing = ((lm[0] && lm[0].visibility > 0.45) ? Math.sign(lm[0].x - shoulder.x) : 0) || 1;
+  function reachOf(kneeI, ankleI){ var k = P(kneeI), a = P(ankleI); return (k && a) ? (a.x - k.x) * facing / torso : null; }
+  var reachL = reachOf(25, 27), reachR = reachOf(26, 28);
+  var legs = [];
+  if(kneeL !== null) legs.push({ angle: kneeL, kneeIdx: 25 });
+  if(kneeR !== null) legs.push({ angle: kneeR, kneeIdx: 26 });
+  legs.sort(function(a, b){ return a.angle - b.angle; });
+  var front = legs[0] || null, rear = legs.length > 1 ? legs[legs.length - 1] : null;
+  var reaches = [];
+  if(reachL !== null) reaches.push({ val: reachL, ankleIdx: 27 });
+  if(reachR !== null) reaches.push({ val: reachR, ankleIdx: 28 });
+  reaches.sort(function(a, b){ return b.val - a.val; });
+  return {
+    torso: torso, trunk: trunk, facing: facing,
+    kneeL: kneeL, kneeR: kneeR, elbowL: elbowL, elbowR: elbowR,
+    shinL: shinL, shinR: shinR,
+    frontKnee: front ? front.angle : null, frontKneeIdx: front ? front.kneeIdx : null,
+    rearKnee: rear ? rear.angle : null, rearKneeIdx: rear ? rear.kneeIdx : null,
+    shinReach: reaches.length ? reaches[0].val : null,
+    reachAnkleIdx: reaches.length ? reaches[0].ankleIdx : null,
+    thighSeparation: (P(25) && P(26)) ? angle(lm[25], hip, lm[26]) : null,
+    hipLift: (shoulder.y - hip.y) / torso, hipY: hip.y,
+    sideRatio: (shL && shR) ? Math.hypot(shL.x - shR.x, shL.y - shR.y) / torso : null,
+    hipIdx: hipL ? 23 : 24, shoulderIdx: shL ? 11 : 12
+  };
+}
+function photoElbowVerdict(f, lo, hi){
+  var elbows = [];
+  if(f.elbowL !== null) elbows.push({ angle: f.elbowL, idx: 13 });
+  if(f.elbowR !== null) elbows.push({ angle: f.elbowR, idx: 14 });
+  if(!elbows.length) return null;
+  var bad = null, badBy = 0, goodIdx = null;
+  elbows.forEach(function(e){
+    var out = e.angle < lo ? lo - e.angle : (e.angle > hi ? e.angle - hi : 0);
+    if(out > badBy){ badBy = out; bad = e; }
+    if(out === 0 && goodIdx === null) goodIdx = e.idx;
+  });
+  return { ok: !bad, badIdx: bad ? bad.idx : null, goodIdx: goodIdx };
+}
+function assessPhoto(lm){
+  var missing = photoMissingJoints(lm);
+  var f = photoFeatures(lm);
+  if(!f) return { feats: null, phase: 'unknown', checks: {}, fixAnchors: {}, goodAnchors: [], missing: missing };
+  var isSet = f.trunk >= 55 && (f.frontKnee === null || f.frontKnee < 115);
+  var checks = {}, fixAnchors = {}, goodAnchors = [];
+  function put(key, ok, anchorIdx, goodLabel){
+    if(ok === null || ok === undefined) return;
+    checks[key] = ok;
+    if(ok === false && anchorIdx !== null && anchorIdx !== undefined) fixAnchors[key] = anchorIdx;
+    if(ok === true && anchorIdx !== null && anchorIdx !== undefined) goodAnchors.push({ key: key, idx: anchorIdx, label: goodLabel });
+  }
+  if(f.sideRatio !== null) put('projection', f.sideRatio <= 0.58, f.hipIdx, null);
+  if(isSet){
+    if(f.frontKnee !== null) put('frontKnee', f.frontKnee >= 78 && f.frontKnee <= 105, f.frontKneeIdx, 'Good: front knee ~' + Math.round(f.frontKnee) + '°');
+    if(f.rearKnee !== null) put('rearKnee', f.rearKnee >= 115 && f.rearKnee <= 145, f.rearKneeIdx, 'Good: rear knee ~' + Math.round(f.rearKnee) + '°');
+    put('hipHeight', f.hipLift >= 0.06, f.hipIdx, null);
+    if(f.thighSeparation !== null) put('thighSeparation', f.thighSeparation >= 40, f.frontKneeIdx, null);
+  } else {
+    put('sprintPosture', f.trunk <= 28, f.hipIdx, 'Good: trunk ' + Math.round(f.trunk) + '°');
+    if(f.shinReach !== null) put('underHip', f.shinReach <= 0.12, f.reachAnkleIdx, null);
+    if(f.thighSeparation !== null) put('thighSeparation', f.thighSeparation >= 60, f.frontKneeIdx, null);
+  }
+  var ev = photoElbowVerdict(f, 65, 130);
+  if(ev) put('elbowShape', ev.ok, ev.ok ? ev.goodIdx : ev.badIdx, 'Good: arms loose');
+  return { feats: f, phase: isSet ? 'set' : 'max', checks: checks, fixAnchors: fixAnchors, goodAnchors: goodAnchors, missing: missing };
+}
+/* Normalize a picked photo through a canvas BEFORE pose sees it: the
+ * browser applies EXIF orientation when drawing an <img> to a canvas,
+ * so the canvas pixels are the displayed pixels — pose then measures
+ * exactly the picture on screen, and the slot shows this same canvas
+ * output. Landmarks, skeleton, and markers share one pixel space by
+ * construction, whatever the phone stored. */
+function normalizePhotoImage(img){
+  var w = img.naturalWidth || 0, h = img.naturalHeight || 0;
+  if(!w || !h) return null;
+  var c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  var cx = c.getContext('2d');
+  if(!cx) return null;
+  cx.drawImage(img, 0, 0, w, h);
+  return c;
+}
+var queuedPhoto = null; /* v3.0.0: one queued pick/frame while a photo analyzes — never silently dropped */
+function drainPhotoQueue(){
+  if(photoBusy || !queuedPhoto) return;
+  var q = queuedPhoto; queuedPhoto = null;
+  if(q.kind === 'frame'){ receivePhotoFrame(q.req); return; }
+  var card = document.querySelector('[data-photo-slot="' + q.slot + '"]');
+  if(card) startPhotoPick(q.slot, q.file, card);
+}
+function sendPhotoRequest(request){
+  pendingPhoto = request; photoBusy = true;
+  photoPose.send({ image: request.image || request.img }).catch(function(){
+    pendingPhoto = null; photoBusy = false;
+    var readout = request.card.querySelector('.photo-readout');
+    if(readout) readout.textContent = 'That photo didn’t work. Try a clear, full-body side view.';
+    drainPhotoQueue();
+  });
+}
 function photoMissingJoints(lm){
   var groups = [['shoulders', [11, 12]], ['hips', [23, 24]], ['knees', [25, 26]], ['ankles', [27, 28]]];
   var missing = [];
@@ -268,49 +402,72 @@ function drawPhotoMarker(pctx, x, y, color, glyph, label, scale){
   pctx.textAlign = 'left'; pctx.textBaseline = 'alphabetic';
 }
 function handlePhotoResults(results,request){
-        var card=request.card,img=request.img,pcanvas=card.querySelector('canvas'),pctx=pcanvas.getContext('2d'),readout=card.querySelector('.photo-readout');
-        pcanvas.width=img.naturalWidth||1280;pcanvas.height=img.naturalHeight||960;pctx.clearRect(0,0,pcanvas.width,pcanvas.height);pctx.drawImage(img,0,0,pcanvas.width,pcanvas.height);
-        if(!results.poseLandmarks){hidePoseNote();readout.innerHTML='<strong>Couldn\u2019t see your full body in that photo.</strong> Retake it from the side with head to both feet visible.';return;}
-        if(window.drawConnectors&&window.POSE_CONNECTIONS)drawConnectors(pctx,results.poseLandmarks,POSE_CONNECTIONS,{color:'#5ed5aa',lineWidth:Math.max(3,pcanvas.width/260)});
-        if(window.drawLandmarks)drawLandmarks(pctx,results.poseLandmarks,{color:'#ff7040',fillColor:'#ffffff',lineWidth:2,radius:Math.max(3,pcanvas.width/320)});
-        var lm=results.poseLandmarks,f=extractFeatures(lm);
-        if(!f){
-          hidePoseNote();
-          var miss=photoMissingJoints(lm);
-          readout.innerHTML='<strong>Can’t see: ' + (miss.length ? miss.join(', ') : 'your full body') + '.</strong> Retake with full body in frame — shoulders, hips, knees, and ankles all visible.';
+        if(!request) return;
+        var lm = results && results.poseLandmarks;
+        /* v3.0.0: one retry at a lower detection bar before declaring "no
+         * person found" — a clear photo the first pass missed gets a
+         * second chance instead of a dead end. pendingPhoto/photoBusy
+         * stay set: this photo is still being worked on. */
+        if(!lm && !request.retried && photoPose){
+          request.retried = true;
+          try{ photoPose.setOptions({ modelComplexity: 1, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.35, minTrackingConfidence: 0.35 }); }catch(e){}
+          photoPose.send({ image: request.image || request.img }).catch(function(){
+            request.retried = 'failed';
+            handlePhotoResults(null, request);
+          });
           return;
         }
-        var knees=[Math.round(f.kneeL),Math.round(f.kneeR)].sort(function(a,b){return a-b}),trunk=Math.round(f.lean),armL=Math.round(f.elbowL),armR=Math.round(f.elbowR);
-        var shinL=Math.round(Math.atan2(Math.abs(lm[27].x-lm[25].x),Math.abs(lm[27].y-lm[25].y))*180/Math.PI);
-        var shinR=Math.round(Math.atan2(Math.abs(lm[28].x-lm[26].x),Math.abs(lm[28].y-lm[26].y))*180/Math.PI);
+        if(request.retried && photoPose){
+          try{ photoPose.setOptions({ modelComplexity: 1, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.55, minTrackingConfidence: 0.55 }); }catch(e){}
+        }
+        pendingPhoto = null; photoBusy = false;
+        var card=request.card,img=request.img,pcanvas=card.querySelector('canvas'),pctx=pcanvas.getContext('2d'),readout=card.querySelector('.photo-readout');
+        var src = request.image || img;
+        pcanvas.width=(src && src.width)||img.naturalWidth||1280;pcanvas.height=(src && src.height)||img.naturalHeight||960;
+        pctx.clearRect(0,0,pcanvas.width,pcanvas.height);pctx.drawImage(src,0,0,pcanvas.width,pcanvas.height);
+        if(!lm){hidePoseNote();readout.innerHTML='<strong>Couldn\u2019t see your full body in that photo.</strong> Retake it from the side with head to both feet visible.';drainPhotoQueue();return;}
+        if(window.drawConnectors&&window.POSE_CONNECTIONS)drawConnectors(pctx,results.poseLandmarks,POSE_CONNECTIONS,{color:'#5ed5aa',lineWidth:Math.max(3,pcanvas.width/260)});
+        if(window.drawLandmarks)drawLandmarks(pctx,results.poseLandmarks,{color:'#ff7040',fillColor:'#ffffff',lineWidth:2,radius:Math.max(3,pcanvas.width/320)});
+        var assessment = assessPhoto(lm);
+        var f = assessment.feats;
+        if(!f){
+          hidePoseNote();
+          var miss = assessment.missing;
+          readout.innerHTML='<strong>Can’t see: ' + (miss.length ? miss.join(', ') : 'your full body') + '.</strong> Retake with your full body in frame — the checks need at least one shoulder and one hip clearly visible.';
+          drainPhotoQueue();
+          return;
+        }
+        var checks = assessment.checks, isSet = assessment.phase === 'set';
+        var trunk = Math.round(f.trunk);
+        var fmtA = function(v){ return v === null || v === undefined ? '—' : Math.round(v) + '°'; };
         // Phase-gated photo checks: a single photo can be a crouched SET
         // position (trunk near horizontal) or an upright SPRINT/DRIVE photo.
         // Set-position criteria (front knee ~90, rear knee 120-135, hips
         // above shoulders) are meaningless on a sprint photo — previously
         // every upright photo with good knees was misdiagnosed as a
         // hip-height fault, and every set photo as "folded hips".
-        var isSet=trunk>=55;
         var good=[];
         if(trunk>=28&&trunk<=55)good.push('trunk projects through a useful drive range');
         else if(isSet&&trunk<=75)good.push('crouched set trunk line');
         else if(!isSet&&trunk<28)good.push('tall sprint trunk line');
-        if(isSet&&knees[0]>=78&&knees[0]<=105)good.push('front-knee shape is close to 90°');
-        if(isSet&&knees[1]>=115&&knees[1]<=145)good.push('rear-knee shape is in the 120–135° window');
-        if(armL>=65&&armL<=130&&armR>=65&&armR<=130)good.push('arms are loose rather than locked at 90°');
+        if(isSet&&checks.frontKnee)good.push('front-knee shape is close to 90°');
+        if(isSet&&checks.rearKnee)good.push('rear-knee shape is in the 120–135° window');
+        if(checks.elbowShape)good.push('arms are loose rather than locked at 90°');
         if(!good.length)good.push('full-body position is clear enough to review');
-        var issue='projection';
-        if(f.sideRatio>.58)issue='projection';
+        var issue;
+        if(checks.projection === false) issue='projection';
         else if(isSet){
-          if(knees[0]<78||knees[0]>105)issue='frontKnee';
-          else if(knees[1]<115||knees[1]>145)issue='rearKnee';
-          else if(f.hipLift<.06)issue='hipHeight';
+          if(checks.frontKnee === false)issue='frontKnee';
+          else if(checks.rearKnee === false)issue='rearKnee';
+          else if(checks.hipHeight === false)issue='hipHeight';
+          else if(checks.elbowShape === false)issue='elbowShape';
           else issue='thighSeparation';
         }else{
           // Sprint/drive photo: a tall trunk is correct here, so earlyRise /
           // foldedHips / set-knee checks do not apply.
-          if(f.shinReach>.12)issue='underHip';
-          else if(armL<65||armL>130||armR<65||armR>130)issue='elbowShape';
-          else if(f.thighSeparation<60)issue='thighSeparation';
+          if(checks.underHip === false)issue='underHip';
+          else if(checks.elbowShape === false)issue='elbowShape';
+          else if(checks.thighSeparation === false)issue='thighSeparation';
           else issue='sprintPosture';
         }
         hidePoseNote();var fix=coachFix[issue],v=fixVideos[issue];
@@ -319,35 +476,40 @@ function handlePhotoResults(results,request){
         callout(pad,'#5ed5aa','GOOD',good[0]);
         callout(pcanvas.height-lineH-pad*3,'#ff7040','FIX',fix.cue);
         /* Pointing markers: green checks on what looks good, one red mark on
-         * the joint to fix — each with a short label. Markers sit on the
-         * skeleton the AI actually measured. */
-        var goodMarkers=[];
-        good.forEach(function(g){
-          if(/trunk/.test(g)) goodMarkers.push({ joint: 23, label: 'Good: trunk ' + trunk + '°' });
-          else if(/front-knee/.test(g)) goodMarkers.push({ joint: 25, label: 'Good: front knee ~' + knees[0] + '°' });
-          else if(/rear-knee/.test(g)) goodMarkers.push({ joint: 26, label: 'Good: rear knee ~' + knees[1] + '°' });
-          else if(/arms/.test(g)) goodMarkers.push({ joint: 13, label: 'Good: arms loose' });
+         * the joint to fix — each anchored by assessPhoto to the joint its
+         * text describes (front knee = the bent leg, whichever side it is).
+         * v3.0.0: a marker is only drawn when its joint is clearly visible;
+         * an invisible joint is named in the readout instead of marked at
+         * a guessed position. */
+        var unmarked=[];
+        function mark(idx,color,glyph,label,shortName){
+          if(idx===null||idx===undefined)return;
+          var pt=lm[idx]; if(!pt)return;
+          if(pt.visibility!==undefined&&pt.visibility<=0.5){ unmarked.push(shortName); return; }
+          var px=photoPointPx(pt,pcanvas.width,pcanvas.height);
+          drawPhotoMarker(pctx,px.x,px.y,color,glyph,label,scale);
+        }
+        assessment.goodAnchors.filter(function(g){ return !!g.label; }).slice(0,3).forEach(function(g){
+          mark(g.idx,'#3ddc97','✓',g.label,g.label.replace(/^Good: /,''));
         });
-        goodMarkers.slice(0, 3).forEach(function(mk){
-          var pt=lm[mk.joint];
-          if(pt) drawPhotoMarker(pctx, pt.x * pcanvas.width, pt.y * pcanvas.height, '#3ddc97', '✓', mk.label, scale);
-        });
-        var fixJoint=PHOTO_FIX_JOINT[issue] || 23;
-        var fixPt=lm[fixJoint];
-        if(fixPt) drawPhotoMarker(pctx, fixPt.x * pcanvas.width, fixPt.y * pcanvas.height, '#ff5c5c', '!', 'Work on: ' + fix.cue, scale);
+        mark(assessment.fixAnchors[issue],'#ff5c5c','!','Work on: ' + fix.cue,fix.fix);
         /* Plain-language lists: what the AI saw that looks good, and what
          * to work on — with the fault, cue, and drill for each. */
         var goodHtml=good.map(function(g){
           var seen='';
           if(/trunk/.test(g)) seen=' — trunk lean measured at ' + trunk + '° in this photo.';
-          else if(/front-knee/.test(g)) seen=' — front knee measured near ' + knees[0] + '° in this photo.';
-          else if(/rear-knee/.test(g)) seen=' — rear knee measured near ' + knees[1] + '° in this photo.';
-          else if(/arms/.test(g)) seen=' — elbows measured at ' + armL + '° / ' + armR + '° in this photo.';
+          else if(/front-knee/.test(g)) seen=' — front knee measured near ' + Math.round(f.frontKnee) + '° in this photo.';
+          else if(/rear-knee/.test(g)) seen=' — rear knee measured near ' + Math.round(f.rearKnee) + '° in this photo.';
+          else if(/arms/.test(g)) seen=' — elbows measured at ' + fmtA(f.elbowL) + ' / ' + fmtA(f.elbowR) + ' in this photo.';
           return '<li>' + g + seen + '</li>';
         }).join('');
+        var unmarkedHtml = unmarked.length ? '<p><strong>Couldn\u2019t mark:</strong> ' + unmarked.join('; ') + ' — that joint isn\u2019t clear in this photo, so no marker was drawn for it.</p>' : '';
+        var partialHtml = assessment.missing.length ? '<p>Partly hidden: ' + assessment.missing.join(', ') + ' — checks needing them were skipped, not guessed.</p>' : '';
         readout.innerHTML='<strong>What looks good:</strong><ul>' + goodHtml + '</ul>' +
           '<strong>Work on:</strong><ul><li>' + fix.fix + ' <strong>Cue:</strong> “' + fix.cue + '” <strong>Drill:</strong> ' + fix.drill + '.</li></ul>' +
-          '<div class="angle-list"><span>Trunk '+trunk+'°</span><span>Knees '+knees[0]+'° / '+knees[1]+'°</span><span>Shins '+shinL+'° / '+shinR+'°</span><span>Arms '+armL+'° / '+armR+'°</span></div><a class="watch-fix" href="'+v[2]+'" target="_blank" rel="noopener">Watch: how to fix this</a>';
+          unmarkedHtml + partialHtml +
+          '<div class="angle-list"><span>Trunk '+trunk+'°</span><span>Knees '+fmtA(f.frontKnee)+' / '+fmtA(f.rearKnee)+'</span><span>Shins '+fmtA(f.shinL)+' / '+fmtA(f.shinR)+'</span><span>Arms '+fmtA(f.elbowL)+' / '+fmtA(f.elbowR)+'</span></div><a class="watch-fix" href="'+v[2]+'" target="_blank" rel="noopener">Watch: how to fix this</a>';
+        drainPhotoQueue();
       }
 
 
@@ -412,10 +574,38 @@ function ensurePhotoPose(){
   photoPose.setOptions({ modelComplexity: 1, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.55, minTrackingConfidence: 0.55 });
   photoPose.onResults(function(results){
     if(!pendingPhoto) return;
-    var req = pendingPhoto; pendingPhoto = null; photoBusy = false;
-    handlePhotoResults(results, req);
+    /* v3.0.0: handlePhotoResults owns pendingPhoto/photoBusy now — it
+     * may keep them set for its lower-confidence retry pass. */
+    handlePhotoResults(results, pendingPhoto);
   });
   return true;
+}
+/* v3.0.0: one pick pipeline for both slots. The photo is normalized
+ * through a canvas first (EXIF-consistent pixels), the slot then
+ * displays that exact canvas output, and pose measures it — display
+ * and analysis can never disagree about where a pixel is. */
+function startPhotoPick(slot, file, card){
+  var img = card.querySelector('img'), readout = card.querySelector('.photo-readout');
+  if(!img || !readout) return;
+  if(!ensurePhotoPose()){ readout.textContent = 'The analyzer didn’t start. Reload and try again.'; return; }
+  if(photoUrls[slot]) URL.revokeObjectURL(photoUrls[slot]);
+  photoUrls[slot] = URL.createObjectURL(file);
+  img.src = photoUrls[slot]; img.alt = 'Athlete form photo ' + (slot === 0 ? 'A' : 'B');
+  readout.textContent = 'Reading your shape and measuring angles…';
+  var norm = null, triedNorm = false;
+  img.onerror = function(){ readout.textContent = 'That photo didn’t open. Try a different photo.'; };
+  img.onload = function(){
+    if(!triedNorm){
+      triedNorm = true;
+      norm = normalizePhotoImage(img);
+      if(norm){
+        /* Show exactly the pixels pose will measure. */
+        try{ img.src = norm.toDataURL('image/jpeg', 0.92); return; }catch(e){ /* keep the original src */ }
+      }
+    }
+    card.querySelector('.photo-placeholder').hidden = true; img.hidden = true;
+    sendPhotoRequest({ slot: slot, img: img, card: card, image: norm || null, retried: false });
+  };
 }
 function bindPhotos(){
   document.querySelectorAll('.photo-input').forEach(function(input){
@@ -424,21 +614,16 @@ function bindPhotos(){
       var slot = Number(input.dataset.slot);
       var card = document.querySelector('[data-photo-slot="' + slot + '"]');
       if(!card) return;
-      var img = card.querySelector('img'), readout = card.querySelector('.photo-readout');
-      if(photoBusy){ readout.textContent = 'Still analyzing the last photo — one moment, then pick again.'; input.value = ''; return; }
-      if(!ensurePhotoPose()){ readout.textContent = 'The analyzer didn’t start. Reload and try again.'; return; }
-      if(photoUrls[slot]) URL.revokeObjectURL(photoUrls[slot]);
-      photoUrls[slot] = URL.createObjectURL(file);
-      img.src = photoUrls[slot]; img.alt = 'Athlete form photo ' + (slot === 0 ? 'A' : 'B');
-      readout.textContent = 'Reading your shape and measuring angles…';
-      img.onerror = function(){ photoBusy = false; pendingPhoto = null; readout.textContent = 'That photo didn’t open. Try a different photo.'; };
-      img.onload = function(){
-        card.querySelector('.photo-placeholder').hidden = true; img.hidden = true;
-        photoBusy = true; pendingPhoto = { slot: slot, img: img, card: card };
-        photoPose.send({ image: img }).catch(function(){
-          readout.textContent = 'That photo didn’t work. Try a clear, full-body side view.'; photoBusy = false; pendingPhoto = null;
-        });
-      };
+      var readout = card.querySelector('.photo-readout');
+      /* v3.0.0: a pick made while another photo analyzes is QUEUED,
+       * not thrown away — it runs as soon as the current one finishes. */
+      if(photoBusy){
+        queuedPhoto = { kind: 'pick', slot: slot, file: file };
+        if(readout) readout.textContent = 'Still analyzing the last photo — this one is queued and will run next.';
+        input.value = ''; return;
+      }
+      input.value = '';
+      startPhotoPick(slot, file, card);
     });
   });
 }
@@ -453,18 +638,28 @@ function receivePhotoFrame(req){
   if(!card) return false;
   var img = card.querySelector('img'), readout = card.querySelector('.photo-readout');
   if(!img || !readout) return false;
-  if(photoBusy){ readout.textContent = 'Still analyzing the last photo — your recording frame will wait.'; return false; }
+  /* v3.0.0: queue instead of dropping the frame when a photo is busy. */
+  if(photoBusy){
+    queuedPhoto = { kind: 'frame', req: req };
+    readout.textContent = 'Still analyzing the last photo — your recording frame is queued and will run next.';
+    return true;
+  }
   if(!ensurePhotoPose()){ readout.textContent = 'The analyzer didn’t start. Reload and try again.'; return false; }
   if(photoUrls[0]){ URL.revokeObjectURL(photoUrls[0]); photoUrls[0] = null; }
   img.src = req.url; img.alt = req.label || 'Best frame from your recording';
   readout.textContent = 'From your recording — reading your shape and measuring angles…';
-  img.onerror = function(){ photoBusy = false; pendingPhoto = null; readout.textContent = 'That frame didn’t open.'; };
+  var norm = null, triedNorm = false;
+  img.onerror = function(){ readout.textContent = 'That frame didn’t open.'; };
   img.onload = function(){
+    if(!triedNorm){
+      triedNorm = true;
+      norm = normalizePhotoImage(img);
+      if(norm){
+        try{ img.src = norm.toDataURL('image/jpeg', 0.92); return; }catch(e){ /* keep the original src */ }
+      }
+    }
     card.querySelector('.photo-placeholder').hidden = true; img.hidden = true;
-    photoBusy = true; pendingPhoto = { slot: 0, img: img, card: card };
-    photoPose.send({ image: img }).catch(function(){
-      readout.textContent = 'That frame didn’t work. Try a clear, full-body side view.'; photoBusy = false; pendingPhoto = null;
-    });
+    sendPhotoRequest({ slot: 0, img: img, card: card, image: norm || null, retried: false });
   };
   return true;
 }
@@ -546,7 +741,9 @@ function bindChrome(){
   });
 }
 
-window.TrackPhoto = { handlePhotoResults: handlePhotoResults, photoMissingJoints: photoMissingJoints, drawPhotoMarker: drawPhotoMarker, receiveFrame: receivePhotoFrame };
+window.TrackPhoto = { handlePhotoResults: handlePhotoResults, photoMissingJoints: photoMissingJoints, drawPhotoMarker: drawPhotoMarker, receiveFrame: receivePhotoFrame,
+  /* v3.0.0 test hooks (smoke tests only). */
+  _test: { assessPhoto: assessPhoto, photoFeatures: photoFeatures, photoPointPx: photoPointPx, normalizePhotoImage: normalizePhotoImage } };
 window.TrackClassic = {
   setBlockStarts: setBlockStarts,
   getBlockStarts: function(){ return blockStartsOn; },

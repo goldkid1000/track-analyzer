@@ -1040,6 +1040,205 @@ const W = sandbox;
     W.TrackAI._test.loadLastSessions().length === 2 && !!storage.get('trackAnalyzer.lastSession.v1'));
   storage.delete('trackAnalyzer.lastSession.v1');
 
+  /* ================= v3.0.0 ================= */
+  const appSrc300 = fs.readFileSync(ROOT + 'js/app.js', 'utf8');
+  const rigSrc300 = fs.readFileSync(ROOT + 'js/rig.js', 'utf8');
+  const aiSrc300 = fs.readFileSync(ROOT + 'js/ai-analyzer.js', 'utf8');
+  const dualSrc300 = fs.readFileSync(ROOT + 'js/dualcam.js', 'utf8');
+  const PT = (W.TrackPhoto && W.TrackPhoto._test) || {};
+  function photoLm(over){
+    const lm = [];
+    for(let i = 0; i < 33; i++) lm.push({ x: 0.5, y: 0.5, visibility: 0.9 });
+    // Set position, hips slightly above shoulders: front (left) knee
+    // ~95deg, rear (right) knee ~144deg, elbows ~124deg, trunk ~79deg.
+    const base = {
+      0: [0.66, 0.42], 11: [0.60, 0.46], 12: [0.62, 0.46],
+      13: [0.55, 0.62], 15: [0.66, 0.76], 14: [0.57, 0.62], 16: [0.68, 0.76],
+      23: [0.40, 0.42], 24: [0.42, 0.42],
+      25: [0.58, 0.54], 27: [0.48, 0.72], 26: [0.30, 0.52], 28: [0.26, 0.68]
+    };
+    Object.keys(base).forEach(k => { lm[k] = { x: base[k][0], y: base[k][1], visibility: 0.95 }; });
+    Object.keys(over || {}).forEach(k => { lm[k] = over[k]; });
+    return lm;
+  }
+  function P(x, y, v){ return { x: x, y: y, visibility: v === undefined ? 0.95 : v }; }
+  // Photo: far side occluded (typical side-on photo) must STILL produce markers.
+  t('v3.0.0 photo: side photo with far side hidden still gets markers (no all-or-nothing)',
+    (() => { try{
+      const lm = photoLm({ 12: P(0.62, 0.46, 0.3), 14: P(0.57, 0.62, 0.3), 16: P(0.68, 0.76, 0.3),
+        24: P(0.42, 0.42, 0.3), 26: P(0.30, 0.52, 0.3), 28: P(0.26, 0.68, 0.3) });
+      const a = PT.assessPhoto(lm);
+      return !!a && a.phase === 'set' && a.goodAnchors.some(g => g.idx === 25) &&
+        (Object.keys(a.fixAnchors).length + a.goodAnchors.length) >= 1;
+    }catch(e){ return false; } })());
+  // Photo: front knee = the BENT leg (here the RIGHT leg), not hardcoded left.
+  t('v3.0.0 photo: front-knee marker anchors to the actual front (right) knee',
+    (() => { try{
+      const lm = photoLm({ 25: P(0.30, 0.52), 27: P(0.26, 0.68),           // left leg = rear geometry (~144deg)
+        26: P(0.60, 0.52), 28: P(0.46, 0.66) });                          // right leg = front, ~74deg (too bent)
+      const a = PT.assessPhoto(lm);
+      return !!a && a.feats.frontKneeIdx === 26 && a.checks.frontKnee === false && a.fixAnchors.frontKnee === 26;
+    }catch(e){ return false; } })());
+  // Photo: elbow marker anchors to the OFFENDING elbow (right, ~143deg), not always left.
+  t('v3.0.0 photo: elbow marker anchors to the offending (right) elbow',
+    (() => { try{
+      const lm = photoLm({ 16: P(0.46, 0.70) });
+      const a = PT.assessPhoto(lm);
+      return !!a && a.checks.elbowShape === false && a.fixAnchors.elbowShape === 14;
+    }catch(e){ return false; } })());
+  // Photo: a joint that is not clearly visible is never an anchor.
+  t('v3.0.0 photo: invisible joint is never used as a marker anchor',
+    (() => { try{
+      const lm = photoLm({ 16: P(0.46, 0.70), 14: P(0.57, 0.62, 0.3) });
+      const a = PT.assessPhoto(lm);
+      return !!a && a.checks.elbowShape === true && a.fixAnchors.elbowShape === undefined;
+    }catch(e){ return false; } })());
+  // Photo coordinate math: normalized landmark -> bitmap pixels, several aspect ratios.
+  t('v3.0.0 photo mapping: landmark -> pixels on 4000x3000, 3024x4032, 1920x1080',
+    (() => { try{
+      const a = PT.photoPointPx({ x: 0.25, y: 0.5 }, 4000, 3000);
+      const b = PT.photoPointPx({ x: 0.5, y: 0.25 }, 3024, 4032);
+      const c = PT.photoPointPx({ x: 0.1, y: 0.9 }, 1920, 1080);
+      return a.x === 1000 && a.y === 1500 && b.x === 1512 && b.y === 1008 && c.x === 192 && c.y === 972;
+    }catch(e){ return false; } })());
+  // Contain-fit mapping: new aspect-ratio cases (letterbox + pillarbox).
+  t('v3.0.0 mapping: contain fits 1920x1080 into a square canvas (bars top/bottom)',
+    (() => { stubFit = 'contain';
+      const m = W.TrackRig._test.contentMapFor({ canvas: { width: 400, height: 400 }, video: { videoWidth: 1920, videoHeight: 1080 } });
+      return m.mx === 400 && m.bx === 0 && m.my === 225 && m.by === 87.5; })());
+  t('v3.0.0 mapping: contain fits portrait 1080x1920 into a square canvas (bars left/right)',
+    (() => { stubFit = 'contain';
+      const m = W.TrackRig._test.contentMapFor({ canvas: { width: 400, height: 400 }, video: { videoWidth: 1080, videoHeight: 1920 } });
+      return m.mx === 225 && m.bx === 87.5 && m.my === 400 && m.by === 0; })());
+  // Rig quality: vendor landmark smoothing on everywhere pose runs.
+  t('v3.0.0 rig: smoothLandmarks enabled in rig + analyzer + dual pose options',
+    rigSrc300.indexOf('smoothLandmarks: true') >= 0 && aiSrc300.indexOf('smoothLandmarks: true') >= 0 &&
+    (dualSrc300.match(/smoothLandmarks: true/g) || []).length >= 2);
+  // Rig quality: interp eases (smoothstep) — quarter-way through a segment the
+  // display is BEHIND the linear position; halfway it still lands mid-segment.
+  t('v3.0.0 rig: interpolation eases instead of constant-velocity steps',
+    (() => { try{
+      const c = makeEl('ease-canvas'), v = makeEl('ease-video');
+      const rig = W.TrackRig.registerDraw(c, v);
+      const pA = {}, pB = {};
+      for(let i = 0; i < 33; i++){ pA[i] = { x: 0.4, y: 0.5, v: 0.9 }; pB[i] = { x: 0.6, y: 0.7, v: 0.9 }; }
+      W.TrackRig.setTarget(c, pA, [], []); W.TrackRig.setTarget(c, pB, [], []);
+      rig.prevT = 1000; rig.targetT = 2000;
+      W.TrackRig._test.advanceRigInterp(rig, 1250);
+      const x = rig.poseDisplay.x[11];
+      W.TrackRig.unregisterFeed('ease-canvas'); // no-op for draw rigs; harmless
+      return x > 0.42 && x < 0.44; // smoothstep(0.25)=0.156 -> 0.431; linear would be 0.45
+    }catch(e){ return false; } })());
+  // Rig quality: a joint that drops out fades (still drawn briefly), then is gone.
+  t('v3.0.0 rig: dropped joint fades out over ~220ms instead of vanishing instantly',
+    (() => { try{
+      const c = makeEl('fade-canvas'), v = makeEl('fade-video');
+      const rig = W.TrackRig.registerDraw(c, v);
+      const pA = {}, pB = {};
+      for(let i = 0; i < 33; i++){ pA[i] = { x: 0.4, y: 0.5, v: 0.9 }; pB[i] = { x: 0.42, y: 0.5, v: 0.9 }; }
+      delete pB[27];
+      const t0 = Date.now();
+      W.TrackRig.setTarget(c, pA, [], []); W.TrackRig.setTarget(c, pB, [], []);
+      W.TrackRig._test.advanceRigInterp(rig, t0 + 40);
+      const duringFade = rig.poseDisplay.has[27] === 1;
+      W.TrackRig._test.advanceRigInterp(rig, t0 + 400);
+      const afterFade = rig.poseDisplay.has[27] === 0;
+      return duringFade && afterFade;
+    }catch(e){ return false; } })());
+  // FPS honesty: stale inference timestamps never survive a read; draw decays to 0 on stall.
+  t('v3.0.0 fps: infer count only counts the last second (no frozen stale value)',
+    (() => { try{
+      const now = Date.now();
+      const T3 = W.TrackRig._test;
+      T3.noteInfer(now - 5000); T3.noteInfer(now - 4000); T3.noteInfer(now - 3000);
+      T3.noteInfer(now - 100); T3.noteInfer(now - 50);
+      return T3.computeFps(now).infer === 2;
+    }catch(e){ return false; } })());
+  t('v3.0.0 fps: draw rate reads 0 when the draw loop has stalled',
+    (() => { try{
+      const now = Date.now();
+      const T3 = W.TrackRig._test;
+      T3.setDrawState(60, now - 5000);
+      const stalled = T3.computeFps(now).draw === 0;
+      T3.setDrawState(60, now);
+      const live = T3.computeFps(now).draw === 60;
+      return stalled && live;
+    }catch(e){ return false; } })());
+  // Self-check: second aggregation (per-rep majority) + key-angle tolerance.
+  const SC = W.TrackAISelfCheck || {};
+  function scFrames(n, tripIdxs, f){
+    const out = [];
+    for(let i = 0; i < n; i++) out.push({ t: 1000 + i * 100, activity: 'sprint', score: 60,
+      tripped: tripIdxs.indexOf(i) >= 0 ? 'overstride' : null,
+      f: Object.assign({ lean: 15, kneeL: 100, kneeR: 105, elbow: 95, thighSep: 90, shinReach: 0.30 }, f || {}) });
+    return out;
+  }
+  t('v3.0.0 self-check: consistent fault -> both passes agree',
+    (() => { try{
+      const frames = scFrames(24, [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]);
+      const report = W.TrackAIDeep.buildDeepReport(W.TrackAIDeep.segmentReps(frames), 0, {});
+      const v = SC.verify(frames, report);
+      return v.status === 'agree' && v.topCheck === 'overstride';
+    }catch(e){ return false; } })());
+  t('v3.0.0 self-check: sporadic fault (minority of frames) -> too close to call',
+    (() => { try{
+      const frames = scFrames(24, [0, 5, 11, 17, 23]);
+      const report = W.TrackAIDeep.buildDeepReport(W.TrackAIDeep.segmentReps(frames), 0, {});
+      const v = SC.verify(frames, report);
+      return report.faultList[0] && report.faultList[0].check === 'overstride' && v.status === 'disagree';
+    }catch(e){ return false; } })());
+  t('v3.0.0 self-check: clean run agrees clean (no fault invented)',
+    (() => { try{
+      const frames = scFrames(12, []);
+      const report = W.TrackAIDeep.buildDeepReport(W.TrackAIDeep.segmentReps(frames), 0, {});
+      const v = SC.verify(frames, report);
+      return v.status === 'agree' && v.topCheck === null;
+    }catch(e){ return false; } })());
+  t('v3.0.0 self-check: key-angle tolerance — 5deg agrees, 9deg disagrees (tol 6)',
+    (() => { try{
+      const a = SC.compare({ topCheck: 'earlyRise', angle: 40 }, { topCheck: 'earlyRise', angle: 45 });
+      const b = SC.compare({ topCheck: 'earlyRise', angle: 40 }, { topCheck: 'earlyRise', angle: 49 });
+      const c = SC.compare({ topCheck: 'earlyRise', angle: 40 }, { topCheck: 'overstride', angle: 41 });
+      return a === 'agree' && b === 'disagree' && c === 'disagree';
+    }catch(e){ return false; } })());
+  // Auto slow-mo: joint displacement + fast-segment detection.
+  t('v3.0.0 slow-mo: max joint displacement is torso-normalized (0.2 move / 0.25 torso = 0.8)',
+    (() => { try{
+      function lm33(move){ const lm = []; for(let i = 0; i < 33; i++) lm.push({ x: 0.5, y: 0.5, visibility: 0.9 });
+        lm[11] = { x: 0.45, y: 0.30, visibility: 0.9 }; lm[12] = { x: 0.55, y: 0.30, visibility: 0.9 };
+        lm[23] = { x: 0.45, y: 0.55, visibility: 0.9 }; lm[24] = { x: 0.55, y: 0.55, visibility: 0.9 };
+        lm[27] = { x: 0.45 + (move || 0), y: 0.80, visibility: 0.9 }; return lm; }
+      const d = SC.maxJointDisp(lm33(0), lm33(0.2));
+      const d0 = SC.maxJointDisp(lm33(0), lm33(0));
+      return Math.abs(d - 0.8) < 0.01 && d0 === 0 && d > SC.FAST_DISP;
+    }catch(e){ return false; } })());
+  t('v3.0.0 slow-mo: fast segments group consecutive fast frames, need 2+, report clip times',
+    (() => { try{
+      const frames = [ { t: 1000, disp: 0.1 }, { t: 1100, disp: 0.8 }, { t: 1200, disp: 0.9 },
+        { t: 1300, disp: 0.2 }, { t: 2000, disp: 0.7 }, { t: 2100, disp: 0.75 }, { t: 3000, disp: 0.9 } ];
+      const segs = SC.findFastSegments(frames, 1000);
+      return segs.length === 2 && Math.abs(segs[0].startSec - 0.1) < 0.01 && Math.abs(segs[0].peak - 0.9) < 0.01 &&
+        Math.abs(segs[1].startSec - 1.0) < 0.01;
+    }catch(e){ return false; } })());
+  // Fix prioritization: biggest measured deviation outranks raw count.
+  t('v3.0.0 priority: huge-deviation fault with fewer trips outranks mild fault with more',
+    (() => { try{
+      function rep(trips, f){ const samples = []; for(let i = 0; i < 20; i++) samples.push(Object.assign({}, f));
+        return { activity: 'sprint', startT: 0, endT: 2000, frames: 20, best: 70, worst: 40, tripCounts: trips, samples: samples }; }
+      const reps = [ rep({ elbowShape: 6 }, { lean: 15, kneeL: 100, kneeR: 105, elbow: 135, thighSep: 90, shinReach: 0.05 }),
+                     rep({ overstride: 3 }, { lean: 15, kneeL: 100, kneeR: 105, elbow: 95, thighSep: 90, shinReach: 0.34 }) ];
+      const report = W.TrackAIDeep.buildDeepReport(reps, 0, {});
+      return report.faultList[0].check === 'overstride' && typeof report.faultList[0].severity === 'number';
+    }catch(e){ return false; } })());
+  // Version stamps: 3.0.0 everywhere, single file rebuilt + carries the new code.
+  t('v3.0.0 version: changelog tops at 3.0.0 with notify:true',
+    (() => { const cl = JSON.parse(fs.readFileSync(ROOT + 'changelog.json', 'utf8'));
+      return cl[0].version === '3.0.0' && cl[0].notify === true; })());
+  t('v3.0.0 version: single-file build is 3.0.0 and contains the new engines',
+    (() => { const single = fs.readFileSync(ROOT + 'track-analyzer-single.html', 'utf8');
+      return single.indexOf("var VERSION = '3.0.0'") >= 0 && single.indexOf('computeFps') >= 0 &&
+        single.indexOf('AI double-checked') >= 0 && single.indexOf('assessPhoto') >= 0; })());
+
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR', e && e.stack || e); process.exit(2); });

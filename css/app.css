@@ -572,6 +572,9 @@ body[data-active-view="nutrition"] .view-nutrition{display:block;animation:secti
 .ai-frame-skel{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start;margin:10px 0}
 .ai-frame-skel figure{margin:0}
 .ai-frame-skel img{width:100%;border-radius:10px;display:block}
+.ai-frame-skel canvas{max-width:100%;height:auto;display:block}
+/* v3.0.0: auto slow-mo reason line sits with the clip moments. */
+#aiAutoSlowNote{color:var(--accent);font-weight:600}
 .ai-frame-skel figcaption{font-size:12px;color:var(--muted);text-align:center;margin-top:4px}
 .ai-frame-skel canvas,.ai-analyzing + * canvas,canvas[id^="deepSkel"]{width:100%;height:auto;background:#0a0c0b;border:1px solid var(--hairline);border-radius:10px}
 #aiSkelDetail{font-weight:600;color:var(--ink)}

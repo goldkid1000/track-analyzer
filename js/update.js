@@ -1,4 +1,4 @@
-/* Track Analyzer — update system (v2.9.0)
+/* Track Analyzer — update system (v3.0.0)
  *
  * Tenno Vault-style: visible version, What's New panel, Check for updates,
  * and an update banner. The banner fires ONLY when version.json reports a
@@ -47,9 +47,17 @@
  */
 (function(){
 'use strict';
-var VERSION = '2.9.0';
+var VERSION = '3.0.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "3.0.0", date: "2026-10-21", notes: [
+    "Photo check fixed: markers now land on the right body part — front knee means your actual front leg, on either side. Photos where one side is hidden still get measured instead of a dead end, a joint that isn't clear is named instead of marked at a guessed spot, and picking a second photo while the first analyzes queues it instead of losing it.",
+    "AI double-checked ✓: after every analysis, a second stricter pass re-measures your reps. When the two passes agree, you see the check mark. When they don't, the app says “too close to call” and asks for a side-on retake instead of presenting a fix it isn't sure about.",
+    "Auto slow-mo: when part of a rep moves too fast to track, clip analysis slows that stretch to quarter speed while it measures, and replay slows down on its own at fast parts and at your lowest-scoring moment — with the reason on screen.",
+    "Smoother skeleton: the rig now uses the pose model's own landmark smoothing plus eased motion, tapered bones, and joints that fade when the camera loses them — no more popping, snapping, or a joint sitting in the wrong place.",
+    "Honest frame rate: the “Rig drawing / pose” line reports real measured rates and drops when tracking stalls — it used to freeze at its last value and claim poses were still landing.",
+    "Fixes are ranked by how far off they measured, not just how often they happened — the biggest problem comes first. Deep-check skeleton pictures now match your frame's real shape instead of stretching."
+  ]},
   { version: "2.9.0", date: "2026-10-21", notes: [
     "Honest scores, always: three drill scores (squat, hinge, bench) used to include a placeholder perfect mark that was never measured. Every number in your score now comes from your actual movement — and a metric the camera can't judge from your angle is left out of the score, not filled in.",
     "New: Last session card on the AI Analyzer tab — your latest session (reps, best frame score, top fix) is saved on this device and shown next time you open the app, with how your best score compares to the session before it.",

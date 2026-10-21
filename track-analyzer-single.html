@@ -589,6 +589,9 @@ body[data-active-view="nutrition"] .view-nutrition{display:block;animation:secti
 .ai-frame-skel{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start;margin:10px 0}
 .ai-frame-skel figure{margin:0}
 .ai-frame-skel img{width:100%;border-radius:10px;display:block}
+.ai-frame-skel canvas{max-width:100%;height:auto;display:block}
+/* v3.0.0: auto slow-mo reason line sits with the clip moments. */
+#aiAutoSlowNote{color:var(--accent);font-weight:600}
 .ai-frame-skel figcaption{font-size:12px;color:var(--muted);text-align:center;margin-top:4px}
 .ai-frame-skel canvas,.ai-analyzing + * canvas,canvas[id^="deepSkel"]{width:100%;height:auto;background:#0a0c0b;border:1px solid var(--hairline);border-radius:10px}
 #aiSkelDetail{font-weight:600;color:var(--ink)}
@@ -1371,6 +1374,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{
           </div>
           <p class="ai-note" id="aiSideGuide" hidden>Side view: phone square to the lane, 10–15 ft away. Keep both feet, hips, shoulders, and head in frame.</p>
           <div class="ai-clip-markers" id="aiClipMarkers" hidden></div>
+          <p class="ai-note" id="aiAutoSlowNote" hidden></p>
           <div class="ai-state">
             <div><strong>Seeing:</strong> <span id="aiSeeing">—</span></div>
             <div><strong>Good:</strong> <span id="aiGood">—</span></div>
@@ -2354,6 +2358,7 @@ var drawEma = 0;
  * inference; the label in the UI says exactly this. */
 var rigFpsMode = 120;
 var lastDrawT = 0;
+var lastDrawWallT = 0;
 function setRigFpsMode(m){
   m = Number(m);
   rigFpsMode = (m === 60) ? 60 : 120;
@@ -2361,6 +2366,15 @@ function setRigFpsMode(m){
 }
 function getRigFpsMode(){ return rigFpsMode; }
 var inferTimes = [];
+/* v3.0.0: pure fps snapshot against an explicit clock — the logic the
+ * honesty tests exercise. infer counts only timestamps inside the last
+ * second; draw is the EMA while frames are actually landing, else 0. */
+function computeFps(nowMs){
+  var infer = 0;
+  for(var i = 0; i < inferTimes.length; i++) if(nowMs - inferTimes[i] <= 1000) infer++;
+  var draw = (lastDrawWallT && nowMs - lastDrawWallT <= 500) ? Math.round(drawEma || 0) : 0;
+  return { draw: draw, infer: infer };
+}
 var inferTimer = null;
 var inferIdx = 0;
 var inferBusy = false;
@@ -2493,6 +2507,7 @@ function interpHandStore(display, prev, target, alpha){
  * results at the display refresh rate. If no fresh inference has
  * landed in 600ms, the feed is frozen/black — clear the rig instead of
  * drawing a stale pose floating on a black screen. */
+var RIG_FADE_MS = 220; /* v3.0.0: dropout fade window (see below) */
 function advanceRigInterp(rig, nowMs){
   if(!rig.hasTarget) return;
   var now = nowMs === undefined ? Date.now() : nowMs;
@@ -2510,10 +2525,34 @@ function advanceRigInterp(rig, nowMs){
     alpha = (now - rig.prevT) / span;
     if(alpha < 0) alpha = 0;
     if(alpha > 1) alpha = 1;
+    /* v3.0.0: smoothstep easing — constant-velocity interpolation made
+     * the rig lurch at every inference boundary (full speed, dead stop,
+     * full speed). Easing removes the step while still landing exactly
+     * mid-segment at alpha 0.5 and on the target at alpha 1. */
+    alpha = alpha * alpha * (3 - 2 * alpha);
   }
   interpPoseStore(rig.poseDisplay, rig.posePrev, rig.poseTarget, alpha);
   interpHandStore(rig.handDisplay[0], rig.handPrev[0], rig.handTarget[0], alpha);
   interpHandStore(rig.handDisplay[1], rig.handPrev[1], rig.handTarget[1], alpha);
+  /* v3.0.0: dropout fade. A joint the newest inference lost (occluded
+   * for a frame or two) used to vanish the same frame — the rig popped.
+   * It now holds its last interpolated position for up to RIG_FADE_MS
+   * while paintRig fades its opacity to zero, then it is gone. Joints
+   * the target still sees clear their fade stamp. */
+  for(var i = 0; i < 33; i++){
+    if(rig.poseTarget.has[i]){ rig.poseDisplay.unseen[i] = 0; continue; }
+    if(!rig.posePrev.has[i]) continue;
+    if(!rig.poseDisplay.unseen[i]) rig.poseDisplay.unseen[i] = now;
+    if(now - rig.poseDisplay.unseen[i] <= RIG_FADE_MS){
+      rig.poseDisplay.has[i] = 1;
+      rig.poseDisplay.x[i] = rig.posePrev.x[i];
+      rig.poseDisplay.y[i] = rig.posePrev.y[i];
+      rig.poseDisplay.v[i] = rig.posePrev.v[i];
+    } else {
+      rig.poseDisplay.has[i] = 0;
+      rig.poseDisplay.unseen[i] = 0;
+    }
+  }
 }
 /* Where the video frame actually sits inside the canvas.
  * The video uses object-fit: contain (full frame visible, letterboxed),
@@ -2572,30 +2611,64 @@ function paintRig(rig){
   function MX(x){ return x * map.mx + map.bx; }
   function MY(y){ return y * map.my + map.by; }
   var i, a, b, x1, y1, x2, y2;
+  /* v3.0.0 rig rendering: tapered, proportionate bones (torso + thigh
+   * thickest, forearms + feet thinnest — one uniform 3px stick figure
+   * read as "terrible"), and per-joint opacity from the model's own
+   * visibility: a joint the model is unsure about FAINTS instead of
+   * drawing at full strength in a guessed place, and a joint in its
+   * dropout-fade window fades to zero. Draw order: bones, joints,
+   * head marker, hands. */
+  var wf = Math.max(0.85, Math.min(1.5, Math.min(cw, ch) / 320));
+  function jointAlpha(idx){
+    var v = rig.poseDisplay.v[idx];
+    var al = (v === undefined || v === null) ? 1 : (v <= 0.5 ? 0.35 : 0.45 + 0.55 * Math.min(1, (v - 0.5) / 0.4));
+    var un = rig.poseDisplay.unseen[idx];
+    if(un){ var f = 1 - (n - un) / RIG_FADE_MS; al *= Math.max(0, Math.min(1, f)); }
+    return al;
+  }
+  function boneWidth(a2, b2){
+    var lo = Math.min(a2, b2), hi = Math.max(a2, b2);
+    if(lo === 11 && hi === 12) return 4.5;                    // shoulders
+    if(lo === 23 && hi === 24) return 4.5;                    // hips
+    if(hi === 23 || hi === 24) return 4.5;                    // torso sides
+    if((lo === 23 && hi === 25) || (lo === 24 && hi === 26)) return 4.5; // thighs
+    if((lo === 25 && hi === 27) || (lo === 26 && hi === 28)) return 3.5; // shins
+    if((lo === 11 && hi === 13) || (lo === 12 && hi === 14)) return 3.5; // upper arms
+    if((lo === 13 && hi === 15) || (lo === 14 && hi === 16)) return 2.75; // forearms
+    if(hi >= 27) return 2.5;                                  // feet
+    return 3;
+  }
   // Pose bones (face bones skipped — the face is one head marker, below).
-  ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineCap = 'round';
   for(i = 0; i < POSE_BONES.length; i++){
     a = POSE_BONES[i][0]; b = POSE_BONES[i][1];
     if(a < 11 && b < 11) continue;
     if(rig.poseDisplay.has[a] && rig.poseDisplay.has[b]){
+      ctx.globalAlpha = Math.min(jointAlpha(a), jointAlpha(b));
+      ctx.lineWidth = boneWidth(a, b) * wf;
       ctx.beginPath();
       ctx.moveTo(MX(rig.poseDisplay.x[a]), MY(rig.poseDisplay.y[a]));
       ctx.lineTo(MX(rig.poseDisplay.x[b]), MY(rig.poseDisplay.y[b]));
       ctx.stroke();
     }
   }
+  ctx.globalAlpha = 1;
   // Pose joints: red = joint to fix, green = looked good.
   // Face joints (0-10) get NO dots — they bunch into a blob.
   for(i = 11; i < 33; i++){
     if(!rig.poseDisplay.has[i]) continue;
     x1 = MX(rig.poseDisplay.x[i]); y1 = MY(rig.poseDisplay.y[i]);
     var isFault = rig.faultJoints.indexOf(i) !== -1;
+    var jr = isFault ? 9 : ((i === 27 || i === 28 || i === 15 || i === 16) ? 4 : 5);
+    ctx.globalAlpha = jointAlpha(i);
     ctx.beginPath();
-    ctx.arc(x1, y1, isFault ? 9 : 5, 0, Math.PI * 2);
+    ctx.arc(x1, y1, jr, 0, Math.PI * 2);
     ctx.fillStyle = isFault ? '#ff5c5c' : '#3ddc97';
     ctx.fill();
     if(isFault){ ctx.strokeStyle = '#ffd23d'; ctx.lineWidth = 2; ctx.stroke(); }
+    else { ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1.25; ctx.stroke(); }
   }
+  ctx.globalAlpha = 1;
   // One small head marker from the visible face joints (nose, eyes,
   // ears). No marker at all when the face is not seen (back view).
   var facePts = [];
@@ -2652,6 +2725,7 @@ function frame(ts){
   if(lastDrawT && ts - lastDrawT < minInterval) return;
   var drawDt = lastDrawT ? (ts - lastDrawT) : dt;
   lastDrawT = ts;
+  lastDrawWallT = Date.now(); /* v3.0.0: wall-clock of the last drawn frame (fps honesty) */
   /* v2.2.0: draw fps (EMA) + interpolate between the last two
    * inference results at the display refresh rate, so the rig glides
    * at up to 120Hz on ProMotion instead of jumping pose to pose. */
@@ -2676,7 +2750,11 @@ function ensurePose(){
   if(poseInst) return poseInst;
   if(!window.Pose) throw new Error('Pose not available');
   var p = new Pose({ locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/' + f; } });
-  p.setOptions({ modelComplexity: 0, smoothLandmarks: false, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+  /* v3.0.0: smoothLandmarks ON — MediaPipe's own temporal filter is the
+   * first line of defence against rig jitter; the draw loop's eased
+   * interpolation (below) is the second. It used to be off everywhere,
+   * so every inference's raw noise drew straight onto the athlete. */
+  p.setOptions({ modelComplexity: 0, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
   p.onResults(function(res){
     var w = poseWaiters.shift();
     if(w) w.resolve(res && res.poseLandmarks);
@@ -3023,11 +3101,21 @@ window.TrackRig = {
     }
     return out;
   },
-  /* v2.2.0: live fps — draw = rig redraw rate (display refresh,
-   * up to 120Hz on ProMotion), infer = successful inferences in the
-   * last second, all feeds combined. */
+  /* Live fps — draw = rig redraw rate (display refresh, up to 120Hz
+   * on ProMotion), infer = successful inferences in the last second,
+   * all feeds combined.
+   * v3.0.0 HONESTY FIX: the old getFps returned inferTimes.length, but
+   * that array was only pruned inside the inference success path — the
+   * moment inference stalled (person left the frame, a send timed out),
+   * pruning stopped too and the line froze at its last value forever,
+   * claiming poses were still landing when none were. Both numbers are
+   * now computed against the wall clock at read time: stale inference
+   * timestamps never count, and the draw rate reads 0 once no frame
+   * has been drawn for half a second. */
   getFps: function(){
-    return { draw: Math.round(drawEma || 0), infer: inferTimes.length };
+    var now = Date.now();
+    while(inferTimes.length && now - inferTimes[0] > 1000) inferTimes.shift();
+    return computeFps(now);
   },
   setRigFpsMode: setRigFpsMode,
   getRigFpsMode: getRigFpsMode,
@@ -3052,7 +3140,11 @@ window.TrackRig = {
     handsMinScore: HANDS_MIN_SCORE,
     registeredKeys: function(){ var ks = []; for(var k in rigByKey) ks.push(k); return ks; },
     getRigByKey: function(key){ return rigByKey[key] || null; },
-    getQuality: function(){ return { interval: quality.interval, inputWidth: quality.inputWidth, steppedDown: quality.steppedDown }; }
+    getQuality: function(){ return { interval: quality.interval, inputWidth: quality.inputWidth, steppedDown: quality.steppedDown }; },
+    /* v3.0.0 fps honesty hooks */
+    computeFps: computeFps,
+    noteInfer: function(ts){ inferTimes.push(ts); },
+    setDrawState: function(ema, wallT){ drawEma = ema; lastDrawWallT = wallT; }
   }
 };
 })();
@@ -3297,11 +3389,145 @@ function analyze(lm){
       }
 
 /* Pointing markers for AI Photo: green checks where form looks good,
- * red marks where to work — drawn on the photo with a short label. */
-var PHOTO_FIX_JOINT = {
-  projection: 23, frontKnee: 25, rearKnee: 26, hipHeight: 23,
-  thighSeparation: 25, underHip: 27, elbowShape: 13, sprintPosture: 23
-};
+ * red marks where to work — drawn on the photo with a short label.
+ *
+ * v3.0.0 ROOT-CAUSE REWORK. The old photo path had three compounding
+ * bugs behind "markers don't appear / land on the wrong body part":
+ *  1. It reused the classic engine's extractFeatures, which returns
+ *     null unless ALL 12 joints (both sides) are clearly visible — on a
+ *     normal side-on photo the far side is always partly hidden, so
+ *     most photos produced NO markers and a "can't see" message.
+ *  2. Marker joints were hardcoded to the LEFT side (front knee = 25,
+ *     rear knee = 26, elbow = 13, ankle = 27) while the checks sorted
+ *     knee angles without remembering which leg was which — when the
+ *     athlete's front leg was the right leg, the marker landed on the
+ *     wrong knee.
+ *  3. Markers drew whenever a landmark object existed — MediaPipe
+ *     returns all 33 landmarks even for joints it cannot see, so
+ *     markers also landed on guessed positions.
+ * assessPhoto below is side-aware: it measures whichever side is
+ * actually visible, names front/rear by the measured angles, anchors
+ * every marker to the joint its text describes, and never anchors to a
+ * joint that isn't clearly visible. */
+function photoVis(lm, i){
+  var p = lm && lm[i];
+  return !!p && (p.visibility === undefined || p.visibility > 0.5);
+}
+function photoPointPx(pt, w, h){ return { x: pt.x * w, y: pt.y * h }; }
+function photoFeatures(lm){
+  if(!lm) return null;
+  function P(i){ return photoVis(lm, i) ? lm[i] : null; }
+  var shL = P(11), shR = P(12), hipL = P(23), hipR = P(24);
+  var shoulder = shL && shR ? { x: (shL.x + shR.x) / 2, y: (shL.y + shR.y) / 2 } : (shL || shR);
+  var hip = hipL && hipR ? { x: (hipL.x + hipR.x) / 2, y: (hipL.y + hipR.y) / 2 } : (hipL || hipR);
+  if(!shoulder || !hip) return null;
+  var torso = Math.hypot(shoulder.x - hip.x, shoulder.y - hip.y);
+  if(torso < 0.04) return null;
+  var trunk = Math.atan2(Math.abs(shoulder.x - hip.x), Math.abs(shoulder.y - hip.y)) * 180 / Math.PI;
+  function sideAngle(h, k, a){ var hp = P(h), kp = P(k), ap = P(a); return (hp && kp && ap) ? angle(hp, kp, ap) : null; }
+  var kneeL = sideAngle(23, 25, 27), kneeR = sideAngle(24, 26, 28);
+  var elbowL = sideAngle(11, 13, 15), elbowR = sideAngle(12, 14, 16);
+  function shinOf(kneeI, ankleI){ var k = P(kneeI), a = P(ankleI); return (k && a) ? Math.atan2(Math.abs(a.x - k.x), Math.abs(a.y - k.y)) * 180 / Math.PI : null; }
+  var shinL = shinOf(25, 27), shinR = shinOf(26, 28);
+  var facing = ((lm[0] && lm[0].visibility > 0.45) ? Math.sign(lm[0].x - shoulder.x) : 0) || 1;
+  function reachOf(kneeI, ankleI){ var k = P(kneeI), a = P(ankleI); return (k && a) ? (a.x - k.x) * facing / torso : null; }
+  var reachL = reachOf(25, 27), reachR = reachOf(26, 28);
+  var legs = [];
+  if(kneeL !== null) legs.push({ angle: kneeL, kneeIdx: 25 });
+  if(kneeR !== null) legs.push({ angle: kneeR, kneeIdx: 26 });
+  legs.sort(function(a, b){ return a.angle - b.angle; });
+  var front = legs[0] || null, rear = legs.length > 1 ? legs[legs.length - 1] : null;
+  var reaches = [];
+  if(reachL !== null) reaches.push({ val: reachL, ankleIdx: 27 });
+  if(reachR !== null) reaches.push({ val: reachR, ankleIdx: 28 });
+  reaches.sort(function(a, b){ return b.val - a.val; });
+  return {
+    torso: torso, trunk: trunk, facing: facing,
+    kneeL: kneeL, kneeR: kneeR, elbowL: elbowL, elbowR: elbowR,
+    shinL: shinL, shinR: shinR,
+    frontKnee: front ? front.angle : null, frontKneeIdx: front ? front.kneeIdx : null,
+    rearKnee: rear ? rear.angle : null, rearKneeIdx: rear ? rear.kneeIdx : null,
+    shinReach: reaches.length ? reaches[0].val : null,
+    reachAnkleIdx: reaches.length ? reaches[0].ankleIdx : null,
+    thighSeparation: (P(25) && P(26)) ? angle(lm[25], hip, lm[26]) : null,
+    hipLift: (shoulder.y - hip.y) / torso, hipY: hip.y,
+    sideRatio: (shL && shR) ? Math.hypot(shL.x - shR.x, shL.y - shR.y) / torso : null,
+    hipIdx: hipL ? 23 : 24, shoulderIdx: shL ? 11 : 12
+  };
+}
+function photoElbowVerdict(f, lo, hi){
+  var elbows = [];
+  if(f.elbowL !== null) elbows.push({ angle: f.elbowL, idx: 13 });
+  if(f.elbowR !== null) elbows.push({ angle: f.elbowR, idx: 14 });
+  if(!elbows.length) return null;
+  var bad = null, badBy = 0, goodIdx = null;
+  elbows.forEach(function(e){
+    var out = e.angle < lo ? lo - e.angle : (e.angle > hi ? e.angle - hi : 0);
+    if(out > badBy){ badBy = out; bad = e; }
+    if(out === 0 && goodIdx === null) goodIdx = e.idx;
+  });
+  return { ok: !bad, badIdx: bad ? bad.idx : null, goodIdx: goodIdx };
+}
+function assessPhoto(lm){
+  var missing = photoMissingJoints(lm);
+  var f = photoFeatures(lm);
+  if(!f) return { feats: null, phase: 'unknown', checks: {}, fixAnchors: {}, goodAnchors: [], missing: missing };
+  var isSet = f.trunk >= 55 && (f.frontKnee === null || f.frontKnee < 115);
+  var checks = {}, fixAnchors = {}, goodAnchors = [];
+  function put(key, ok, anchorIdx, goodLabel){
+    if(ok === null || ok === undefined) return;
+    checks[key] = ok;
+    if(ok === false && anchorIdx !== null && anchorIdx !== undefined) fixAnchors[key] = anchorIdx;
+    if(ok === true && anchorIdx !== null && anchorIdx !== undefined) goodAnchors.push({ key: key, idx: anchorIdx, label: goodLabel });
+  }
+  if(f.sideRatio !== null) put('projection', f.sideRatio <= 0.58, f.hipIdx, null);
+  if(isSet){
+    if(f.frontKnee !== null) put('frontKnee', f.frontKnee >= 78 && f.frontKnee <= 105, f.frontKneeIdx, 'Good: front knee ~' + Math.round(f.frontKnee) + '°');
+    if(f.rearKnee !== null) put('rearKnee', f.rearKnee >= 115 && f.rearKnee <= 145, f.rearKneeIdx, 'Good: rear knee ~' + Math.round(f.rearKnee) + '°');
+    put('hipHeight', f.hipLift >= 0.06, f.hipIdx, null);
+    if(f.thighSeparation !== null) put('thighSeparation', f.thighSeparation >= 40, f.frontKneeIdx, null);
+  } else {
+    put('sprintPosture', f.trunk <= 28, f.hipIdx, 'Good: trunk ' + Math.round(f.trunk) + '°');
+    if(f.shinReach !== null) put('underHip', f.shinReach <= 0.12, f.reachAnkleIdx, null);
+    if(f.thighSeparation !== null) put('thighSeparation', f.thighSeparation >= 60, f.frontKneeIdx, null);
+  }
+  var ev = photoElbowVerdict(f, 65, 130);
+  if(ev) put('elbowShape', ev.ok, ev.ok ? ev.goodIdx : ev.badIdx, 'Good: arms loose');
+  return { feats: f, phase: isSet ? 'set' : 'max', checks: checks, fixAnchors: fixAnchors, goodAnchors: goodAnchors, missing: missing };
+}
+/* Normalize a picked photo through a canvas BEFORE pose sees it: the
+ * browser applies EXIF orientation when drawing an <img> to a canvas,
+ * so the canvas pixels are the displayed pixels — pose then measures
+ * exactly the picture on screen, and the slot shows this same canvas
+ * output. Landmarks, skeleton, and markers share one pixel space by
+ * construction, whatever the phone stored. */
+function normalizePhotoImage(img){
+  var w = img.naturalWidth || 0, h = img.naturalHeight || 0;
+  if(!w || !h) return null;
+  var c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  var cx = c.getContext('2d');
+  if(!cx) return null;
+  cx.drawImage(img, 0, 0, w, h);
+  return c;
+}
+var queuedPhoto = null; /* v3.0.0: one queued pick/frame while a photo analyzes — never silently dropped */
+function drainPhotoQueue(){
+  if(photoBusy || !queuedPhoto) return;
+  var q = queuedPhoto; queuedPhoto = null;
+  if(q.kind === 'frame'){ receivePhotoFrame(q.req); return; }
+  var card = document.querySelector('[data-photo-slot="' + q.slot + '"]');
+  if(card) startPhotoPick(q.slot, q.file, card);
+}
+function sendPhotoRequest(request){
+  pendingPhoto = request; photoBusy = true;
+  photoPose.send({ image: request.image || request.img }).catch(function(){
+    pendingPhoto = null; photoBusy = false;
+    var readout = request.card.querySelector('.photo-readout');
+    if(readout) readout.textContent = 'That photo didn’t work. Try a clear, full-body side view.';
+    drainPhotoQueue();
+  });
+}
 function photoMissingJoints(lm){
   var groups = [['shoulders', [11, 12]], ['hips', [23, 24]], ['knees', [25, 26]], ['ankles', [27, 28]]];
   var missing = [];
@@ -3329,49 +3555,72 @@ function drawPhotoMarker(pctx, x, y, color, glyph, label, scale){
   pctx.textAlign = 'left'; pctx.textBaseline = 'alphabetic';
 }
 function handlePhotoResults(results,request){
-        var card=request.card,img=request.img,pcanvas=card.querySelector('canvas'),pctx=pcanvas.getContext('2d'),readout=card.querySelector('.photo-readout');
-        pcanvas.width=img.naturalWidth||1280;pcanvas.height=img.naturalHeight||960;pctx.clearRect(0,0,pcanvas.width,pcanvas.height);pctx.drawImage(img,0,0,pcanvas.width,pcanvas.height);
-        if(!results.poseLandmarks){hidePoseNote();readout.innerHTML='<strong>Couldn\u2019t see your full body in that photo.</strong> Retake it from the side with head to both feet visible.';return;}
-        if(window.drawConnectors&&window.POSE_CONNECTIONS)drawConnectors(pctx,results.poseLandmarks,POSE_CONNECTIONS,{color:'#5ed5aa',lineWidth:Math.max(3,pcanvas.width/260)});
-        if(window.drawLandmarks)drawLandmarks(pctx,results.poseLandmarks,{color:'#ff7040',fillColor:'#ffffff',lineWidth:2,radius:Math.max(3,pcanvas.width/320)});
-        var lm=results.poseLandmarks,f=extractFeatures(lm);
-        if(!f){
-          hidePoseNote();
-          var miss=photoMissingJoints(lm);
-          readout.innerHTML='<strong>Can’t see: ' + (miss.length ? miss.join(', ') : 'your full body') + '.</strong> Retake with full body in frame — shoulders, hips, knees, and ankles all visible.';
+        if(!request) return;
+        var lm = results && results.poseLandmarks;
+        /* v3.0.0: one retry at a lower detection bar before declaring "no
+         * person found" — a clear photo the first pass missed gets a
+         * second chance instead of a dead end. pendingPhoto/photoBusy
+         * stay set: this photo is still being worked on. */
+        if(!lm && !request.retried && photoPose){
+          request.retried = true;
+          try{ photoPose.setOptions({ modelComplexity: 1, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.35, minTrackingConfidence: 0.35 }); }catch(e){}
+          photoPose.send({ image: request.image || request.img }).catch(function(){
+            request.retried = 'failed';
+            handlePhotoResults(null, request);
+          });
           return;
         }
-        var knees=[Math.round(f.kneeL),Math.round(f.kneeR)].sort(function(a,b){return a-b}),trunk=Math.round(f.lean),armL=Math.round(f.elbowL),armR=Math.round(f.elbowR);
-        var shinL=Math.round(Math.atan2(Math.abs(lm[27].x-lm[25].x),Math.abs(lm[27].y-lm[25].y))*180/Math.PI);
-        var shinR=Math.round(Math.atan2(Math.abs(lm[28].x-lm[26].x),Math.abs(lm[28].y-lm[26].y))*180/Math.PI);
+        if(request.retried && photoPose){
+          try{ photoPose.setOptions({ modelComplexity: 1, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.55, minTrackingConfidence: 0.55 }); }catch(e){}
+        }
+        pendingPhoto = null; photoBusy = false;
+        var card=request.card,img=request.img,pcanvas=card.querySelector('canvas'),pctx=pcanvas.getContext('2d'),readout=card.querySelector('.photo-readout');
+        var src = request.image || img;
+        pcanvas.width=(src && src.width)||img.naturalWidth||1280;pcanvas.height=(src && src.height)||img.naturalHeight||960;
+        pctx.clearRect(0,0,pcanvas.width,pcanvas.height);pctx.drawImage(src,0,0,pcanvas.width,pcanvas.height);
+        if(!lm){hidePoseNote();readout.innerHTML='<strong>Couldn\u2019t see your full body in that photo.</strong> Retake it from the side with head to both feet visible.';drainPhotoQueue();return;}
+        if(window.drawConnectors&&window.POSE_CONNECTIONS)drawConnectors(pctx,results.poseLandmarks,POSE_CONNECTIONS,{color:'#5ed5aa',lineWidth:Math.max(3,pcanvas.width/260)});
+        if(window.drawLandmarks)drawLandmarks(pctx,results.poseLandmarks,{color:'#ff7040',fillColor:'#ffffff',lineWidth:2,radius:Math.max(3,pcanvas.width/320)});
+        var assessment = assessPhoto(lm);
+        var f = assessment.feats;
+        if(!f){
+          hidePoseNote();
+          var miss = assessment.missing;
+          readout.innerHTML='<strong>Can’t see: ' + (miss.length ? miss.join(', ') : 'your full body') + '.</strong> Retake with your full body in frame — the checks need at least one shoulder and one hip clearly visible.';
+          drainPhotoQueue();
+          return;
+        }
+        var checks = assessment.checks, isSet = assessment.phase === 'set';
+        var trunk = Math.round(f.trunk);
+        var fmtA = function(v){ return v === null || v === undefined ? '—' : Math.round(v) + '°'; };
         // Phase-gated photo checks: a single photo can be a crouched SET
         // position (trunk near horizontal) or an upright SPRINT/DRIVE photo.
         // Set-position criteria (front knee ~90, rear knee 120-135, hips
         // above shoulders) are meaningless on a sprint photo — previously
         // every upright photo with good knees was misdiagnosed as a
         // hip-height fault, and every set photo as "folded hips".
-        var isSet=trunk>=55;
         var good=[];
         if(trunk>=28&&trunk<=55)good.push('trunk projects through a useful drive range');
         else if(isSet&&trunk<=75)good.push('crouched set trunk line');
         else if(!isSet&&trunk<28)good.push('tall sprint trunk line');
-        if(isSet&&knees[0]>=78&&knees[0]<=105)good.push('front-knee shape is close to 90°');
-        if(isSet&&knees[1]>=115&&knees[1]<=145)good.push('rear-knee shape is in the 120–135° window');
-        if(armL>=65&&armL<=130&&armR>=65&&armR<=130)good.push('arms are loose rather than locked at 90°');
+        if(isSet&&checks.frontKnee)good.push('front-knee shape is close to 90°');
+        if(isSet&&checks.rearKnee)good.push('rear-knee shape is in the 120–135° window');
+        if(checks.elbowShape)good.push('arms are loose rather than locked at 90°');
         if(!good.length)good.push('full-body position is clear enough to review');
-        var issue='projection';
-        if(f.sideRatio>.58)issue='projection';
+        var issue;
+        if(checks.projection === false) issue='projection';
         else if(isSet){
-          if(knees[0]<78||knees[0]>105)issue='frontKnee';
-          else if(knees[1]<115||knees[1]>145)issue='rearKnee';
-          else if(f.hipLift<.06)issue='hipHeight';
+          if(checks.frontKnee === false)issue='frontKnee';
+          else if(checks.rearKnee === false)issue='rearKnee';
+          else if(checks.hipHeight === false)issue='hipHeight';
+          else if(checks.elbowShape === false)issue='elbowShape';
           else issue='thighSeparation';
         }else{
           // Sprint/drive photo: a tall trunk is correct here, so earlyRise /
           // foldedHips / set-knee checks do not apply.
-          if(f.shinReach>.12)issue='underHip';
-          else if(armL<65||armL>130||armR<65||armR>130)issue='elbowShape';
-          else if(f.thighSeparation<60)issue='thighSeparation';
+          if(checks.underHip === false)issue='underHip';
+          else if(checks.elbowShape === false)issue='elbowShape';
+          else if(checks.thighSeparation === false)issue='thighSeparation';
           else issue='sprintPosture';
         }
         hidePoseNote();var fix=coachFix[issue],v=fixVideos[issue];
@@ -3380,35 +3629,40 @@ function handlePhotoResults(results,request){
         callout(pad,'#5ed5aa','GOOD',good[0]);
         callout(pcanvas.height-lineH-pad*3,'#ff7040','FIX',fix.cue);
         /* Pointing markers: green checks on what looks good, one red mark on
-         * the joint to fix — each with a short label. Markers sit on the
-         * skeleton the AI actually measured. */
-        var goodMarkers=[];
-        good.forEach(function(g){
-          if(/trunk/.test(g)) goodMarkers.push({ joint: 23, label: 'Good: trunk ' + trunk + '°' });
-          else if(/front-knee/.test(g)) goodMarkers.push({ joint: 25, label: 'Good: front knee ~' + knees[0] + '°' });
-          else if(/rear-knee/.test(g)) goodMarkers.push({ joint: 26, label: 'Good: rear knee ~' + knees[1] + '°' });
-          else if(/arms/.test(g)) goodMarkers.push({ joint: 13, label: 'Good: arms loose' });
+         * the joint to fix — each anchored by assessPhoto to the joint its
+         * text describes (front knee = the bent leg, whichever side it is).
+         * v3.0.0: a marker is only drawn when its joint is clearly visible;
+         * an invisible joint is named in the readout instead of marked at
+         * a guessed position. */
+        var unmarked=[];
+        function mark(idx,color,glyph,label,shortName){
+          if(idx===null||idx===undefined)return;
+          var pt=lm[idx]; if(!pt)return;
+          if(pt.visibility!==undefined&&pt.visibility<=0.5){ unmarked.push(shortName); return; }
+          var px=photoPointPx(pt,pcanvas.width,pcanvas.height);
+          drawPhotoMarker(pctx,px.x,px.y,color,glyph,label,scale);
+        }
+        assessment.goodAnchors.filter(function(g){ return !!g.label; }).slice(0,3).forEach(function(g){
+          mark(g.idx,'#3ddc97','✓',g.label,g.label.replace(/^Good: /,''));
         });
-        goodMarkers.slice(0, 3).forEach(function(mk){
-          var pt=lm[mk.joint];
-          if(pt) drawPhotoMarker(pctx, pt.x * pcanvas.width, pt.y * pcanvas.height, '#3ddc97', '✓', mk.label, scale);
-        });
-        var fixJoint=PHOTO_FIX_JOINT[issue] || 23;
-        var fixPt=lm[fixJoint];
-        if(fixPt) drawPhotoMarker(pctx, fixPt.x * pcanvas.width, fixPt.y * pcanvas.height, '#ff5c5c', '!', 'Work on: ' + fix.cue, scale);
+        mark(assessment.fixAnchors[issue],'#ff5c5c','!','Work on: ' + fix.cue,fix.fix);
         /* Plain-language lists: what the AI saw that looks good, and what
          * to work on — with the fault, cue, and drill for each. */
         var goodHtml=good.map(function(g){
           var seen='';
           if(/trunk/.test(g)) seen=' — trunk lean measured at ' + trunk + '° in this photo.';
-          else if(/front-knee/.test(g)) seen=' — front knee measured near ' + knees[0] + '° in this photo.';
-          else if(/rear-knee/.test(g)) seen=' — rear knee measured near ' + knees[1] + '° in this photo.';
-          else if(/arms/.test(g)) seen=' — elbows measured at ' + armL + '° / ' + armR + '° in this photo.';
+          else if(/front-knee/.test(g)) seen=' — front knee measured near ' + Math.round(f.frontKnee) + '° in this photo.';
+          else if(/rear-knee/.test(g)) seen=' — rear knee measured near ' + Math.round(f.rearKnee) + '° in this photo.';
+          else if(/arms/.test(g)) seen=' — elbows measured at ' + fmtA(f.elbowL) + ' / ' + fmtA(f.elbowR) + ' in this photo.';
           return '<li>' + g + seen + '</li>';
         }).join('');
+        var unmarkedHtml = unmarked.length ? '<p><strong>Couldn\u2019t mark:</strong> ' + unmarked.join('; ') + ' — that joint isn\u2019t clear in this photo, so no marker was drawn for it.</p>' : '';
+        var partialHtml = assessment.missing.length ? '<p>Partly hidden: ' + assessment.missing.join(', ') + ' — checks needing them were skipped, not guessed.</p>' : '';
         readout.innerHTML='<strong>What looks good:</strong><ul>' + goodHtml + '</ul>' +
           '<strong>Work on:</strong><ul><li>' + fix.fix + ' <strong>Cue:</strong> “' + fix.cue + '” <strong>Drill:</strong> ' + fix.drill + '.</li></ul>' +
-          '<div class="angle-list"><span>Trunk '+trunk+'°</span><span>Knees '+knees[0]+'° / '+knees[1]+'°</span><span>Shins '+shinL+'° / '+shinR+'°</span><span>Arms '+armL+'° / '+armR+'°</span></div><a class="watch-fix" href="'+v[2]+'" target="_blank" rel="noopener">Watch: how to fix this</a>';
+          unmarkedHtml + partialHtml +
+          '<div class="angle-list"><span>Trunk '+trunk+'°</span><span>Knees '+fmtA(f.frontKnee)+' / '+fmtA(f.rearKnee)+'</span><span>Shins '+fmtA(f.shinL)+' / '+fmtA(f.shinR)+'</span><span>Arms '+fmtA(f.elbowL)+' / '+fmtA(f.elbowR)+'</span></div><a class="watch-fix" href="'+v[2]+'" target="_blank" rel="noopener">Watch: how to fix this</a>';
+        drainPhotoQueue();
       }
 
 
@@ -3473,10 +3727,38 @@ function ensurePhotoPose(){
   photoPose.setOptions({ modelComplexity: 1, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.55, minTrackingConfidence: 0.55 });
   photoPose.onResults(function(results){
     if(!pendingPhoto) return;
-    var req = pendingPhoto; pendingPhoto = null; photoBusy = false;
-    handlePhotoResults(results, req);
+    /* v3.0.0: handlePhotoResults owns pendingPhoto/photoBusy now — it
+     * may keep them set for its lower-confidence retry pass. */
+    handlePhotoResults(results, pendingPhoto);
   });
   return true;
+}
+/* v3.0.0: one pick pipeline for both slots. The photo is normalized
+ * through a canvas first (EXIF-consistent pixels), the slot then
+ * displays that exact canvas output, and pose measures it — display
+ * and analysis can never disagree about where a pixel is. */
+function startPhotoPick(slot, file, card){
+  var img = card.querySelector('img'), readout = card.querySelector('.photo-readout');
+  if(!img || !readout) return;
+  if(!ensurePhotoPose()){ readout.textContent = 'The analyzer didn’t start. Reload and try again.'; return; }
+  if(photoUrls[slot]) URL.revokeObjectURL(photoUrls[slot]);
+  photoUrls[slot] = URL.createObjectURL(file);
+  img.src = photoUrls[slot]; img.alt = 'Athlete form photo ' + (slot === 0 ? 'A' : 'B');
+  readout.textContent = 'Reading your shape and measuring angles…';
+  var norm = null, triedNorm = false;
+  img.onerror = function(){ readout.textContent = 'That photo didn’t open. Try a different photo.'; };
+  img.onload = function(){
+    if(!triedNorm){
+      triedNorm = true;
+      norm = normalizePhotoImage(img);
+      if(norm){
+        /* Show exactly the pixels pose will measure. */
+        try{ img.src = norm.toDataURL('image/jpeg', 0.92); return; }catch(e){ /* keep the original src */ }
+      }
+    }
+    card.querySelector('.photo-placeholder').hidden = true; img.hidden = true;
+    sendPhotoRequest({ slot: slot, img: img, card: card, image: norm || null, retried: false });
+  };
 }
 function bindPhotos(){
   document.querySelectorAll('.photo-input').forEach(function(input){
@@ -3485,21 +3767,16 @@ function bindPhotos(){
       var slot = Number(input.dataset.slot);
       var card = document.querySelector('[data-photo-slot="' + slot + '"]');
       if(!card) return;
-      var img = card.querySelector('img'), readout = card.querySelector('.photo-readout');
-      if(photoBusy){ readout.textContent = 'Still analyzing the last photo — one moment, then pick again.'; input.value = ''; return; }
-      if(!ensurePhotoPose()){ readout.textContent = 'The analyzer didn’t start. Reload and try again.'; return; }
-      if(photoUrls[slot]) URL.revokeObjectURL(photoUrls[slot]);
-      photoUrls[slot] = URL.createObjectURL(file);
-      img.src = photoUrls[slot]; img.alt = 'Athlete form photo ' + (slot === 0 ? 'A' : 'B');
-      readout.textContent = 'Reading your shape and measuring angles…';
-      img.onerror = function(){ photoBusy = false; pendingPhoto = null; readout.textContent = 'That photo didn’t open. Try a different photo.'; };
-      img.onload = function(){
-        card.querySelector('.photo-placeholder').hidden = true; img.hidden = true;
-        photoBusy = true; pendingPhoto = { slot: slot, img: img, card: card };
-        photoPose.send({ image: img }).catch(function(){
-          readout.textContent = 'That photo didn’t work. Try a clear, full-body side view.'; photoBusy = false; pendingPhoto = null;
-        });
-      };
+      var readout = card.querySelector('.photo-readout');
+      /* v3.0.0: a pick made while another photo analyzes is QUEUED,
+       * not thrown away — it runs as soon as the current one finishes. */
+      if(photoBusy){
+        queuedPhoto = { kind: 'pick', slot: slot, file: file };
+        if(readout) readout.textContent = 'Still analyzing the last photo — this one is queued and will run next.';
+        input.value = ''; return;
+      }
+      input.value = '';
+      startPhotoPick(slot, file, card);
     });
   });
 }
@@ -3514,18 +3791,28 @@ function receivePhotoFrame(req){
   if(!card) return false;
   var img = card.querySelector('img'), readout = card.querySelector('.photo-readout');
   if(!img || !readout) return false;
-  if(photoBusy){ readout.textContent = 'Still analyzing the last photo — your recording frame will wait.'; return false; }
+  /* v3.0.0: queue instead of dropping the frame when a photo is busy. */
+  if(photoBusy){
+    queuedPhoto = { kind: 'frame', req: req };
+    readout.textContent = 'Still analyzing the last photo — your recording frame is queued and will run next.';
+    return true;
+  }
   if(!ensurePhotoPose()){ readout.textContent = 'The analyzer didn’t start. Reload and try again.'; return false; }
   if(photoUrls[0]){ URL.revokeObjectURL(photoUrls[0]); photoUrls[0] = null; }
   img.src = req.url; img.alt = req.label || 'Best frame from your recording';
   readout.textContent = 'From your recording — reading your shape and measuring angles…';
-  img.onerror = function(){ photoBusy = false; pendingPhoto = null; readout.textContent = 'That frame didn’t open.'; };
+  var norm = null, triedNorm = false;
+  img.onerror = function(){ readout.textContent = 'That frame didn’t open.'; };
   img.onload = function(){
+    if(!triedNorm){
+      triedNorm = true;
+      norm = normalizePhotoImage(img);
+      if(norm){
+        try{ img.src = norm.toDataURL('image/jpeg', 0.92); return; }catch(e){ /* keep the original src */ }
+      }
+    }
     card.querySelector('.photo-placeholder').hidden = true; img.hidden = true;
-    photoBusy = true; pendingPhoto = { slot: 0, img: img, card: card };
-    photoPose.send({ image: img }).catch(function(){
-      readout.textContent = 'That frame didn’t work. Try a clear, full-body side view.'; photoBusy = false; pendingPhoto = null;
-    });
+    sendPhotoRequest({ slot: 0, img: img, card: card, image: norm || null, retried: false });
   };
   return true;
 }
@@ -3607,7 +3894,9 @@ function bindChrome(){
   });
 }
 
-window.TrackPhoto = { handlePhotoResults: handlePhotoResults, photoMissingJoints: photoMissingJoints, drawPhotoMarker: drawPhotoMarker, receiveFrame: receivePhotoFrame };
+window.TrackPhoto = { handlePhotoResults: handlePhotoResults, photoMissingJoints: photoMissingJoints, drawPhotoMarker: drawPhotoMarker, receiveFrame: receivePhotoFrame,
+  /* v3.0.0 test hooks (smoke tests only). */
+  _test: { assessPhoto: assessPhoto, photoFeatures: photoFeatures, photoPointPx: photoPointPx, normalizePhotoImage: normalizePhotoImage } };
 window.TrackClassic = {
   setBlockStarts: setBlockStarts,
   getBlockStarts: function(){ return blockStartsOn; },
@@ -4300,7 +4589,7 @@ function startPoseWatch(){
   try{
     if(!D.watchPose){
       D.watchPose = new Pose({ locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/' + f; } });
-      D.watchPose.setOptions({ modelComplexity: 0, smoothLandmarks: false, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+      D.watchPose.setOptions({ modelComplexity: 0, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
       D.watchPose.onResults(function(res){
         handlePresencePose(res && res.poseLandmarks);
       });
@@ -4694,7 +4983,7 @@ function runLocalAnalysis(){
   var pose;
   try{
     pose = new Pose({ locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/' + f; } });
-    pose.setOptions({ modelComplexity: 0, smoothLandmarks: false, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    pose.setOptions({ modelComplexity: 0, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
     pose.onResults(function(res){ if(res && res.poseLandmarks){ var f = extractDualFeatures(res.poseLandmarks); samples.push({ t: v.currentTime || 0, f: f }); if(f) feats.push(f); } });
   }catch(e){ try{ if(v.parentNode) v.parentNode.removeChild(v); }catch(_){} URL.revokeObjectURL(url); D.localAnalysis = { label: D.localLabel, score: null, metrics: [0, 0, 0], issue: 'unavailable', headline: 'Analyzer didn\u2019t start for this clip', fix: DUAL_FIX.unavailable, frames: 0, activity: 'none', moments: [] }; finishLocalAnalysis(); return; }
   function finish(){
@@ -4843,9 +5132,31 @@ function showReplay(blobA, blobB){
     var target = frac * b.duration;
     if(Math.abs(b.currentTime - target) > 0.12) b.currentTime = target;
   }
+  /* v3.0.0: replay auto-slow at the worst-scoring moment (from the
+   * analysis moments), restoring full speed after it. It only ever
+   * engages from 1x — a speed the user picked is never fought. */
+  var worstMomentT = null;
+  ((D.localAnalysis && D.localAnalysis.moments) || []).forEach(function(m){
+    if(m.kind === 'fix' && worstMomentT === null) worstMomentT = m.t;
+  });
+  var dualAutoSlowed = false;
+  function autoSlowTick(){
+    if(!va || va.paused || worstMomentT === null) return;
+    var t = va.currentTime || 0;
+    var atWorst = t >= worstMomentT - 0.4 && t <= worstMomentT + 0.8;
+    if(atWorst && va.playbackRate === 1){
+      va.playbackRate = 0.25; if(vb && blobB) vb.playbackRate = 0.25;
+      dualAutoSlowed = true;
+      setText('dualRecState', 'Slowed down — this is the moment that needs work, at quarter speed so you can see it.');
+    } else if(dualAutoSlowed && !atWorst){
+      va.playbackRate = 1; if(vb && blobB) vb.playbackRate = 1;
+      dualAutoSlowed = false;
+      setText('dualRecState', 'Replay ready — one slider moves both clips.');
+    }
+  }
   /* v2.6.0: on* property (not addEventListener) so re-recordings can't
    * stack duplicate timeupdate handlers on the same elements. */
-  if(va) va.ontimeupdate = (vb && blobB) ? function(){ syncFrom(va, vb); } : null;
+  if(va) va.ontimeupdate = (vb && blobB) ? function(){ syncFrom(va, vb); autoSlowTick(); } : function(){ autoSlowTick(); };
   if(vb) vb.ontimeupdate = (blobB) ? function(){ syncFrom(vb, va); } : null;
   if(scrub){
     scrub.value = 0;
@@ -4867,6 +5178,7 @@ function showReplay(blobA, blobB){
   var speedBtns = document.querySelectorAll('[data-dual-speed]');
   speedBtns.forEach(function(b){ b.onclick = function(){
     var r = parseFloat(b.dataset.dualSpeed) || 1;
+    dualAutoSlowed = false; // the user's speed wins — auto-slow stands down
     if(va) va.playbackRate = r;
     if(vb) vb.playbackRate = r;
     speedBtns.forEach(function(x){ x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
@@ -5080,7 +5392,7 @@ window.TrackDual = {
 
 </script>
   <script>
-/* Track Analyzer — update system (v2.9.0)
+/* Track Analyzer — update system (v3.0.0)
  *
  * Tenno Vault-style: visible version, What's New panel, Check for updates,
  * and an update banner. The banner fires ONLY when version.json reports a
@@ -5129,9 +5441,17 @@ window.TrackDual = {
  */
 (function(){
 'use strict';
-var VERSION = '2.9.0';
+var VERSION = '3.0.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "3.0.0", date: "2026-10-21", notes: [
+    "Photo check fixed: markers now land on the right body part — front knee means your actual front leg, on either side. Photos where one side is hidden still get measured instead of a dead end, a joint that isn't clear is named instead of marked at a guessed spot, and picking a second photo while the first analyzes queues it instead of losing it.",
+    "AI double-checked ✓: after every analysis, a second stricter pass re-measures your reps. When the two passes agree, you see the check mark. When they don't, the app says “too close to call” and asks for a side-on retake instead of presenting a fix it isn't sure about.",
+    "Auto slow-mo: when part of a rep moves too fast to track, clip analysis slows that stretch to quarter speed while it measures, and replay slows down on its own at fast parts and at your lowest-scoring moment — with the reason on screen.",
+    "Smoother skeleton: the rig now uses the pose model's own landmark smoothing plus eased motion, tapered bones, and joints that fade when the camera loses them — no more popping, snapping, or a joint sitting in the wrong place.",
+    "Honest frame rate: the “Rig drawing / pose” line reports real measured rates and drops when tracking stalls — it used to freeze at its last value and claim poses were still landing.",
+    "Fixes are ranked by how far off they measured, not just how often they happened — the biggest problem comes first. Deep-check skeleton pictures now match your frame's real shape instead of stretching."
+  ]},
   { version: "2.9.0", date: "2026-10-21", notes: [
     "Honest scores, always: three drill scores (squat, hinge, bench) used to include a placeholder perfect mark that was never measured. Every number in your score now comes from your actual movement — and a metric the camera can't judge from your angle is left out of the score, not filled in.",
     "New: Last session card on the AI Analyzer tab — your latest session (reps, best frame score, top fix) is saved on this device and shown next time you open the app, with how your best score compares to the session before it.",
@@ -6615,7 +6935,7 @@ function switchSingleCamera(){
 }
 function makePose(onResult){
   var pose = new Pose({ locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/' + f; } });
-  pose.setOptions({ modelComplexity: 0, smoothLandmarks: false, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+  pose.setOptions({ modelComplexity: 0, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
   pose.onResults(onResult);
   return pose;
 }
@@ -6819,6 +7139,15 @@ function updateGuideVideo(cr){
 }
 function onFrame(f, angle){
   if(angle !== 1) return; // state machine + reps run off angle 1 only
+  /* v3.0.0 auto slow-mo: how far the fastest joint jumped since the
+   * previous pose (torso units). Stored on every frame so the review
+   * can find the segments that moved too fast to track. */
+  var disp = null;
+  if(AI.lastRawLm){
+    if(AI.prevDispLm) disp = maxJointDisp(AI.prevDispLm, AI.lastRawLm);
+    AI.prevDispLm = AI.lastRawLm;
+  }
+  if(typeof disp === 'number') AI.lastDisp = disp;
   var prev = AI.state;
   var activity = classify(f, AI.hist);
   var now = Date.now();
@@ -6841,7 +7170,8 @@ function onFrame(f, angle){
   }
   if(f && f.missing && f.missing.length){
     setText('aiCantSee', f.missing.join(', ') + ' — step back so your full body fits.');
-    AI.deep.frames1.push({ t: Date.now(), activity: 'none', score: 0, tripped: null, f: null });
+    AI.prevDispLm = null; // gap in tracking — the next displacement would span it
+    AI.deep.frames1.push({ t: Date.now(), activity: 'none', score: 0, tripped: null, f: null, disp: disp });
     if(AI.deep.frames1.length > 900) AI.deep.frames1.shift();
     return;
   }
@@ -6867,7 +7197,7 @@ function onFrame(f, angle){
       }
     }catch(e){}
   }
-  AI.deep.frames1.push({ t: Date.now(), activity: activity, score: scored.score, tripped: scored.tripped || null,
+  AI.deep.frames1.push({ t: Date.now(), activity: activity, score: scored.score, tripped: scored.tripped || null, disp: disp,
     f: { lean: f.lean, kneeL: f.kneeL, kneeR: f.kneeR, elbow: f.elbow, thighSep: f.thighSep, shinReach: f.shinReach } });
   if(AI.deep.frames1.length > 900) AI.deep.frames1.shift();
   // Live callout every ~5s while moving: praise + one fix.
@@ -7767,6 +8097,47 @@ function pickVideos(input){
   }
   return out;
 }
+/* v3.0.0 fix prioritization: faults used to rank by raw trip count
+ * alone, so a mild fault seen often outranked a severe fault seen a
+ * few times. Each fault now also carries a measured deviation — how far
+ * its key angle sat outside the good band in the reps where it tripped
+ * (medians of the stored per-frame measurements, never invented) — and
+ * ranks by count × (1 + deviation). Faults whose deviation can't be
+ * measured from the stored features keep deviation 0: count decides,
+ * exactly as before. */
+var FAULT_DEVIATION = {
+  overstride: { key: 'shinReach', edge: 0.12, scale: 0.12 },
+  earlyRise: { key: 'lean', edge: 20, scale: 20, below: true },
+  tallPosture: { key: 'lean', edge: 30, scale: 30 },
+  hingeBack: { key: 'lean', edge: 55, scale: 25 },
+  elbowShape: { key: 'elbow', band: [70, 130], scale: 40 },
+  thighSep: { key: 'thighSep', edge: 60, scale: 60, below: true },
+  footRecovery: { key: 'kneeMin', edge: 105, scale: 45 }
+};
+function metricOf(f, key){
+  if(!f) return null;
+  if(key === 'kneeMin'){
+    var ks = [f.kneeL, f.kneeR].filter(function(v){ return typeof v === 'number'; });
+    return ks.length ? Math.min.apply(null, ks) : null;
+  }
+  return typeof f[key] === 'number' ? f[key] : null;
+}
+function medianOfSamples(samples, key){
+  var vals = (samples || []).map(function(s){ return metricOf(s, key); }).filter(function(v){ return v !== null; });
+  return vals.length ? median(vals) : null;
+}
+function faultDeviation(check, reps){
+  var spec = FAULT_DEVIATION[check];
+  if(!spec) return 0;
+  var samples = [];
+  (reps || []).forEach(function(r){ if(r.tripCounts && r.tripCounts[check]) samples = samples.concat(r.samples || []); });
+  var med = medianOfSamples(samples, spec.key);
+  if(med === null) return 0;
+  var dev;
+  if(spec.band) dev = med < spec.band[0] ? spec.band[0] - med : (med > spec.band[1] ? med - spec.band[1] : 0);
+  else dev = spec.below ? Math.max(0, spec.edge - med) : Math.max(0, med - spec.edge);
+  return Math.min(2, dev / spec.scale);
+}
 function buildDeepReport(reps, frames2count, opts){
   opts = opts || {};
   var faultCounts = {}, activities = [];
@@ -7774,14 +8145,15 @@ function buildDeepReport(reps, frames2count, opts){
     if(activities.indexOf(r.activity) === -1) activities.push(r.activity);
     Object.keys(r.tripCounts).forEach(function(k){ faultCounts[k] = (faultCounts[k] || 0) + r.tripCounts[k]; });
   });
-  var faultList = Object.keys(faultCounts).sort(function(a, b){ return faultCounts[b] - faultCounts[a]; }).map(function(check){
+  var faultList = Object.keys(faultCounts).map(function(check){
     var kb = findFault(check) || LOCAL_FAULT[check] || null;
-    return { check: check, count: faultCounts[check],
+    var sev = faultCounts[check] * (1 + faultDeviation(check, reps));
+    return { check: check, count: faultCounts[check], severity: Math.round(sev * 100) / 100,
       fault: kb ? kb.fault : (CHECK_LABEL[check] || check),
       cue: kb ? kb.cue : 'Work on this one rep at a time.',
       drill: kb ? kb.drill : 'See the Coaching guide for drills.',
       video: kb ? (kb.video || '') : '' };
-  });
+  }).sort(function(a, b){ return (b.severity - a.severity) || (b.count - a.count); });
   var strengths = reps.filter(function(r){ return r.best >= 80; }).map(function(r, i){
     return 'Rep ' + (i + 1) + ' (' + (ACTIVITY_LABEL[r.activity] || r.activity) + '): held strong shape — best frame ~' + r.best + '%.';
   });
@@ -7824,22 +8196,34 @@ function skelFaultJoints(check){
 }
 var SKEL_BONES = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24],
   [23, 25], [25, 27], [24, 26], [26, 28], [0, 11], [0, 12]];
+var SKEL_BONE_W = { '11,12': 5, '23,24': 5, '11,23': 5, '12,24': 5, '23,25': 5, '24,26': 5,
+  '25,27': 4, '26,28': 4, '11,13': 4, '12,14': 4, '13,15': 3, '14,16': 3, '0,11': 3, '0,12': 3 };
 function drawSkeleton(canvas, lm, faultJoints){
   // Skeleton lines drawn ON the video/photo of the person — never a
   // separate stick-figure drawing, never 3D.
+  // v3.0.0: same rendering rules as the live rig — tapered bone widths
+  // (torso/thigh thickest), and joints the model barely sees FADE with
+  // their visibility instead of drawing at full strength in a guessed
+  // place (the old gate drew anything above v=0.3 at full opacity).
   if(!canvas || !lm) return [];
   var ctx = canvas.getContext('2d');
   if(!ctx) return [];
   var w = canvas.width, h = canvas.height;
   ctx.clearRect(0, 0, w, h);
+  var sf = Math.max(0.75, Math.min(2, Math.min(w, h) / 320));
   var pts = {};
   Object.keys(lm).forEach(function(k){
     var pt = lm[k];
-    if(pt && (pt.v === undefined || pt.v > 0.3)) pts[k] = { x: pt.x * w, y: pt.y * h };
+    if(!pt) return;
+    var v = pt.v === undefined ? 1 : pt.v;
+    if(v <= 0.35) return;
+    pts[k] = { x: pt.x * w, y: pt.y * h, a: 0.35 + 0.65 * Math.min(1, (v - 0.35) / 0.5) };
   });
-  ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineCap = 'round';
   SKEL_BONES.forEach(function(b){
     if(pts[b[0]] && pts[b[1]]){
+      ctx.globalAlpha = Math.min(pts[b[0]].a, pts[b[1]].a);
+      ctx.lineWidth = (SKEL_BONE_W[b[0] + ',' + b[1]] || 3) * sf;
       ctx.beginPath(); ctx.moveTo(pts[b[0]].x, pts[b[0]].y); ctx.lineTo(pts[b[1]].x, pts[b[1]].y); ctx.stroke();
     }
   });
@@ -7847,13 +8231,15 @@ function drawSkeleton(canvas, lm, faultJoints){
   Object.keys(pts).forEach(function(k){
     var idx = parseInt(k, 10);
     var isFault = (faultJoints || []).indexOf(idx) !== -1;
+    ctx.globalAlpha = pts[k].a;
     ctx.beginPath();
-    ctx.arc(pts[k].x, pts[k].y, isFault ? 9 : 5, 0, Math.PI * 2);
+    ctx.arc(pts[k].x, pts[k].y, (isFault ? 9 : ((idx === 27 || idx === 28 || idx === 15 || idx === 16) ? 4 : 5)) * sf, 0, Math.PI * 2);
     ctx.fillStyle = isFault ? '#ff5c5c' : '#3ddc97';
     ctx.fill();
-    if(isFault){ ctx.strokeStyle = '#ffd23d'; ctx.lineWidth = 2; ctx.stroke(); }
+    if(isFault){ ctx.strokeStyle = '#ffd23d'; ctx.lineWidth = 2 * sf; ctx.stroke(); }
     joints.push({ idx: idx, x: pts[k].x, y: pts[k].y, fault: isFault });
   });
+  ctx.globalAlpha = 1;
   canvas._skelJoints = joints;
   return joints;
 }
@@ -7931,13 +8317,36 @@ function renderDeepReport(report){
   var topJoints = topFault ? skelFaultJoints(topFault.check) : [];
   var bestLm = report.best.length ? report.best[0].lm : null;
   var worstLm = report.worst ? report.worst.lm : null;
-  drawSkeleton($('deepSkelBest'), bestLm, topJoints);
-  bindSkelClick($('deepSkelBest'), topFault);
-  drawSkeleton($('deepSkelWorst'), worstLm, topJoints);
-  bindSkelClick($('deepSkelWorst'), topFault);
+  /* v3.0.0: the skeleton canvases used to be a fixed 320x240 whatever
+   * the frame's real shape — a 16:9 or portrait frame got a vertically
+   * stretched skeleton whose joints sat in the wrong places next to
+   * the photo. Each canvas now takes its frame's own aspect (capped
+   * at 640px wide) before the skeleton is drawn. */
+  function drawSkelOnFrame(canvas, url, lm, joints, faultInfo){
+    if(!canvas) return;
+    bindSkelClick(canvas, faultInfo);
+    if(!lm) return;
+    if(!url || typeof Image === 'undefined'){ drawSkeleton(canvas, lm, joints); return; }
+    try{
+      var im = new Image();
+      im.onload = function(){
+        if(im.naturalWidth > 0){
+          var s = Math.min(1, 640 / im.naturalWidth);
+          canvas.width = Math.max(1, Math.round(im.naturalWidth * s));
+          canvas.height = Math.max(1, Math.round(im.naturalHeight * s));
+        }
+        drawSkeleton(canvas, lm, joints);
+      };
+      im.onerror = function(){ drawSkeleton(canvas, lm, joints); };
+      im.src = url;
+    }catch(e){ drawSkeleton(canvas, lm, joints); }
+  }
+  var bestUrl = report.best.length ? report.best[0].url : null;
+  var worstUrl = report.worst ? report.worst.url : null;
+  drawSkelOnFrame($('deepSkelBest'), bestUrl, bestLm, topJoints, topFault);
+  drawSkelOnFrame($('deepSkelWorst'), worstUrl, worstLm, topJoints, topFault);
   (report.faultList.slice(0, 2)).forEach(function(f, i){
-    drawSkeleton($('deepSkelFault' + i), worstLm || bestLm, skelFaultJoints(f.check));
-    bindSkelClick($('deepSkelFault' + i), f);
+    drawSkelOnFrame($('deepSkelFault' + i), worstUrl || bestUrl, worstLm || bestLm, skelFaultJoints(f.check), f);
   });
 }
 function runDeepAnalysis(){
@@ -7987,6 +8396,11 @@ function stopAndAnalyze(){
     showEl($('aiSummary'), true);
     showEl($('aiSoloDoubleCheck'), true);
     var scr = $('aiSoloCheckResult'); if(scr) scr.textContent = '';
+    /* v3.0.0: the self-check runs on every analysis, not just on tap —
+     * a stricter second pass must agree before a fix reads as settled. */
+    AI.selfCheck = verifySelfCheck(AI.deep.frames1, AI.deepReport);
+    renderSelfCheck(AI.selfCheck);
+    if(AI.clipMode) setupReplayAutoSlow();
     notifyAnalysisDone();
     saveLastSession();
     renderLastSession();
@@ -8027,12 +8441,18 @@ function renderClipMarkers(){
     if(faultFirst[check] === worst) return;
     markers.push({ fr: faultFirst[check], kind: 'fix', label: 'First: ' + (CHECK_LABEL[check] || check), detail: 'Fault first appears · ~' + faultFirst[check].score + '%' });
   });
+  /* v3.0.0: fast segments get their own moment — replay auto-slows there. */
+  var fastSegs = findFastSegments(frames, start);
+  if(fastSegs.length){
+    markers.push({ fr: { t: start + fastSegs[0].startSec * 1000 }, kind: 'fast', label: 'Fast part',
+      detail: 'Moved too fast to track at full speed — replay auto-slows here' });
+  }
   markers = markers.slice(0, 5).sort(function(a, b){ return a.fr.t - b.fr.t; });
   wrap.innerHTML = '<span class="ai-markers-label">AI moments — tap to jump:</span>' +
     markers.map(function(m){
       var t = Math.max(0, (m.fr.t - start) / 1000);
       return '<button class="ghost-control small" data-clip-moment="' + t.toFixed(2) + '" type="button">' +
-        (m.kind === 'fix' ? '🔴 ' : '🟢 ') + fmtClipTime(t) + ' — ' + m.label + ' (' + m.detail + ')</button>';
+        (m.kind === 'fix' ? '🔴 ' : m.kind === 'fast' ? '⚡ ' : '🟢 ') + fmtClipTime(t) + ' — ' + m.label + ' (' + m.detail + ')</button>';
     }).join('');
   showEl(wrap, true);
   wrap.querySelectorAll('[data-clip-moment]').forEach(function(btn){
@@ -8044,28 +8464,180 @@ function renderClipMarkers(){
     });
   });
 }
-/* v2.7.0: Solo double-check. Re-runs the deep analysis on the stored
- * frames and compares the top fault with the first pass. runDeepAnalysis
- * is deterministic on the same frames, so agreement confirms a stable
- * verdict; disagreement means the rep was borderline — retake advised.
- * The FIRST report stays canonical (restored after the comparison). */
+/* ================= AI self-check + auto slow-mo (v3.0.0) =================
+ * SELF-CHECK. The v2.7.0 double-check re-ran the SAME deterministic
+ * analysis on the SAME frames — it could only ever agree with itself,
+ * so its "both checks agree" proved nothing. The v3.0.0 self-check is a
+ * genuinely different second measurement of the stored frames:
+ *   Pass A = the report itself (every tripped frame counts).
+ *   Pass B = per-rep majority: a fault only counts for a rep when it
+ *            tripped in at least 40% of that rep's measured frames.
+ * A fault that is really there survives both aggregations; a marginal
+ * one (a few scattered frames) does not — and then the honest answer
+ * is "too close to call", not a confident fix. When both passes name
+ * the same top fault, the fault's key angle (median over the reps that
+ * produced it) must also match within tolerance. */
+var SELF_CHECK_METRIC = { overstride: 'shinReach', earlyRise: 'lean', tallPosture: 'lean',
+  hingeBack: 'lean', elbowShape: 'elbow', thighSep: 'thighSep',
+  footRecovery: 'kneeMin', squatDepth: 'kneeMin', squatKnee: 'kneeMin' };
+var SELF_CHECK_TOL = { overstride: 0.03, earlyRise: 6, tallPosture: 6, hingeBack: 6,
+  elbowShape: 8, thighSep: 8, footRecovery: 8, squatDepth: 8, squatKnee: 8 };
+function selfCheckPassA(report){
+  var top = report && report.faultList && report.faultList[0];
+  if(!top) return { topCheck: null, angle: null };
+  var key = SELF_CHECK_METRIC[top.check];
+  var angle = null;
+  if(key){
+    var samples = [];
+    (report.reps || []).forEach(function(r){ if(r.tripCounts && r.tripCounts[top.check]) samples = samples.concat(r.samples || []); });
+    angle = medianOfSamples(samples, key);
+  }
+  return { topCheck: top.check, angle: angle };
+}
+function selfCheckPassB(frames){
+  var reps = segmentReps(frames || []);
+  var votes = {}, angleSamples = {};
+  reps.forEach(function(r){
+    var denom = Math.max(1, (r.samples || []).length);
+    Object.keys(r.tripCounts || {}).forEach(function(check){
+      if(r.tripCounts[check] / denom >= 0.4){
+        votes[check] = (votes[check] || 0) + 1;
+        angleSamples[check] = (angleSamples[check] || []).concat(r.samples || []);
+      }
+    });
+  });
+  var top = null, best = 0;
+  Object.keys(votes).forEach(function(c){ if(votes[c] > best){ best = votes[c]; top = c; } });
+  if(!top) return { topCheck: null, angle: null };
+  var key = SELF_CHECK_METRIC[top];
+  return { topCheck: top, angle: key ? medianOfSamples(angleSamples[top] || [], key) : null };
+}
+function compareSelfCheck(a, b){
+  if(!a.topCheck && !b.topCheck) return 'agree';
+  if(!a.topCheck || !b.topCheck) return 'disagree';
+  if(a.topCheck !== b.topCheck) return 'disagree';
+  var tol = SELF_CHECK_TOL[a.topCheck];
+  if(tol !== undefined && typeof a.angle === 'number' && typeof b.angle === 'number' &&
+     Math.abs(a.angle - b.angle) > tol) return 'disagree';
+  return 'agree';
+}
+function verifySelfCheck(frames, report){
+  var a = selfCheckPassA(report), b = selfCheckPassB(frames);
+  return { status: compareSelfCheck(a, b), topCheck: a.topCheck || b.topCheck || null,
+    passA: a, passB: b,
+    angleDelta: (typeof a.angle === 'number' && typeof b.angle === 'number') ? Math.abs(a.angle - b.angle) : null };
+}
+function renderSelfCheck(sc){
+  var res = $('aiSoloCheckResult');
+  if(!res || !sc) return;
+  var nameA = sc.passA.topCheck ? (CHECK_LABEL[sc.passA.topCheck] || sc.passA.topCheck) : 'clean';
+  var nameB = sc.passB.topCheck ? (CHECK_LABEL[sc.passB.topCheck] || sc.passB.topCheck) : 'clean';
+  if(sc.status === 'agree' && sc.topCheck){
+    var key = SELF_CHECK_METRIC[sc.topCheck];
+    var detail = (key && sc.angleDelta !== null)
+      ? ' Key angle matched within ' + (key === 'shinReach' ? sc.angleDelta.toFixed(2) : Math.round(sc.angleDelta) + '°') + '.'
+      : '';
+    res.textContent = 'AI double-checked ✓ — a second, stricter pass over your reps agrees: ' +
+      (CHECK_LABEL[sc.topCheck] || sc.topCheck) + '.' + detail;
+  } else if(sc.status === 'agree'){
+    res.textContent = 'AI double-checked ✓ — a second, stricter pass agrees: no repeated fault stood out. Clean run.';
+  } else {
+    res.textContent = 'Too close to call — the double-check didn\u2019t agree (' + nameA + ' vs ' + nameB +
+      '), so don\u2019t trust a single fix from this one. Film again side-on, full body in frame.';
+  }
+}
 function soloDoubleCheck(){
   var res = $('aiSoloCheckResult');
-  function say(t){ if(res) res.textContent = t; }
-  var first = AI.deepReport;
-  if(!first || !AI.deep.frames1.length){ say('Record a rep first, then double-check it.'); return; }
-  say('Re-checking…');
-  runDeepAnalysis().then(function(second){
-    var f1 = first.faultList && first.faultList[0], f2 = second.faultList && second.faultList[0];
-    var msg;
-    if(!f1 && !f2) msg = 'Both checks agree — no repeated fault stood out. Clean run.';
-    else if(f1 && f2 && f1.check === f2.check) msg = 'Both checks agree — ' + f1.fault + '.';
-    else msg = 'Checks disagree (' + (f1 ? f1.fault : 'clean') + ' vs ' + (f2 ? f2.fault : 'clean') + ') — consider one more rep.';
-    AI.deepReport = first;
-    renderDeepReport(first);
-    renderLatestFix();
-    say(msg);
+  if(!AI.deepReport || !AI.deep.frames1.length){ if(res) res.textContent = 'Record a rep first, then double-check it.'; return; }
+  var sc = verifySelfCheck(AI.deep.frames1, AI.deepReport);
+  AI.selfCheck = sc;
+  renderSelfCheck(sc);
+}
+/* AUTO SLOW-MO. A joint that jumps more than half a torso length
+ * between two pose samples has moved too fast for the sampling rate to
+ * track honestly (FAST_DISP, in torso units per sample interval). At
+ * capture time the clip slows to 0.25x through such a stretch, which
+ * gives the pose engine ~4x more samples of the same motion before it
+ * is scored; in replay, fast segments and the worst-scoring moment
+ * auto-slow with the reason on screen. Nothing here invents motion
+ * data — displacement is measured between consecutive pose results. */
+var FAST_DISP = 0.5;
+var DISP_JOINTS = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
+function maxJointDisp(lmA, lmB){
+  if(!lmA || !lmB) return 0;
+  function mid(p, q){ return (p && q) ? { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 } : null; }
+  var sh = mid(lmB[11], lmB[12]), hip = mid(lmB[23], lmB[24]);
+  if(!sh || !hip) return 0;
+  var torso = Math.hypot(sh.x - hip.x, sh.y - hip.y);
+  if(torso < 0.04) return 0;
+  var max = 0;
+  DISP_JOINTS.forEach(function(i){
+    var a = lmA[i], b = lmB[i];
+    if(!a || !b) return;
+    if((a.visibility !== undefined && a.visibility <= 0.5) || (b.visibility !== undefined && b.visibility <= 0.5)) return;
+    var d = Math.hypot(a.x - b.x, a.y - b.y) / torso;
+    if(d > max) max = d;
   });
+  return max;
+}
+function findFastSegments(frames, startT){
+  var segs = [], cur = null, gap = 0;
+  (frames || []).forEach(function(fr){
+    if(!fr || typeof fr.disp !== 'number') return;
+    if(cur && fr.t - cur.endT > 400){ if(cur.count >= 2) segs.push(cur); cur = null; gap = 0; }
+    if(fr.disp > FAST_DISP){
+      if(!cur) cur = { startT: fr.t, endT: fr.t, peak: fr.disp, count: 1 };
+      else { cur.endT = fr.t; if(fr.disp > cur.peak) cur.peak = fr.disp; cur.count++; }
+      gap = 0;
+    } else if(cur){
+      gap++;
+      if(gap > 1){ if(cur.count >= 2) segs.push(cur); cur = null; gap = 0; }
+    }
+  });
+  if(cur && cur.count >= 2) segs.push(cur);
+  return segs.map(function(s){
+    return { startSec: Math.max(0, (s.startT - startT) / 1000), endSec: Math.max(0, (s.endT - startT) / 1000),
+      peak: s.peak, startT: s.startT, endT: s.endT };
+  });
+}
+function showAutoSlowNote(text){
+  var el = $('aiAutoSlowNote');
+  if(el){ el.textContent = text; el.hidden = false; }
+}
+function hideAutoSlowNote(){
+  var el = $('aiAutoSlowNote');
+  if(el) el.hidden = true;
+}
+/* Replay watcher: while a reviewed clip plays back at normal speed,
+ * slow it to 0.25x inside fast segments and around the worst-scoring
+ * moment, and say why. If the user picks a speed themselves (slow
+ * review), the watcher never fights them — it only engages from 1x. */
+function setupReplayAutoSlow(){
+  var v = $('aiVideo');
+  if(!v) return;
+  var frames = AI.deep.frames1 || [];
+  var start = (AI.lastSession && AI.lastSession.startedAt) || 0;
+  var segs = findFastSegments(frames, start);
+  AI.fastSegments = segs;
+  var worstT = null, worstScore = Infinity;
+  frames.forEach(function(fr){
+    if(fr && fr.f && fr.score > 0 && fr.score < worstScore){ worstScore = fr.score; worstT = (fr.t - start) / 1000; }
+  });
+  v.ontimeupdate = function(){
+    if(AI.running || !AI.clipMode) return;
+    var t = v.currentTime || 0;
+    var inFast = segs.some(function(s){ return t >= s.startSec - 0.15 && t <= s.endSec + 0.35; });
+    var atWorst = worstT !== null && t >= worstT - 0.4 && t <= worstT + 0.8;
+    if(!v.paused && v.playbackRate === 1 && (inFast || atWorst)){
+      v.playbackRate = 0.25; AI.replayAutoSlowed = true;
+      showAutoSlowNote(inFast
+        ? 'Slowed down — this part moved too fast to track at full speed.'
+        : 'Slowed down — this is the moment that scored lowest, at quarter speed so you can see it.');
+    } else if(AI.replayAutoSlowed && !inFast && !atWorst){
+      v.playbackRate = 1; AI.replayAutoSlowed = false;
+      hideAutoSlowNote();
+    }
+  };
 }
 function renderSessionSummary(s){
   if(!s) return;
@@ -8176,6 +8748,8 @@ function startAI(reuseStream, opts){
   AI.session = { startedAt: Date.now(), reps: {}, faultCounts: {}, fixes: [], bestFrames: [] };
   AI.deep = { frames1: [], frames2: [], worst: null };
   AI.deepReport = null;
+  AI.prevDispLm = null; AI.lastDisp = null; AI.autoSlowed = false; AI.replayAutoSlowed = false; AI.fastSegments = [];
+  hideAutoSlowNote();
   var dr = $('aiDeepReport'); if(dr) dr.innerHTML = '';
   AI.hist = []; AI.state = 'none'; AI.lastCallout = 0; AI.lastFixKey = '';
   AI.squatPhase = 'up'; AI.squatDip = 0;
@@ -8301,6 +8875,18 @@ function startAI(reuseStream, opts){
       if(!AI.running) return;
       if(v1 && v1.readyState >= 2 && AI.poseA) AI.poseA.send({ image: v1 }).catch(function(){});
       if(useDual && v2 && v2.readyState >= 2 && AI.poseB) AI.poseB.send({ image: v2 }).catch(function(){});
+      /* v3.0.0 auto slow-mo at capture: a stretch that moved too fast
+       * to track plays at 0.25x, giving the pose engine ~4x more
+       * samples of the same motion before it is scored; the speed
+       * restores itself when the motion settles. */
+      if(AI.clipMode && v1 && !v1.paused){
+        if(typeof AI.lastDisp === 'number' && AI.lastDisp > FAST_DISP && v1.playbackRate === 1){
+          v1.playbackRate = 0.25; AI.autoSlowed = true;
+          showAutoSlowNote('Slowed down — this part moved too fast to track at full speed, so the clip is playing at quarter speed while the AI measures it.');
+        } else if(AI.autoSlowed && (typeof AI.lastDisp !== 'number' || AI.lastDisp <= FAST_DISP)){
+          v1.playbackRate = 1; AI.autoSlowed = false; hideAutoSlowNote();
+        }
+      }
     }, 150);
     setText('aiSeeing', useDual ? 'Watching both cameras…' : 'Watching — move into frame.');
   }
@@ -8592,6 +9178,9 @@ window.TrackAIGesture = { countFingers: countFingers, isFrontal: isFrontal,
   tick: gestureTick, setStatus: setGestureStatus, bestHandCount: bestHandCount };
 window.TrackAIDeep = { segmentReps: segmentReps, buildDeepReport: buildDeepReport, pickVideos: pickVideos, absorbFrame: absorbFrame };
 window.TrackAISkeleton = { drawSkeleton: drawSkeleton, skelFaultJoints: skelFaultJoints, drawLiveSkeleton: drawLiveSkeleton, drawLiveSkeleton2: drawLiveSkeleton2 };
+/* v3.0.0: self-check + auto slow-mo (test hooks + honest logic, shared). */
+window.TrackAISelfCheck = { verify: verifySelfCheck, compare: compareSelfCheck,
+  findFastSegments: findFastSegments, maxJointDisp: maxJointDisp, FAST_DISP: FAST_DISP };
 
 initAI();
 })();

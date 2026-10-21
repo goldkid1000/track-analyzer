@@ -322,6 +322,7 @@ var drawEma = 0;
  * inference; the label in the UI says exactly this. */
 var rigFpsMode = 120;
 var lastDrawT = 0;
+var lastDrawWallT = 0;
 function setRigFpsMode(m){
   m = Number(m);
   rigFpsMode = (m === 60) ? 60 : 120;
@@ -329,6 +330,15 @@ function setRigFpsMode(m){
 }
 function getRigFpsMode(){ return rigFpsMode; }
 var inferTimes = [];
+/* v3.0.0: pure fps snapshot against an explicit clock — the logic the
+ * honesty tests exercise. infer counts only timestamps inside the last
+ * second; draw is the EMA while frames are actually landing, else 0. */
+function computeFps(nowMs){
+  var infer = 0;
+  for(var i = 0; i < inferTimes.length; i++) if(nowMs - inferTimes[i] <= 1000) infer++;
+  var draw = (lastDrawWallT && nowMs - lastDrawWallT <= 500) ? Math.round(drawEma || 0) : 0;
+  return { draw: draw, infer: infer };
+}
 var inferTimer = null;
 var inferIdx = 0;
 var inferBusy = false;
@@ -461,6 +471,7 @@ function interpHandStore(display, prev, target, alpha){
  * results at the display refresh rate. If no fresh inference has
  * landed in 600ms, the feed is frozen/black — clear the rig instead of
  * drawing a stale pose floating on a black screen. */
+var RIG_FADE_MS = 220; /* v3.0.0: dropout fade window (see below) */
 function advanceRigInterp(rig, nowMs){
   if(!rig.hasTarget) return;
   var now = nowMs === undefined ? Date.now() : nowMs;
@@ -478,10 +489,34 @@ function advanceRigInterp(rig, nowMs){
     alpha = (now - rig.prevT) / span;
     if(alpha < 0) alpha = 0;
     if(alpha > 1) alpha = 1;
+    /* v3.0.0: smoothstep easing — constant-velocity interpolation made
+     * the rig lurch at every inference boundary (full speed, dead stop,
+     * full speed). Easing removes the step while still landing exactly
+     * mid-segment at alpha 0.5 and on the target at alpha 1. */
+    alpha = alpha * alpha * (3 - 2 * alpha);
   }
   interpPoseStore(rig.poseDisplay, rig.posePrev, rig.poseTarget, alpha);
   interpHandStore(rig.handDisplay[0], rig.handPrev[0], rig.handTarget[0], alpha);
   interpHandStore(rig.handDisplay[1], rig.handPrev[1], rig.handTarget[1], alpha);
+  /* v3.0.0: dropout fade. A joint the newest inference lost (occluded
+   * for a frame or two) used to vanish the same frame — the rig popped.
+   * It now holds its last interpolated position for up to RIG_FADE_MS
+   * while paintRig fades its opacity to zero, then it is gone. Joints
+   * the target still sees clear their fade stamp. */
+  for(var i = 0; i < 33; i++){
+    if(rig.poseTarget.has[i]){ rig.poseDisplay.unseen[i] = 0; continue; }
+    if(!rig.posePrev.has[i]) continue;
+    if(!rig.poseDisplay.unseen[i]) rig.poseDisplay.unseen[i] = now;
+    if(now - rig.poseDisplay.unseen[i] <= RIG_FADE_MS){
+      rig.poseDisplay.has[i] = 1;
+      rig.poseDisplay.x[i] = rig.posePrev.x[i];
+      rig.poseDisplay.y[i] = rig.posePrev.y[i];
+      rig.poseDisplay.v[i] = rig.posePrev.v[i];
+    } else {
+      rig.poseDisplay.has[i] = 0;
+      rig.poseDisplay.unseen[i] = 0;
+    }
+  }
 }
 /* Where the video frame actually sits inside the canvas.
  * The video uses object-fit: contain (full frame visible, letterboxed),
@@ -540,30 +575,64 @@ function paintRig(rig){
   function MX(x){ return x * map.mx + map.bx; }
   function MY(y){ return y * map.my + map.by; }
   var i, a, b, x1, y1, x2, y2;
+  /* v3.0.0 rig rendering: tapered, proportionate bones (torso + thigh
+   * thickest, forearms + feet thinnest — one uniform 3px stick figure
+   * read as "terrible"), and per-joint opacity from the model's own
+   * visibility: a joint the model is unsure about FAINTS instead of
+   * drawing at full strength in a guessed place, and a joint in its
+   * dropout-fade window fades to zero. Draw order: bones, joints,
+   * head marker, hands. */
+  var wf = Math.max(0.85, Math.min(1.5, Math.min(cw, ch) / 320));
+  function jointAlpha(idx){
+    var v = rig.poseDisplay.v[idx];
+    var al = (v === undefined || v === null) ? 1 : (v <= 0.5 ? 0.35 : 0.45 + 0.55 * Math.min(1, (v - 0.5) / 0.4));
+    var un = rig.poseDisplay.unseen[idx];
+    if(un){ var f = 1 - (n - un) / RIG_FADE_MS; al *= Math.max(0, Math.min(1, f)); }
+    return al;
+  }
+  function boneWidth(a2, b2){
+    var lo = Math.min(a2, b2), hi = Math.max(a2, b2);
+    if(lo === 11 && hi === 12) return 4.5;                    // shoulders
+    if(lo === 23 && hi === 24) return 4.5;                    // hips
+    if(hi === 23 || hi === 24) return 4.5;                    // torso sides
+    if((lo === 23 && hi === 25) || (lo === 24 && hi === 26)) return 4.5; // thighs
+    if((lo === 25 && hi === 27) || (lo === 26 && hi === 28)) return 3.5; // shins
+    if((lo === 11 && hi === 13) || (lo === 12 && hi === 14)) return 3.5; // upper arms
+    if((lo === 13 && hi === 15) || (lo === 14 && hi === 16)) return 2.75; // forearms
+    if(hi >= 27) return 2.5;                                  // feet
+    return 3;
+  }
   // Pose bones (face bones skipped — the face is one head marker, below).
-  ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineCap = 'round';
   for(i = 0; i < POSE_BONES.length; i++){
     a = POSE_BONES[i][0]; b = POSE_BONES[i][1];
     if(a < 11 && b < 11) continue;
     if(rig.poseDisplay.has[a] && rig.poseDisplay.has[b]){
+      ctx.globalAlpha = Math.min(jointAlpha(a), jointAlpha(b));
+      ctx.lineWidth = boneWidth(a, b) * wf;
       ctx.beginPath();
       ctx.moveTo(MX(rig.poseDisplay.x[a]), MY(rig.poseDisplay.y[a]));
       ctx.lineTo(MX(rig.poseDisplay.x[b]), MY(rig.poseDisplay.y[b]));
       ctx.stroke();
     }
   }
+  ctx.globalAlpha = 1;
   // Pose joints: red = joint to fix, green = looked good.
   // Face joints (0-10) get NO dots — they bunch into a blob.
   for(i = 11; i < 33; i++){
     if(!rig.poseDisplay.has[i]) continue;
     x1 = MX(rig.poseDisplay.x[i]); y1 = MY(rig.poseDisplay.y[i]);
     var isFault = rig.faultJoints.indexOf(i) !== -1;
+    var jr = isFault ? 9 : ((i === 27 || i === 28 || i === 15 || i === 16) ? 4 : 5);
+    ctx.globalAlpha = jointAlpha(i);
     ctx.beginPath();
-    ctx.arc(x1, y1, isFault ? 9 : 5, 0, Math.PI * 2);
+    ctx.arc(x1, y1, jr, 0, Math.PI * 2);
     ctx.fillStyle = isFault ? '#ff5c5c' : '#3ddc97';
     ctx.fill();
     if(isFault){ ctx.strokeStyle = '#ffd23d'; ctx.lineWidth = 2; ctx.stroke(); }
+    else { ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1.25; ctx.stroke(); }
   }
+  ctx.globalAlpha = 1;
   // One small head marker from the visible face joints (nose, eyes,
   // ears). No marker at all when the face is not seen (back view).
   var facePts = [];
@@ -620,6 +689,7 @@ function frame(ts){
   if(lastDrawT && ts - lastDrawT < minInterval) return;
   var drawDt = lastDrawT ? (ts - lastDrawT) : dt;
   lastDrawT = ts;
+  lastDrawWallT = Date.now(); /* v3.0.0: wall-clock of the last drawn frame (fps honesty) */
   /* v2.2.0: draw fps (EMA) + interpolate between the last two
    * inference results at the display refresh rate, so the rig glides
    * at up to 120Hz on ProMotion instead of jumping pose to pose. */
@@ -644,7 +714,11 @@ function ensurePose(){
   if(poseInst) return poseInst;
   if(!window.Pose) throw new Error('Pose not available');
   var p = new Pose({ locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/' + f; } });
-  p.setOptions({ modelComplexity: 0, smoothLandmarks: false, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+  /* v3.0.0: smoothLandmarks ON — MediaPipe's own temporal filter is the
+   * first line of defence against rig jitter; the draw loop's eased
+   * interpolation (below) is the second. It used to be off everywhere,
+   * so every inference's raw noise drew straight onto the athlete. */
+  p.setOptions({ modelComplexity: 0, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
   p.onResults(function(res){
     var w = poseWaiters.shift();
     if(w) w.resolve(res && res.poseLandmarks);
@@ -991,11 +1065,21 @@ window.TrackRig = {
     }
     return out;
   },
-  /* v2.2.0: live fps — draw = rig redraw rate (display refresh,
-   * up to 120Hz on ProMotion), infer = successful inferences in the
-   * last second, all feeds combined. */
+  /* Live fps — draw = rig redraw rate (display refresh, up to 120Hz
+   * on ProMotion), infer = successful inferences in the last second,
+   * all feeds combined.
+   * v3.0.0 HONESTY FIX: the old getFps returned inferTimes.length, but
+   * that array was only pruned inside the inference success path — the
+   * moment inference stalled (person left the frame, a send timed out),
+   * pruning stopped too and the line froze at its last value forever,
+   * claiming poses were still landing when none were. Both numbers are
+   * now computed against the wall clock at read time: stale inference
+   * timestamps never count, and the draw rate reads 0 once no frame
+   * has been drawn for half a second. */
   getFps: function(){
-    return { draw: Math.round(drawEma || 0), infer: inferTimes.length };
+    var now = Date.now();
+    while(inferTimes.length && now - inferTimes[0] > 1000) inferTimes.shift();
+    return computeFps(now);
   },
   setRigFpsMode: setRigFpsMode,
   getRigFpsMode: getRigFpsMode,
@@ -1020,7 +1104,11 @@ window.TrackRig = {
     handsMinScore: HANDS_MIN_SCORE,
     registeredKeys: function(){ var ks = []; for(var k in rigByKey) ks.push(k); return ks; },
     getRigByKey: function(key){ return rigByKey[key] || null; },
-    getQuality: function(){ return { interval: quality.interval, inputWidth: quality.inputWidth, steppedDown: quality.steppedDown }; }
+    getQuality: function(){ return { interval: quality.interval, inputWidth: quality.inputWidth, steppedDown: quality.steppedDown }; },
+    /* v3.0.0 fps honesty hooks */
+    computeFps: computeFps,
+    noteInfer: function(ts){ inferTimes.push(ts); },
+    setDrawState: function(ema, wallT){ drawEma = ema; lastDrawWallT = wallT; }
   }
 };
 })();
