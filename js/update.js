@@ -1,4 +1,4 @@
-/* Track Analyzer — update system (v3.0.0)
+/* Track Analyzer — update system (v3.1.0)
  *
  * Tenno Vault-style: visible version, What's New panel, Check for updates,
  * and an update banner. The banner fires ONLY when version.json reports a
@@ -47,9 +47,10 @@
  */
 (function(){
 'use strict';
-var VERSION = '3.0.0';
+var VERSION = '3.1.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "3.1.0", date: "2026-10-22", notes: ["Real-video fix pass, tested on an actual block-start clip: side-view starts now measure. The camera sees your near leg clearly and your far leg barely — the analyzer used to demand both, so a clean side-on start scored nothing at all. It now measures the leg it can see and says so.", "Subject lock: the analysis stays on YOUR athlete. Someone crossing in the background — or the camera 'finding' a person in the scenery after you leave the frame — is set aside, not measured.", "Clean endings: when you run out of frame, the start still counts, and the report says when you left (\"left the frame at ~4.2s\") and how much of the clip was really measured.", "Starts register both ways now — driving out to the left counts the same as to the right — and the push out of the blocks is read as part of the start instead of being split into fake squat and hinge reps.", "Every deep check now ends with an analysis-quality line: frames measured, frames set aside, and a camera tip when the yield was low."] },
   { version: "3.0.0", date: "2026-10-21", notes: [
     "Photo check fixed: markers now land on the right body part — front knee means your actual front leg, on either side. Photos where one side is hidden still get measured instead of a dead end, a joint that isn't clear is named instead of marked at a guessed spot, and picking a second photo while the first analyzes queues it instead of losing it.",
     "AI double-checked ✓: after every analysis, a second stricter pass re-measures your reps. When the two passes agree, you see the check mark. When they don't, the app says “too close to call” and asks for a side-on retake instead of presenting a fix it isn't sure about.",

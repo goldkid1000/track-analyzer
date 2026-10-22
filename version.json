@@ -1,13 +1,12 @@
 {
   "notes": [
-    "Photo check fixed: markers now land on the right body part — front knee means your actual front leg, on either side. Photos where one side is hidden still get measured instead of a dead end, a joint that isn't clear is named instead of marked at a guessed spot, and picking a second photo while the first analyzes queues it instead of losing it.",
-    "AI double-checked ✓: after every analysis, a second stricter pass re-measures your reps. When the two passes agree, you see the check mark. When they don't, the app says “too close to call” and asks for a side-on retake instead of presenting a fix it isn't sure about.",
-    "Auto slow-mo: when part of a rep moves too fast to track, clip analysis slows that stretch to quarter speed while it measures, and replay slows down on its own at fast parts and at your lowest-scoring moment — with the reason on screen.",
-    "Smoother skeleton: the rig now uses the pose model's own landmark smoothing plus eased motion, tapered bones, and joints that fade when the camera loses them — no more popping, snapping, or a joint sitting in the wrong place.",
-    "Honest frame rate: the “Rig drawing / pose” line reports real measured rates and drops when tracking stalls — it used to freeze at its last value and claim poses were still landing.",
-    "Fixes are ranked by how far off they measured, not just how often they happened — the biggest problem comes first. Deep-check skeleton pictures now match your frame's real shape instead of stretching."
+    "Real-video fix pass, tested on an actual block-start clip: side-view starts now measure. The camera sees your near leg clearly and your far leg barely — the analyzer used to demand both, so a clean side-on start scored nothing at all. It now measures the leg it can see and says so.",
+    "Subject lock: the analysis stays on YOUR athlete. Someone crossing in the background — or the camera 'finding' a person in the scenery after you leave the frame — is set aside, not measured.",
+    "Clean endings: when you run out of frame, the start still counts, and the report says when you left (\"left the frame at ~4.2s\") and how much of the clip was really measured.",
+    "Starts register both ways now — driving out to the left counts the same as to the right — and the push out of the blocks is read as part of the start instead of being split into fake squat and hinge reps.",
+    "Every deep check now ends with an analysis-quality line: frames measured, frames set aside, and a camera tip when the yield was low."
   ],
   "notify": true,
-  "updated": "2026-10-21",
-  "version": "3.0.0"
+  "updated": "2026-10-22",
+  "version": "3.1.0"
 }

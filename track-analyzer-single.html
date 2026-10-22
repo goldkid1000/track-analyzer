@@ -5392,7 +5392,7 @@ window.TrackDual = {
 
 </script>
   <script>
-/* Track Analyzer — update system (v3.0.0)
+/* Track Analyzer — update system (v3.1.0)
  *
  * Tenno Vault-style: visible version, What's New panel, Check for updates,
  * and an update banner. The banner fires ONLY when version.json reports a
@@ -5441,9 +5441,10 @@ window.TrackDual = {
  */
 (function(){
 'use strict';
-var VERSION = '3.0.0';
+var VERSION = '3.1.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "3.1.0", date: "2026-10-22", notes: ["Real-video fix pass, tested on an actual block-start clip: side-view starts now measure. The camera sees your near leg clearly and your far leg barely — the analyzer used to demand both, so a clean side-on start scored nothing at all. It now measures the leg it can see and says so.", "Subject lock: the analysis stays on YOUR athlete. Someone crossing in the background — or the camera 'finding' a person in the scenery after you leave the frame — is set aside, not measured.", "Clean endings: when you run out of frame, the start still counts, and the report says when you left (\"left the frame at ~4.2s\") and how much of the clip was really measured.", "Starts register both ways now — driving out to the left counts the same as to the right — and the push out of the blocks is read as part of the start instead of being split into fake squat and hinge reps.", "Every deep check now ends with an analysis-quality line: frames measured, frames set aside, and a camera tip when the yield was low."] },
   { version: "3.0.0", date: "2026-10-21", notes: [
     "Photo check fixed: markers now land on the right body part — front knee means your actual front leg, on either side. Photos where one side is hidden still get measured instead of a dead end, a joint that isn't clear is named instead of marked at a guessed spot, and picking a second photo while the first analyzes queues it instead of losing it.",
     "AI double-checked ✓: after every analysis, a second stricter pass re-measures your reps. When the two passes agree, you see the check mark. When they don't, the app says “too close to call” and asks for a side-on retake instead of presenting a fix it isn't sure about.",
@@ -6416,9 +6417,9 @@ function setText(id, t){ var el = $(id); if(el) el.textContent = t; }
 function showEl(el, on){ if(el) el.hidden = !on; }
 function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
 function median(vals){ var a = vals.slice().sort(function(x, y){ return x - y; }); return a[Math.floor(a.length / 2)]; }
-function band(v, min, max, fall){ if(v >= min && v <= max) return 100; return clamp(100 - (v < min ? min - v : v - max) / fall * 100, 0, 100); }
-function floorS(v, min, fall){ return v >= min ? 100 : clamp(100 - (min - v) / fall * 100, 0, 100); }
-function ceilS(v, max, fall){ return v <= max ? 100 : clamp(100 - (v - max) / fall * 100, 0, 100); }
+function band(v, min, max, fall){ if(typeof v !== 'number' || !isFinite(v)) return NaN; if(v >= min && v <= max) return 100; return clamp(100 - (v < min ? min - v : v - max) / fall * 100, 0, 100); }
+function floorS(v, min, fall){ if(typeof v !== 'number' || !isFinite(v)) return NaN; return v >= min ? 100 : clamp(100 - (min - v) / fall * 100, 0, 100); }
+function ceilS(v, max, fall){ if(typeof v !== 'number' || !isFinite(v)) return NaN; return v <= max ? 100 : clamp(100 - (v - max) / fall * 100, 0, 100); }
 /* v2.9.0: CSS animations already honor prefers-reduced-motion (blanket
  * rule in app.css), but JS-driven motion did not — the runway loop and
  * the smooth scroll-into-view ran at full motion regardless. */
@@ -6450,6 +6451,9 @@ var AI = {
   lastClassic: null, lastTripped: null, lastGuideIssue: '',
   announcingUntil: 0,
   deep: { frames1: [], frames2: [], worst: null },
+  /* v3.1.0: subject lock + analysis quality (real-video fix pass). */
+  subject: null, subjectGoneAt: null, startDir: 0, lastSetT: -1e9,
+  quality: null,
   deepReport: null, lastSession: null,
   frameAnnotations: {}, frameMarksHidden: {},
   gesture: { hands: null, handsFailed: false, lastCount: -1, holdKind: '', holdCount: 0, timer: null,
@@ -6939,57 +6943,165 @@ function makePose(onResult){
   pose.onResults(onResult);
   return pose;
 }
+/* ================= v3.1.0 subject lock + quality =================
+ * BlazePose returns ONE pose per frame with no identity. On real
+ * clips it happily switches to a background passerby — and after the
+ * athlete leaves the frame it "finds" people in background clutter
+ * (the owner's test clip: 6 straight frames of a pose with a 0.04
+ * torso where the athlete's was 0.11-0.14). gatePose() is the lock:
+ * the first athlete-sized pose acquires the subject; later poses
+ * must be continuous with the subject's predicted position AND a
+ * similar size, or they are set aside as someone/something else.
+ * A pose whose torso is under 5% of frame height is never acquired:
+ * at start-analysis distances that is clutter or a distant passerby. */
+function visOf(p){ return !p ? 0 : (p.visibility === undefined ? 1 : p.visibility); }
+function poseHipTorso(lm){
+  if(!lm || !lm[11] || !lm[23]) return null;
+  function midVis(a, b){
+    var pa = lm[a], pb = lm[b];
+    if(!pa || !pb) return null;
+    var va = visOf(pa), vb = visOf(pb);
+    if(va > 0.4 && vb > 0.4) return { x: (pa.x + pb.x) / 2, y: (pa.y + pb.y) / 2 };
+    return va >= vb ? { x: pa.x, y: pa.y } : { x: pb.x, y: pb.y };
+  }
+  var sh = midVis(11, 12), hip = midVis(23, 24);
+  if(!sh || !hip) return null;
+  return { hip: hip, sh: sh, torso: Math.hypot(sh.x - hip.x, sh.y - hip.y) };
+}
+function isAthleteSized(lm){
+  var pt = poseHipTorso(lm);
+  return !!pt && pt.torso >= 0.05;
+}
+function frameNowMs(){
+  if(AI.clipMode){
+    var v = $('aiVideo');
+    if(v && isFinite(v.currentTime)) return Math.round(v.currentTime * 1000);
+  }
+  return Date.now();
+}
+function noteSubjectMiss(){
+  var subj = AI.subject;
+  if(!subj) return;
+  subj.misses++;
+  var now = frameNowMs();
+  if(AI.subjectGoneAt == null && now - subj.t > 750) AI.subjectGoneAt = subj.t;
+  /* Live only: after 2.5s unseen, release the lock so a new athlete
+   * can step in. Clips keep the lock: the subject is the subject. */
+  if(!AI.clipMode && now - subj.t > 2500) AI.subject = null;
+}
+function gatePose(lm){
+  var q = AI.quality;
+  if(q) q.sampled++;
+  if(!lm){ noteSubjectMiss(); return null; }
+  if(q) q.detected++;
+  var pt = poseHipTorso(lm);
+  if(!pt || pt.torso < 0.05){ if(q) q.rejected++; noteSubjectMiss(); return null; }
+  var now = frameNowMs();
+  var subj = AI.subject;
+  if(subj){
+    var dt = Math.max(0.05, (now - subj.t) / 1000);
+    var px = subj.hip.x + subj.vel.x * dt, py = subj.hip.y + subj.vel.y * dt;
+    var jump = Math.hypot(pt.hip.x - px, pt.hip.y - py);
+    var ratio = pt.torso / subj.torso;
+    if(jump > 0.30 || ratio < 0.45 || ratio > 2.2){ if(q) q.rejected++; noteSubjectMiss(); return null; }
+    var vx = (pt.hip.x - subj.hip.x) / dt, vy = (pt.hip.y - subj.hip.y) / dt;
+    var sp = Math.hypot(vx, vy);
+    if(sp > 1.5){ vx *= 1.5 / sp; vy *= 1.5 / sp; }
+    subj.vel = { x: vx, y: vy };
+    subj.hip = pt.hip; subj.torso = pt.torso; subj.t = now; subj.misses = 0;
+    if(q) q.accepted++;
+    return lm;
+  }
+  AI.subject = { hip: pt.hip, torso: pt.torso, t: now, vel: { x: 0, y: 0 }, misses: 0, firstT: now };
+  if(q) q.accepted++;
+  return lm;
+}
 function extractAI(lm){
-  var need = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
+  /* v3.1.0: side-aware, like the photo path. The old gate demanded
+   * BOTH knees and BOTH ankles above 0.58 visibility. On a side-view
+   * start (the clip sprinters actually upload) the far leg sits at
+   * 0.39-0.60 while the near leg reads 0.91-0.97 — so v3.0.0 rejected
+   * EVERY frame of the owner's real block-start clip (0 of 32 usable)
+   * and reported "no full reps". Now the visible side's leg chain
+   * carries the measurement; the far leg is used only when it is
+   * genuinely visible too. */
+  function chainVis(hipI, kneeI, ankI){ return Math.min(visOf(lm[hipI]), visOf(lm[kneeI]), visOf(lm[ankI])); }
+  var legVisL = chainVis(23, 25, 27), legVisR = chainVis(24, 26, 28);
+  var side = legVisL >= legVisR ? 'L' : 'R';
+  var legVis = Math.max(legVisL, legVisR), farLegVis = Math.min(legVisL, legVisR);
+  var shVis = Math.max(visOf(lm[11]), visOf(lm[12]));
+  var hipVis = Math.max(visOf(lm[23]), visOf(lm[24]));
   var missing = [];
-  var groups = { shoulders: [11, 12], hips: [23, 24], knees: [25, 26], ankles: [27, 28] };
-  Object.keys(groups).forEach(function(g){
-    if(groups[g].some(function(i){ var p = lm[i]; return !p || (p.visibility !== undefined && p.visibility <= 0.58); })) missing.push(g);
-  });
+  if(shVis <= 0.58 || hipVis <= 0.58) missing.push('upper body');
+  if(legVis <= 0.58) missing.push('legs');
   if(missing.length) return { missing: missing };
-  var sh = { x: (lm[11].x + lm[12].x) / 2, y: (lm[11].y + lm[12].y) / 2 };
-  var hip = { x: (lm[23].x + lm[24].x) / 2, y: (lm[23].y + lm[24].y) / 2 };
+  function midVis(a, b){
+    var pa = lm[a], pb = lm[b], va = visOf(pa), vb = visOf(pb);
+    if(va > 0.58 && vb > 0.58) return { x: (pa.x + pb.x) / 2, y: (pa.y + pb.y) / 2 };
+    return va >= vb ? { x: pa.x, y: pa.y } : { x: pb.x, y: pb.y };
+  }
+  var sh = midVis(11, 12), hip = midVis(23, 24);
   var torso = Math.hypot(sh.x - hip.x, sh.y - hip.y);
   if(torso < 0.04) return { missing: ['full body'] };
-  var facing = ((lm[0] && lm[0].visibility > 0.45) ? Math.sign(lm[0].x - sh.x) : 0) || 1;
-  function fwdThigh(hipP, kneeP){
-    if((kneeP.x - hipP.x) * facing <= 0) return 90;
-    var a = Math.abs(Math.atan2(kneeP.y - hipP.y, kneeP.x - hipP.x) * 180 / Math.PI);
-    return Math.min(a, 180 - a);
-  }
-  var mid = (lm[11].x + lm[12].x) / 2, cross = 0;
-  if((lm[15].x - mid) * (lm[11].x - mid) < 0) cross++;
-  if((lm[16].x - mid) * (lm[12].x - mid) < 0) cross++;
+  var hipC = { x: (lm[23].x + lm[24].x) / 2 };
+  var facing = (lm[0] && lm[0].x >= hipC.x) || Math.abs(lm[11].x - lm[12].x) < 0.01 && lm[23].x < 0.5 ? 1 : -1;
+  facing = (lm[0] && lm[0].x >= hipC.x) ? 1 : ((lm[23].x + lm[24].x) / 2 <= 0.5 ? 1 : -1);
+  var hipI = side === 'L' ? 23 : 24, kneeI = side === 'L' ? 25 : 26, ankI = side === 'L' ? 27 : 28;
+  var oHipI = side === 'L' ? 24 : 23, oKneeI = side === 'L' ? 26 : 25, oAnkI = side === 'L' ? 28 : 27;
+  var kneeNear = ang(lm[hipI], lm[kneeI], lm[ankI]);
+  var kneeFar = farLegVis > 0.58 ? ang(lm[oHipI], lm[oKneeI], lm[oAnkI]) : null;
+  var kneeFront = kneeFar === null ? kneeNear : Math.min(kneeNear, kneeFar);
+  var kneeRear = kneeFar === null ? kneeNear : Math.max(kneeNear, kneeFar);
+  function armChainVis(s2, e2, w2){ return Math.min(visOf(lm[s2]), visOf(lm[e2]), visOf(lm[w2])); }
+  var elbows = [];
+  if(armChainVis(11, 13, 15) > 0.58) elbows.push(ang(lm[11], lm[13], lm[15]));
+  if(armChainVis(12, 14, 16) > 0.58) elbows.push(ang(lm[12], lm[14], lm[16]));
+  var elbow = elbows.length ? elbows.reduce(function(a, b){ return a + b; }, 0) / elbows.length : NaN;
+  var bothWrists = visOf(lm[15]) > 0.58 && visOf(lm[16]) > 0.58;
+  var thighSep = kneeFar === null ? NaN
+    : Math.acos(clamp(((lm[25].x - hip.x) * (lm[26].x - hip.x) + (lm[25].y - hip.y) * (lm[26].y - hip.y)) /
+      (Math.hypot(lm[25].x - hip.x, lm[25].y - hip.y) * Math.hypot(lm[26].x - hip.x, lm[26].y - hip.y) || 1), -1, 1)) * 180 / Math.PI;
   return {
-    missing: [], torso: torso,
-    lean: Math.atan2(Math.abs(sh.x - hip.x), Math.abs(sh.y - hip.y)) * 180 / Math.PI,
-    elbow: (ang(lm[11], lm[13], lm[15]) + ang(lm[12], lm[14], lm[16])) / 2,
-    elbowL: ang(lm[11], lm[13], lm[15]), elbowR: ang(lm[12], lm[14], lm[16]),
-    kneeL: ang(lm[23], lm[25], lm[27]), kneeR: ang(lm[24], lm[26], lm[28]),
-    thigh: Math.min(fwdThigh(lm[23], lm[25]), fwdThigh(lm[24], lm[26])),
-    thighSep: ang(lm[25], hip, lm[26]),
-    shinReach: Math.max((lm[27].x - lm[25].x) * facing, (lm[28].x - lm[26].x) * facing) / torso,
-    armSplit: Math.abs(lm[15].y - lm[16].y) / torso,
-    crossing: cross / 2,
-    hipLift: (sh.y - hip.y) / torso,
+    missing: [],
+    side: side, legVis: legVis,
+    lean: Math.atan2(Math.abs(sh.x - hip.x), Math.max(0.02, hip.y - sh.y)) * 180 / Math.PI,
+    kneeNear: kneeNear, kneeFront: kneeFront, kneeRear: kneeRear,
+    kneeL: kneeNear, kneeR: kneeFar === null ? kneeNear : kneeFar,
+    elbow: elbow,
     hipX: hip.x, hipY: hip.y,
+    torso: torso,
+    hipLift: (1 - hip.y),
+    thighSep: thighSep,
+    fwdThigh: ((lm[kneeI].x - hip.x) * facing) / torso,
+    shinReach: ((lm[ankI].x - lm[kneeI].x) * facing) / torso,
+    armSplit: bothWrists ? Math.abs(lm[15].y - lm[16].y) / torso : NaN,
+    armHeight: Math.abs(((lm[15].y + lm[16].y) / 2) - sh.y) / torso,
+    crossing: (bothWrists && visOf(lm[11]) > 0.58 && visOf(lm[12]) > 0.58)
+      ? ((lm[15].x - lm[11].x) + (lm[12].x - lm[16].x)) / torso : NaN,
     wristLY: lm[15].y, wristRY: lm[16].y,
-    kneeX: (lm[25].x + lm[26].x) / 2, ankleX: (lm[27].x + lm[28].x) / 2,
-    sideRatio: Math.hypot(lm[11].x - lm[12].x, lm[11].y - lm[12].y) / torso
+    kneeX: lm[kneeI].x, ankleX: lm[ankI].x,
+    sideRatio: Math.abs(lm[11].x - lm[12].x) / (Math.abs(lm[11].y - lm[12].y) + 0.03)
   };
 }
-function classify(f, hist){
+function classify(f, hist, nowMs){
   if(!f || (f.missing && f.missing.length)) return 'none';
-  var now = Date.now();
+  var now = (typeof nowMs === 'number' && isFinite(nowMs)) ? nowMs : Date.now();
   hist.push({ t: now, f: f });
   while(hist.length && now - hist[0].t > 2000) hist.shift();
   if(hist.length < 3) return 'rest';
   var first = hist[0].f, last = f;
-  var dt = Math.max(0.2, (now - hist[0].t) / 1000);
-  var velX = (last.hipX - first.hipX) / dt;
   var hipYs = hist.map(function(h){ return h.f.hipY; });
   var hipRangeY = Math.max.apply(null, hipYs) - Math.min.apply(null, hipYs);
-  var velY = (last.hipY - first.hipY) / dt;
+  /* v3.1.0: velocity over the most recent ~0.5s, not the whole 2s
+   * history. Averaged over 2s, a block start's exit speed read ~0.1/s
+   * and could never clear the 0.3 block-start threshold — the start
+   * was unclassifiable even with clean frames. Arm excursion below
+   * still uses the full window (it is a range, not a velocity). */
+  var velFirst = first, velFirstT = hist[0].t;
+  for(var vi = hist.length - 1; vi >= 0; vi--){ if(now - hist[vi].t <= 500){ velFirst = hist[vi].f; velFirstT = hist[vi].t; } else break; }
+  var vdt = Math.max(0.1, (now - velFirstT) / 1000);
+  var velX = (last.hipX - velFirst.hipX) / vdt;
+  var velY = (last.hipY - velFirst.hipY) / vdt;
   var motion = Math.abs(velX) + Math.abs(velY);
   // Count vertical direction changes (drill bounce vs one squat cycle).
   var turns = 0;
@@ -6998,7 +7110,12 @@ function classify(f, hist){
     var d2 = hist[i].f.hipY - hist[i - 1].f.hipY;
     if((d1 > 0.004 && d2 < -0.004) || (d1 < -0.004 && d2 > 0.004)) turns++;
   }
-  var crouched = last.hipY > 0.55 && Math.min(last.kneeL, last.kneeR) < 140 && last.lean > 35;
+  /* v3.1.0: 'set' must not depend on absolute hip height — a
+   * ground-level camera puts set hips at ~0.41 of frame height, so
+   * hipY > 0.55 never fired and no start was ever recognised. Deep
+   * knee bend + forward lean is the set shape at any framing. */
+  var crouched = Math.min(last.kneeL, last.kneeR) < 140 && last.lean > 35 &&
+    (last.hipY > 0.55 || Math.min(last.kneeL, last.kneeR) < 120);
   /* v2.2.0: arm swings — hips near-still but the wrists travel a big
    * range over the 2s window. Without this, arm practice read as
    * "rest" (motion < 0.05) and produced "No full reps in this clip".
@@ -7016,7 +7133,20 @@ function classify(f, hist){
     armExc = Math.max(maxL - minL, maxR - minR) / last.torso;
   }
   if(motion < 0.05){ if(armExc > 0.3) return 'arm-swing'; return crouched ? 'set' : 'rest'; }
-  if(AI.state === 'set' && velX > 0.3) return 'block-start';
+  /* v3.1.0: starts go BOTH ways — the owner's clip drives LEFT
+   * (velX negative), which the old velX > 0.3 check could never see.
+   * Also reachable briefly after 'set': block extension can pass
+   * through squat/hinge shapes on the way out of the blocks. */
+  if((AI.state === 'set' || now - AI.lastSetT < 2500) && Math.abs(velX) > 0.25){
+    AI.startDir = velX > 0 ? 1 : -1;
+    return 'block-start';
+  }
+  /* v3.1.0: block extension is part of the start. On the owner's
+   * clip the push out of the blocks (hips rising, still ~no forward
+   * travel) read as separate "hip hinge" and "squat" reps, splitting
+   * one start into junk segments. Within 3s of a set, slow shapes
+   * stay 'set' until the drive actually starts. */
+  if(now - AI.lastSetT < 3000 && motion < 0.3) return 'set';
   if(hipRangeY > 0.10 && Math.abs(velX) < 0.15) return turns >= 4 ? 'drill' : 'squat';
   if(last.lean > 60 && Math.abs(velX) < 0.15 && Math.abs(last.wristLY - last.wristRY) > 0.05) return 'bench';
   if(last.lean > 45 && motion < 0.25) return 'hinge';
@@ -7137,7 +7267,7 @@ function updateGuideVideo(cr){
   list.innerHTML = '<a class="video" href="' + v[2] + '" target="_blank" rel="noopener"><div class="thumb"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></div><div><strong>Watch: how to fix this</strong><span>' + v[0] + ' · ' + v[1] + '</span></div></a>';
   list.hidden = false;
 }
-function onFrame(f, angle){
+function onFrame(f, angle, nowMs){
   if(angle !== 1) return; // state machine + reps run off angle 1 only
   /* v3.0.0 auto slow-mo: how far the fastest joint jumped since the
    * previous pose (torso units). Stored on every frame so the review
@@ -7149,8 +7279,8 @@ function onFrame(f, angle){
   }
   if(typeof disp === 'number') AI.lastDisp = disp;
   var prev = AI.state;
-  var activity = classify(f, AI.hist);
-  var now = Date.now();
+  var activity = classify(f, AI.hist, nowMs);
+  var now = (typeof nowMs === 'number' && isFinite(nowMs)) ? nowMs : Date.now();
   // Squat cycle tracking (hip dips then returns).
   if(activity === 'squat' && f && !f.missing){
     var base = AI.hist.length ? AI.hist[0].f.hipY : f.hipY;
@@ -7158,25 +7288,36 @@ function onFrame(f, angle){
     if(AI.squatPhase === 'up' && f.hipY - base > 0.08) AI.squatPhase = 'down';
     else if(AI.squatPhase === 'down' && f.hipY - base < 0.02){ AI.squatPhase = 'up'; AI.squatDip = 0; countRep('squat'); }
   }
+  if(activity === 'set') AI.lastSetT = now;
   if(activity !== prev){
     AI.state = activity; AI.stateSince = now;
     if(activity === 'sprint' || activity === 'block-start') AI.movingSince = now;
     if(activity === 'set') AI.setSince = now;
+    /* v3.1.0: a start that ends with the athlete leaving the frame
+     * still counts — there is no 'rest' after an exit. The rep is
+     * banked once the subject lock confirms the athlete is gone
+     * (checked below, since the exit confirms ~0.75s later). */
+    if((prev === 'sprint' || prev === 'block-start') && activity === 'none') AI.pendingExitRep = prev;
     // Rep completed: sprint/block-start ends back at rest.
     if(prev === 'sprint' && activity === 'rest' && now - AI.movingSince > 800) countRep('sprint');
     if(prev === 'block-start' && activity === 'rest') countRep('block-start');
     setText('aiSeeing', ACTIVITY_LABEL[activity] || activity);
     if(activity !== 'none' && activity !== 'rest') addBubble('<strong>Seeing:</strong> ' + (ACTIVITY_LABEL[activity] || activity));
   }
+  if(AI.pendingExitRep && AI.subjectGoneAt != null && now - AI.movingSince > 800){
+    countRep(AI.pendingExitRep);
+    AI.pendingExitRep = null;
+  }
   if(f && f.missing && f.missing.length){
     setText('aiCantSee', f.missing.join(', ') + ' — step back so your full body fits.');
     AI.prevDispLm = null; // gap in tracking — the next displacement would span it
-    AI.deep.frames1.push({ t: Date.now(), activity: 'none', score: 0, tripped: null, f: null, disp: disp });
+    AI.deep.frames1.push({ t: now, activity: 'none', score: 0, tripped: null, f: null, disp: disp });
     if(AI.deep.frames1.length > 900) AI.deep.frames1.shift();
     return;
   }
   if(!f) return;
   setText('aiCantSee', 'All key joints visible ✓');
+  if(AI.quality) AI.quality.scored++;
   var scored = scoreFrame(activity, f);
   setText('aiScore', scored.score ? scored.score + '%' : '—');
   if(scored.tripped) AI.lastTripped = scored.tripped;
@@ -7197,8 +7338,8 @@ function onFrame(f, angle){
       }
     }catch(e){}
   }
-  AI.deep.frames1.push({ t: Date.now(), activity: activity, score: scored.score, tripped: scored.tripped || null, disp: disp,
-    f: { lean: f.lean, kneeL: f.kneeL, kneeR: f.kneeR, elbow: f.elbow, thighSep: f.thighSep, shinReach: f.shinReach } });
+  AI.deep.frames1.push({ t: now, activity: activity, score: scored.score, tripped: scored.tripped || null, disp: disp,
+    f: { lean: f.lean, kneeL: f.kneeFront, kneeR: f.kneeRear, elbow: f.elbow, thighSep: f.thighSep, shinReach: f.shinReach } });
   if(AI.deep.frames1.length > 900) AI.deep.frames1.shift();
   // Live callout every ~5s while moving: praise + one fix.
   if((activity === 'sprint' || activity === 'block-start' || activity === 'squat' || activity === 'hinge' || activity === 'drill' || activity === 'bench' || activity === 'arm-swing') && now - AI.lastCallout > 5000){
@@ -7977,8 +8118,12 @@ function startWatching(){
       AI.poseA = makePose(function(res){
         var lm = res && res.poseLandmarks;
         AI.gesture.faceSeen = !!(lm && lm[0] && (lm[0].visibility === undefined || lm[0].visibility > 0.5));
-        if(lm){ AI.lastLandmarks1 = simplifyLm(lm); AI.lastFrontal = isFrontal(lm); AI.lastRawLm = lm; }
-        drawLiveSkeleton(lm || null);
+        /* v3.1.0: the skeleton follows the locked subject only —
+         * a passerby (or background clutter the model "finds") does
+         * not get drawn as if it were the athlete. */
+        var gated = gatePose(lm);
+        if(gated){ AI.lastLandmarks1 = simplifyLm(gated); AI.lastFrontal = isFrontal(gated); AI.lastRawLm = gated; }
+        drawLiveSkeleton(gated || null);
       });
     }catch(e){
       setText('aiSeeing', 'Analyzer didn\u2019t start \u2014 reload and try again.');
@@ -8172,8 +8317,30 @@ function buildDeepReport(reps, frames2count, opts){
     return line;
   });
   var span = reps.length ? Math.max(0, Math.round((reps[reps.length - 1].endT - reps[0].startT) / 1000)) : 0;
+  /* v3.1.0: honest per-analysis quality summary. Says how much of
+   * the clip was actually measurable, whether another person/object
+   * was set aside by the subject lock, and — for clips — when the
+   * athlete left the frame, so an empty tail is never silently
+   * analysed as if the athlete were still there. */
+  var qualityNote = '';
+  var qual = opts.quality || null;
+  if(qual && qual.sampled > 0){
+    var pctMeas = Math.round(100 * qual.scored / Math.max(1, qual.sampled));
+    qualityNote = 'Analysis quality: measured ' + qual.scored + ' of ' + qual.sampled +
+      ' frames (' + pctMeas + '%). Pose was found in ' + qual.detected + ' frames.';
+    if(qual.rejected > 0) qualityNote += ' ' + qual.rejected + ' frame' + (qual.rejected === 1 ? '' : 's') +
+      ' showed someone/something else and ' + (qual.rejected === 1 ? 'was' : 'were') + ' set aside — the analysis stayed on your athlete.';
+    if(qual.goneAt != null && qual.clipMode){
+      var goneS = Math.round(qual.goneAt / 100) / 10;
+      qualityNote += ' Your athlete left the frame at ~' + goneS + 's' +
+        (qual.clipSecs ? ' of the ' + (Math.round(qual.clipSecs * 10) / 10) + 's clip' : '') +
+        ' — only the part with the athlete in frame was measured.';
+    }
+    if(pctMeas < 40) qualityNote += ' That is a low yield — a higher, steadier camera a little further back usually measures far more of the start.';
+  }
   return {
     reps: reps, faultList: faultList, strengths: strengths, measurements: measurements,
+    qualityNote: qualityNote,
     totalReps: reps.length, spanSecs: span, ref: opts.ref || '',
     frames2count: frames2count || 0,
     best: opts.best || [], worst: opts.worst || null,
@@ -8283,6 +8450,7 @@ function renderDeepReport(report){
   } else {
     html += '<h5>Fixes</h5><p>No repeated fault stood out in this clip.</p>';
   }
+  if(report.qualityNote) html += '<p class="ai-note">' + escHtml(report.qualityNote) + '</p>';
   html += '<p class="ai-note">' + escHtml(report.refNote) + '</p>';
   html += '<p class="ai-note">' + escHtml(report.dualNote) + '</p>';
   if(report.best.length){
@@ -8370,10 +8538,18 @@ function runDeepAnalysis(){
       var aBar = $('aiAnalyzeBar'); if(aBar) aBar.style.width = pct + '%';
       setText('aiAnalyzeDetail', 'Reps found so far: ' + state.reps.length + '. Camera 2 frames: ' + frames2count + '.');
       if(idx < frames1.length){ setTimeout(step, 0); return; }
+      var vidEl = $('aiVideo');
       var report = buildDeepReport(state.reps, frames2count, {
         ref: ref,
         best: AI.lastSession ? AI.lastSession.bestFrames : [],
-        worst: AI.deep.worst
+        worst: AI.deep.worst,
+        quality: AI.quality ? {
+          sampled: AI.quality.sampled, detected: AI.quality.detected,
+          accepted: AI.quality.accepted, rejected: AI.quality.rejected,
+          scored: AI.quality.scored, goneAt: AI.subjectGoneAt,
+          clipMode: AI.clipMode,
+          clipSecs: (vidEl && isFinite(vidEl.duration)) ? vidEl.duration : null
+        } : null
       });
       AI.deepReport = report;
       renderDeepReport(report);
@@ -8752,6 +8928,9 @@ function startAI(reuseStream, opts){
   hideAutoSlowNote();
   var dr = $('aiDeepReport'); if(dr) dr.innerHTML = '';
   AI.hist = []; AI.state = 'none'; AI.lastCallout = 0; AI.lastFixKey = '';
+  /* v3.1.0: fresh subject lock + quality counters per session. */
+  AI.subject = null; AI.subjectGoneAt = null; AI.startDir = 0; AI.lastSetT = -1e9; AI.pendingExitRep = null;
+  AI.quality = { sampled: 0, detected: 0, accepted: 0, rejected: 0, scored: 0 };
   AI.squatPhase = 'up'; AI.squatDip = 0;
   AI.mode = 'coaching';
   setText('aiRepCount', '0');
@@ -8781,9 +8960,10 @@ function startAI(reuseStream, opts){
       AI.poseA = makePose(function(res){
         var lm = res && res.poseLandmarks;
         AI.gesture.faceSeen = !!(lm && lm[0] && (lm[0].visibility === undefined || lm[0].visibility > 0.5));
-        if(lm){ AI.lastLandmarks1 = simplifyLm(lm); AI.lastFrontal = isFrontal(lm); AI.lastRawLm = lm; }
-        drawLiveSkeleton(lm || null);
-        if(AI.running) onFrame(lm ? extractAI(lm) : { missing: ['full body'] }, 1);
+        var gated = gatePose(lm);
+        if(gated){ AI.lastLandmarks1 = simplifyLm(gated); AI.lastFrontal = isFrontal(gated); AI.lastRawLm = gated; }
+        drawLiveSkeleton(gated || null);
+        if(AI.running) onFrame(gated ? extractAI(gated) : { missing: ['full body'] }, 1, frameNowMs());
       });
     }catch(e){ setText('aiSeeing', 'Analyzer didn’t start — reload and try again.'); return; }
     if(AI.clipMode){
@@ -8848,14 +9028,15 @@ function startAI(reuseStream, opts){
       try{
         AI.poseB = makePose(function(res){
           var lm = res && res.poseLandmarks;
+          if(lm && !isAthleteSized(lm)) lm = null;
           // Skeleton rig, driven by Camera 2, drawn ON the person in the
           // Camera 2 video — never a separate drawing.
           drawLiveSkeleton2(lm || null);
           if(lm){
             var ef = extractAI(lm);
             if(ef && (!ef.missing || !ef.missing.length)){
-              AI.deep.frames2.push({ t: Date.now(), activity: 'camera2', score: 0, tripped: null,
-                f: { lean: ef.lean, kneeL: ef.kneeL, kneeR: ef.kneeR, elbow: ef.elbow, thighSep: ef.thighSep, shinReach: ef.shinReach } });
+              AI.deep.frames2.push({ t: frameNowMs(), activity: 'camera2', score: 0, tripped: null,
+                f: { lean: ef.lean, kneeL: ef.kneeFront, kneeR: ef.kneeRear, elbow: ef.elbow, thighSep: ef.thighSep, shinReach: ef.shinReach } });
               if(AI.deep.frames2.length > 900) AI.deep.frames2.shift();
             }
           }
@@ -9176,6 +9357,9 @@ window.TrackAIAnnounce = { announce: announce, speakNow: announce };
 /* v2.8.2: merged into the TrackNotify above — was overwriting .clear()/.notifyDone() */
 window.TrackAIGesture = { countFingers: countFingers, isFrontal: isFrontal,
   tick: gestureTick, setStatus: setGestureStatus, bestHandCount: bestHandCount };
+window.TrackAIQuality = { extractAI: extractAI, gatePose: gatePose, poseHipTorso: poseHipTorso,
+  getQuality: function(){ return AI.quality; }, getSubject: function(){ return AI.subject; },
+  getGoneAt: function(){ return AI.subjectGoneAt; }, classify: classify };
 window.TrackAIDeep = { segmentReps: segmentReps, buildDeepReport: buildDeepReport, pickVideos: pickVideos, absorbFrame: absorbFrame };
 window.TrackAISkeleton = { drawSkeleton: drawSkeleton, skelFaultJoints: skelFaultJoints, drawLiveSkeleton: drawLiveSkeleton, drawLiveSkeleton2: drawLiveSkeleton2 };
 /* v3.0.0: self-check + auto slow-mo (test hooks + honest logic, shared). */

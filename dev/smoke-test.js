@@ -1230,14 +1230,98 @@ const W = sandbox;
       const report = W.TrackAIDeep.buildDeepReport(reps, 0, {});
       return report.faultList[0].check === 'overstride' && typeof report.faultList[0].severity === 'number';
     }catch(e){ return false; } })());
-  // Version stamps: 3.0.0 everywhere, single file rebuilt + carries the new code.
-  t('v3.0.0 version: changelog tops at 3.0.0 with notify:true',
+  /* ================= v3.1.0 ================= */
+  // Real-video fix pass. The owner's side-view block-start clip was
+  // the test case: far leg visibility 0.39-0.60 vs near leg 0.91+.
+  t('v3.1.0 extract: side view — far leg hidden, near leg carries the frame',
+    (() => { try{
+      const lm = sprintPose(0);
+      [24, 26, 28].forEach(i => { lm[i] = Object.assign({}, lm[i], { visibility: 0.4 }); });
+      const f = W.TrackAIQuality.extractAI(lm);
+      return !f.missing.length && isFinite(f.kneeFront) && isFinite(f.kneeRear);
+    }catch(e){ return false; } })());
+  t('v3.1.0 extract: both legs hidden -> legs reported missing (no invented angles)',
+    (() => { try{
+      const lm = sprintPose(0);
+      [23, 24, 25, 26, 27, 28].forEach(i => { lm[i] = Object.assign({}, lm[i], { visibility: 0.3 }); });
+      const f = W.TrackAIQuality.extractAI(lm);
+      return f.missing && f.missing.indexOf('legs') >= 0;
+    }catch(e){ return false; } })());
+  t('v3.1.0 report: quality note states frames measured, set-asides, and exit time',
+    (() => { try{
+      const r = W.TrackAIDeep.buildDeepReport([], 0, { quality: { sampled: 10, detected: 9, accepted: 8, rejected: 2, scored: 8, goneAt: 4200, clipMode: true, clipSecs: 5.9 } });
+      return r.qualityNote.indexOf('measured 8 of 10') >= 0 && r.qualityNote.indexOf('left the frame at ~4.2s') >= 0 && r.qualityNote.indexOf('set aside') >= 0;
+    }catch(e){ return false; } })());
+  // Subject lock + leftward start, end to end through the pose stub.
+  W.TrackAI.stopNow(); await sleep(30);
+  await W.TrackAI.startClip('blob:v310');
+  await sleep(60);
+  const TQ = W.TrackAIQuality, vid310 = $('aiVideo');
+  const pose310 = poseInstances[poseInstances.length - 1];
+  function gatePoseAt(hipX, hipY, torsoH){
+    const lm = []; for(let i = 0; i < 33; i++) lm.push({ x: hipX, y: hipY, visibility: 0.95 });
+    lm[11] = { x: hipX - 0.05, y: hipY - torsoH, visibility: 0.95 }; lm[12] = { x: hipX + 0.05, y: hipY - torsoH, visibility: 0.95 };
+    lm[23] = { x: hipX - 0.04, y: hipY, visibility: 0.95 }; lm[24] = { x: hipX + 0.04, y: hipY, visibility: 0.95 };
+    return lm;
+  }
+  vid310.currentTime = 1.0; const g1 = TQ.gatePose(gatePoseAt(0.47, 0.41, 0.12));
+  vid310.currentTime = 1.2; const g2 = TQ.gatePose(gatePoseAt(0.89, 0.53, 0.04));
+  vid310.currentTime = 1.4; const g3 = TQ.gatePose(gatePoseAt(0.40, 0.38, 0.12));
+  vid310.currentTime = 1.6; const g4 = TQ.gatePose(gatePoseAt(0.02, 0.40, 0.12));
+  vid310.currentTime = 3.0; TQ.gatePose(null);
+  const qual310 = TQ.getQuality();
+  t('v3.1.0 subject lock: acquires the athlete, rejects clutter + teleports, keeps continuity',
+    !!g1 && g2 === null && !!g3 && g4 === null && !!TQ.getSubject() && qual310.rejected === 2);
+  t('v3.1.0 subject lock: exit is timestamped at the last seen frame (1.4s)',
+    TQ.getGoneAt() === 1400);
+  // Leftward block start through the full pipeline.
+  W.TrackAI.stopNow(); await sleep(30);
+  await W.TrackAI.startClip('blob:v310b');
+  await sleep(60);
+  const pose310b = poseInstances[poseInstances.length - 1];
+  function setPose310(){
+    const lm = sprintPose(0);
+    const P = (i, x, y, v) => { lm[i] = { x: x, y: y, visibility: v === undefined ? 0.95 : v }; };
+    P(11, 0.30, 0.25); P(12, 0.36, 0.25); P(0, 0.26, 0.22);
+    P(23, 0.45, 0.41); P(24, 0.50, 0.41);
+    P(25, 0.54, 0.52); P(27, 0.46, 0.63);
+    P(26, 0.38, 0.53); P(28, 0.47, 0.62);
+    P(13, 0.28, 0.42); P(15, 0.27, 0.60); P(14, 0.38, 0.42); P(16, 0.39, 0.60);
+    [24, 26, 28].forEach(i => { lm[i] = Object.assign({}, lm[i], { visibility: 0.42 }); });
+    return lm;
+  }
+  function drivePose310(hipX){
+    const lm = setPose310();
+    const dx = hipX - 0.47;
+    [0, 11, 12, 23, 24, 25, 26, 27, 28, 13, 14, 15, 16].forEach(i => { lm[i] = Object.assign({}, lm[i], { x: lm[i].x + dx }); });
+    lm[11] = Object.assign({}, lm[11], { x: hipX - 0.13, y: 0.13 }); lm[12] = Object.assign({}, lm[12], { x: hipX - 0.07, y: 0.13 });
+    lm[23] = Object.assign({}, lm[23], { y: 0.30 }); lm[24] = Object.assign({}, lm[24], { y: 0.30 });
+    lm[25] = Object.assign({}, lm[25], { x: hipX + 0.10, y: 0.44 }); lm[27] = Object.assign({}, lm[27], { x: hipX + 0.02, y: 0.60 });
+    lm[26] = Object.assign({}, lm[26], { x: hipX - 0.12, y: 0.42 }); lm[28] = Object.assign({}, lm[28], { x: hipX - 0.20, y: 0.55 });
+    return lm;
+  }
+  const vid310b = $('aiVideo'); vid310b.duration = 3.2;
+  for(let i = 0; i < 4; i++){ vid310b.currentTime = i * 0.15; pose310b._cb({ poseLandmarks: setPose310() }); await sleep(25); }
+  const driveXs = [0.40, 0.33, 0.26];
+  for(let i = 0; i < driveXs.length; i++){ vid310b.currentTime = 0.6 + i * 0.15; pose310b._cb({ poseLandmarks: drivePose310(driveXs[i]) }); await sleep(25); }
+  for(let i = 0; i < 4; i++){ vid310b.currentTime = 1.2 + i * 0.5; pose310b._cb({}); await sleep(25); }
+  t('v3.1.0 pipeline: leftward start out of a side-view set counts exactly 1 block-start rep',
+    $('aiRepCount').textContent === '1');
+  if(vid310b.onended) vid310b.onended();
+  await sleep(500);
+  const deep310 = $('aiDeepReport').innerHTML;
+  t('v3.1.0 pipeline: deep report names the block start + prints the quality/exit note',
+    deep310.indexOf('Block start') >= 0 && deep310.indexOf('Analysis quality') >= 0 && deep310.indexOf('left the frame') >= 0);
+
+  // Version stamps: 3.1.0 everywhere, single file rebuilt + carries the new code.
+  t('v3.1.0 version: changelog tops at 3.1.0 with notify:true',
     (() => { const cl = JSON.parse(fs.readFileSync(ROOT + 'changelog.json', 'utf8'));
-      return cl[0].version === '3.0.0' && cl[0].notify === true; })());
-  t('v3.0.0 version: single-file build is 3.0.0 and contains the new engines',
+      return cl[0].version === '3.1.0' && cl[0].notify === true; })());
+  t('v3.1.0 version: single-file build is 3.1.0 and contains the new engines',
     (() => { const single = fs.readFileSync(ROOT + 'track-analyzer-single.html', 'utf8');
-      return single.indexOf("var VERSION = '3.0.0'") >= 0 && single.indexOf('computeFps') >= 0 &&
-        single.indexOf('AI double-checked') >= 0 && single.indexOf('assessPhoto') >= 0; })());
+      return single.indexOf("var VERSION = '3.1.0'") >= 0 && single.indexOf('computeFps') >= 0 &&
+        single.indexOf('AI double-checked') >= 0 && single.indexOf('assessPhoto') >= 0 &&
+        single.indexOf('gatePose') >= 0 && single.indexOf('Analysis quality') >= 0; })());
 
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
