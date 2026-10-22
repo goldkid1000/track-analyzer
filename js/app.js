@@ -391,14 +391,47 @@ function drawPhotoMarker(pctx, x, y, color, glyph, label, scale){
   pctx.fillStyle = '#ffffff'; pctx.font = 'bold ' + Math.round(15 * scale) + 'px Barlow, sans-serif';
   pctx.textAlign = 'center'; pctx.textBaseline = 'middle';
   pctx.fillText(glyph, x, y + 1);
-  if(label){
-    pctx.font = Math.round(14 * scale) + 'px Barlow, sans-serif';
-    var w = pctx.measureText(label).width + 16 * scale;
-    var lx = Math.min(Math.max(x + r + 4, 4), Math.max(4, pctx.canvas.width - w - 4));
-    pctx.fillStyle = 'rgba(5,8,7,0.85)'; pctx.fillRect(lx, y - 11 * scale, w, 22 * scale);
-    pctx.fillStyle = '#ffffff'; pctx.textAlign = 'left';
-    pctx.fillText(label, lx + 8 * scale, y + 1);
+  pctx.textAlign = 'left'; pctx.textBaseline = 'alphabetic';
+}
+/* v3.2.0: photo labels get the same collision-free layout as the AI
+ * frame marks. They used to be drawn beside each marker, so labels
+ * for clustered joints landed on top of each other. Now the dots stay
+ * on the joints and the labels stack in one column at the frame edge
+ * opposite the athlete, in marker order, with leader lines — always
+ * fully inside the frame, never overlapping each other, and kept
+ * clear of the GOOD / FIX banners at the top and bottom. */
+function layoutPhotoLabels(pctx, jobs, scale, yMin, yMax){
+  if(!jobs || !jobs.length) return;
+  var W = pctx.canvas.width;
+  var fs = Math.round(14 * scale), lh = 22 * scale, gap = 6 * scale;
+  pctx.font = fs + 'px Barlow, sans-serif';
+  var maxW = Math.floor(W * 0.58);
+  function fit(text){
+    var t = String(text || '');
+    if(pctx.measureText(t).width + 16 * scale <= maxW) return t;
+    while(t.length > 4 && pctx.measureText(t + '…').width + 16 * scale > maxW) t = t.slice(0, -1);
+    return t + '…';
   }
+  var centroidX = jobs.reduce(function(s, j){ return s + j.x; }, 0) / jobs.length;
+  var onRight = centroidX < W / 2;
+  var items = jobs.map(function(j){
+    var label = fit(j.label);
+    return { j: j, label: label, w: Math.min(maxW, pctx.measureText(label).width + 16 * scale) };
+  });
+  items.sort(function(a, b){ return a.j.y - b.j.y; });
+  var total = items.length * lh + (items.length - 1) * gap;
+  var top = Math.max(yMin, Math.min(Math.max(yMin, yMax - total), items[0].j.y - lh / 2));
+  pctx.textBaseline = 'middle';
+  items.forEach(function(it, i){
+    var ly = top + i * (lh + gap);
+    var lx = onRight ? W - 4 - it.w : 4;
+    pctx.strokeStyle = it.j.color; pctx.lineWidth = 2 * scale;
+    pctx.beginPath(); pctx.moveTo(it.j.x, it.j.y); pctx.lineTo(onRight ? lx : lx + it.w, ly + lh / 2); pctx.stroke();
+    pctx.fillStyle = 'rgba(5,8,7,0.88)'; pctx.fillRect(lx, ly, it.w, lh);
+    pctx.strokeStyle = it.j.color; pctx.lineWidth = 1.5 * scale; pctx.strokeRect(lx, ly, it.w, lh);
+    pctx.fillStyle = '#ffffff'; pctx.textAlign = 'left';
+    pctx.fillText(it.label, lx + 8 * scale, ly + lh / 2 + 1);
+  });
   pctx.textAlign = 'left'; pctx.textBaseline = 'alphabetic';
 }
 function handlePhotoResults(results,request){
@@ -438,8 +471,10 @@ function handlePhotoResults(results,request){
           return;
         }
         var checks = assessment.checks, isSet = assessment.phase === 'set';
-        var trunk = Math.round(f.trunk);
-        var fmtA = function(v){ return v === null || v === undefined ? '—' : Math.round(v) + '°'; };
+        /* v3.2.0: displayed angles are clamped to the physical
+         * 0-180 range — a signed trunk value used to print as -10°. */
+        var trunk = Math.max(0, Math.min(180, Math.round(f.trunk)));
+        var fmtA = function(v){ return v === null || v === undefined || !isFinite(v) ? '—' : Math.max(0, Math.min(180, Math.round(v))) + '°'; };
         // Phase-gated photo checks: a single photo can be a crouched SET
         // position (trunk near horizontal) or an upright SPRINT/DRIVE photo.
         // Set-position criteria (front knee ~90, rear knee 120-135, hips
@@ -472,7 +507,7 @@ function handlePhotoResults(results,request){
         }
         hidePoseNote();var fix=coachFix[issue],v=fixVideos[issue];
         var scale=Math.max(1,pcanvas.width/900),pad=12*scale,lineH=25*scale,font=Math.round(17*scale)+'px Barlow';
-        function callout(y,color,label,text){pctx.font=font;var shown=text.length>58?text.slice(0,56)+'…':text,w=Math.min(pcanvas.width-pad*2,pctx.measureText(label+'  '+shown).width+pad*2);pctx.fillStyle=color;pctx.fillRect(pad,y,w,lineH+pad);pctx.fillStyle='#07100c';pctx.fillText(label+'  '+shown,pad*2,y+lineH);}
+        function callout(y,color,label,text){/* v3.2.0: shrink the banner text to fit before ever truncating — a cut-off "Fix: Ov…" tells the athlete nothing. */var size=17*scale;pctx.font=Math.round(size)+'px Barlow';var shown=text;while(pctx.measureText(label+'  '+shown).width>pcanvas.width-pad*4&&size>11*scale){size-=1*scale;pctx.font=Math.round(size)+'px Barlow';}if(pctx.measureText(label+'  '+shown).width>pcanvas.width-pad*4){shown=text.slice(0,56)+'…';}var w=Math.min(pcanvas.width-pad*2,pctx.measureText(label+'  '+shown).width+pad*2);pctx.fillStyle=color;pctx.fillRect(pad,y,w,lineH+pad);pctx.fillStyle='#07100c';pctx.fillText(label+'  '+shown,pad*2,y+lineH);pctx.font=font;}
         callout(pad,'#5ed5aa','GOOD',good[0]);
         callout(pcanvas.height-lineH-pad*3,'#ff7040','FIX',fix.cue);
         /* Pointing markers: green checks on what looks good, one red mark on
@@ -482,17 +517,23 @@ function handlePhotoResults(results,request){
          * an invisible joint is named in the readout instead of marked at
          * a guessed position. */
         var unmarked=[];
+        var labelJobs=[];
         function mark(idx,color,glyph,label,shortName){
           if(idx===null||idx===undefined)return;
           var pt=lm[idx]; if(!pt)return;
           if(pt.visibility!==undefined&&pt.visibility<=0.5){ unmarked.push(shortName); return; }
           var px=photoPointPx(pt,pcanvas.width,pcanvas.height);
           drawPhotoMarker(pctx,px.x,px.y,color,glyph,label,scale);
+          if(label) labelJobs.push({x:px.x,y:px.y,color:color,label:label});
         }
         assessment.goodAnchors.filter(function(g){ return !!g.label; }).slice(0,3).forEach(function(g){
           mark(g.idx,'#3ddc97','✓',g.label,g.label.replace(/^Good: /,''));
         });
         mark(assessment.fixAnchors[issue],'#ff5c5c','!','Work on: ' + fix.cue,fix.fix);
+        /* Labels go in one stacked column between the GOOD banner
+         * (top) and the FIX banner (bottom) — never on top of either,
+         * never on top of each other. */
+        layoutPhotoLabels(pctx,labelJobs,scale,56*scale,pcanvas.height-68*scale);
         /* Plain-language lists: what the AI saw that looks good, and what
          * to work on — with the fault, cue, and drill for each. */
         var goodHtml=good.map(function(g){
@@ -540,7 +581,7 @@ function analyzeClassic(lm){
   if(!a) return null;
   var fb = buildCoachReview(a.issue, a.metrics, a.asym);
   latestClassic = {
-    score: Math.round(a.score), metrics: a.metrics, metricNames: content[blockStartsOn ? 'block' : 'sprint'].metrics.slice(),
+    score: Math.max(0, Math.min(100, Math.round(a.score))), metrics: a.metrics, metricNames: content[blockStartsOn ? 'block' : 'sprint'].metrics.slice(),
     headline: a.headline, copy: a.copy, review: fb.review, goodText: fb.goodText,
     issue: a.issue, asym: a.asym, fix: fb.fix, mode: blockStartsOn ? 'block' : 'sprint', blockStarts: blockStartsOn
   };

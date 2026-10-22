@@ -1313,15 +1313,79 @@ const W = sandbox;
   t('v3.1.0 pipeline: deep report names the block start + prints the quality/exit note',
     deep310.indexOf('Block start') >= 0 && deep310.indexOf('Analysis quality') >= 0 && deep310.indexOf('left the frame') >= 0);
 
-  // Version stamps: 3.1.0 everywhere, single file rebuilt + carries the new code.
-  t('v3.1.0 version: changelog tops at 3.1.0 with notify:true',
+  /* ================= v3.2.0 ================= */
+  // Phone-test fix pass: ghost rendering, duplicated modules, upload
+  // state language, 0:00 clip moments, classifier chaos, contradictory
+  // counts, colliding photo labels, letterboxed skeleton preview.
+  const T32 = W.TrackAI._test;
+  t('v3.2.0 clamps: percents stay 0-100 and angles 0-180 at render',
+    T32.pct(-50) === 0 && T32.pct(46) === 46 && T32.pct(140) === 100 &&
+    T32.deg(-174) === 0 && T32.deg(79) === 79 && T32.deg(200) === 180);
+  t('v3.2.0 labels: a new label must hold ~450ms before it replaces the current one',
+    (() => { try{
+      T32.setStartLocked(false); T32.setState('sprint');
+      const a = T32.stabilizeLabel('squat', 1000);
+      const b = T32.stabilizeLabel('squat', 1200);
+      const c = T32.stabilizeLabel('squat', 1500);
+      return a === 'sprint' && b === 'sprint' && c === 'squat';
+    }catch(e){ return false; } })());
+  t('v3.2.0 labels: start lock keeps squat/hinge vocabulary out of a sprint clip',
+    (() => { try{
+      T32.setState('set'); T32.setStartLocked(true);
+      const a = T32.stabilizeLabel('hinge', 5000);
+      const b = T32.stabilizeLabel('squat', 6000);
+      const c = T32.stabilizeLabel('block-start', 6100);
+      T32.setStartLocked(false); T32.setState('none');
+      return a === 'set' && b === 'set' && c === 'block-start';
+    }catch(e){ return false; } })());
+  t('v3.2.0 reps: junk segments (blips, moving) never become reps; scores clamped',
+    (() => { try{
+      const frames = [];
+      for(let i = 0; i < 2; i++) frames.push({ t: i * 150, activity: 'squat', score: 50, tripped: null, f: null });
+      for(let i = 0; i < 5; i++) frames.push({ t: 1000 + i * 150, activity: 'moving', score: 60, tripped: null, f: null });
+      for(let i = 0; i < 5; i++) frames.push({ t: 3000 + i * 150, activity: 'block-start', score: i === 0 ? 140 : -20, tripped: null, f: null });
+      const valid = T32.validateSegments(T32.segmentReps(frames));
+      return valid.length === 1 && valid[0].activity === 'block-start' && valid[0].best === 100 && valid[0].worst === 0;
+    }catch(e){ return false; } })());
+  t('v3.2.0 marks: clustered labels are laid out in a column — no overlaps, all inside the frame',
+    (() => { try{
+      const c = makeEl(''); c.width = 320; c.height = 240;
+      const marks = [
+        { x: 0.50, y: 0.50, color: 'red', label: 'Fix: Overstriding / reaching at touchdown', detail: '' },
+        { x: 0.52, y: 0.51, color: 'yellow', label: 'Needs work: Elbow shape', detail: '' },
+        { x: 0.48, y: 0.49, color: 'yellow', label: 'Needs work: Hands staying low', detail: '' }
+      ];
+      W.TrackFrameMarks.draw(c, marks);
+      const rects = marks.map(m => m._lab);
+      if(rects.some(r => !r)) return false;
+      for(const r of rects){ if(r.x < 0 || r.y < 0 || r.x + r.w > 1.001 || r.y + r.h > 1.001) return false; }
+      for(let i = 0; i < rects.length; i++) for(let j = i + 1; j < rects.length; j++){
+        const a = rects[i], b = rects[j];
+        if(a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h) return false;
+      }
+      return true;
+    }catch(e){ return false; } })());
+  // Upload flow state: clip mode speaks analysis, never recording.
+  W.TrackAI.stopNow(); await sleep(30);
+  await W.TrackAI.startClip('blob:v320');
+  await sleep(60);
+  t('v3.2.0 upload: status says Analyzing clip (no recording language, no gestures)',
+    $('gestureStatus').textContent.indexOf('Analyzing clip') >= 0 &&
+    $('gestureStatus').textContent.indexOf('Recording') === -1 &&
+    $('gestureStatus').textContent.indexOf('finger') === -1);
+  t('v3.2.0 upload: clip timestamps are 0-based (session base is 0 in clip mode)',
+    T32.sessionBaseMs() === 0);
+  W.TrackAI.stopNow(); await sleep(30);
+
+  // Version stamps: 3.2.0 everywhere, single file rebuilt + carries the new code.
+  t('v3.2.0 version: changelog tops at 3.2.0 with notify:true',
     (() => { const cl = JSON.parse(fs.readFileSync(ROOT + 'changelog.json', 'utf8'));
-      return cl[0].version === '3.1.0' && cl[0].notify === true; })());
-  t('v3.1.0 version: single-file build is 3.1.0 and contains the new engines',
+      return cl[0].version === '3.2.0' && cl[0].notify === true; })());
+  t('v3.2.0 version: single-file build is 3.2.0 and contains the fix pass',
     (() => { const single = fs.readFileSync(ROOT + 'track-analyzer-single.html', 'utf8');
-      return single.indexOf("var VERSION = '3.1.0'") >= 0 && single.indexOf('computeFps') >= 0 &&
-        single.indexOf('AI double-checked') >= 0 && single.indexOf('assessPhoto') >= 0 &&
-        single.indexOf('gatePose') >= 0 && single.indexOf('Analysis quality') >= 0; })());
+      return single.indexOf("var VERSION = '3.2.0'") >= 0 && single.indexOf('stabilizeLabel') >= 0 &&
+        single.indexOf('validateSegments') >= 0 && single.indexOf('Analyzing clip') >= 0 &&
+        single.indexOf('layoutPhotoLabels') >= 0 && single.indexOf('sessionBaseMs') >= 0; })());
 
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);

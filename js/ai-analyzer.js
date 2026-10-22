@@ -60,6 +60,21 @@ function $(id){ return document.getElementById(id); }
 function setText(id, t){ var el = $(id); if(el) el.textContent = t; }
 function showEl(el, on){ if(el) el.hidden = !on; }
 function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+/* v3.2.0: every displayed percent/angle passes through these — a
+ * score or angle outside its physical range is a bug, never a
+ * reading (the owner's recording showed ~-50% and -174°). */
+function pct(v){ v = Math.round(Number(v)); return isFinite(v) ? clamp(v, 0, 100) : 0; }
+function deg(v){ v = Math.round(Number(v)); return isFinite(v) ? clamp(v, 0, 180) : 0; }
+/* v3.2.0: frame timestamps are CLIP-relative in clip mode (frameNowMs
+ * returns video.currentTime ms) and wall-clock in live mode. Anything
+ * that turns a frame time into a seek position must subtract the
+ * right base: 0 for clips, the session start for live. Subtracting
+ * the wall-clock start from clip-relative times made every uploaded
+ * clip's AI moments read 0:00. */
+function sessionBaseMs(){
+  if(AI.clipMode) return 0;
+  return (AI.lastSession && AI.lastSession.startedAt) || (AI.session && AI.session.startedAt) || 0;
+}
 function median(vals){ var a = vals.slice().sort(function(x, y){ return x - y; }); return a[Math.floor(a.length / 2)]; }
 function band(v, min, max, fall){ if(typeof v !== 'number' || !isFinite(v)) return NaN; if(v >= min && v <= max) return 100; return clamp(100 - (v < min ? min - v : v - max) / fall * 100, 0, 100); }
 function floorS(v, min, fall){ if(typeof v !== 'number' || !isFinite(v)) return NaN; return v >= min ? 100 : clamp(100 - (min - v) / fall * 100, 0, 100); }
@@ -261,7 +276,7 @@ function buildFrameMarks(fr, report, isBest){
     // scored well. The label describes the frame, not a perfect joint.
     [23, 24, 11, 12].forEach(function(j){
       if(out.marks.length < 5) addMark(j, 'green', 'Looks good',
-        'This frame scored ~' + fr.score + '% — ' + (FRAME_JOINT_NAMES[j] || 'joint') + ' held its shape.');
+        'This frame scored ~' + pct(fr.score) + '% — ' + (FRAME_JOINT_NAMES[j] || 'joint') + ' held its shape.');
     });
   }
   return out;
@@ -278,31 +293,58 @@ function drawFrameMarks(canvas, marks){
   var fs = Math.max(11, Math.round(w * 0.04));
   ctx.font = '700 ' + fs + 'px Barlow, system-ui, sans-serif';
   ctx.textBaseline = 'middle';
-  marks.forEach(function(m){
-    var cx = m.x * w, cy = m.y * h;
-    var color = frameMarkColor(m.color);
-    var pad = fs * 0.55, tw = ctx.measureText(m.label).width;
-    var pw = tw + pad * 2, ph = fs * 1.9;
-    var right = m.x < 0.55;
-    var lx = right ? cx + w * 0.05 : cx - w * 0.05 - pw;
-    lx = Math.max(2, Math.min(w - pw - 2, lx));
-    var ly = Math.max(2, Math.min(h - ph - 2, cy - ph / 2));
+  /* v3.2.0 label layout (the owner's headline complaint: "the
+   * descriptions are way too close"): labels used to sit beside their
+   * marker with only frame-edge clamping, so on a worst frame — where
+   * the flagged joints cluster — they piled onto the same spot and
+   * truncated. Now every label lives in ONE column at the frame edge
+   * opposite the athlete's centre, stacked in marker order with a
+   * minimum gap, fully inside the frame, with a leader line to its
+   * marker. Labels are shortened to fit the column instead of
+   * running off the edge. */
+  var pad = fs * 0.55, ph = fs * 1.9, gap = Math.max(4, fs * 0.35);
+  var maxPw = Math.floor(w * 0.52);
+  function fitLabel(text){
+    var t = String(text || '');
+    if(ctx.measureText(t).width + pad * 2 <= maxPw) return t;
+    while(t.length > 4 && ctx.measureText(t + '…').width + pad * 2 > maxPw) t = t.slice(0, -1);
+    return t + '…';
+  }
+  var centroidX = marks.length ? marks.reduce(function(s, m){ return s + m.x; }, 0) / marks.length : 0.5;
+  var onRight = centroidX < 0.5;
+  var laid = marks.map(function(m){
+    var label = fitLabel(m.label);
+    var pw = Math.min(maxPw, ctx.measureText(label).width + pad * 2);
+    return { m: m, label: label, pw: pw, cx: m.x * w, cy: m.y * h };
+  });
+  laid.sort(function(a, b){ return a.cy - b.cy; });
+  var colX = onRight ? (w - 2 - Math.max.apply(null, laid.map(function(l){ return l.pw; }))) : 2;
+  var totalH = laid.length * ph + Math.max(0, laid.length - 1) * gap;
+  var top = laid.length ? laid[0].cy - ph / 2 : 2;
+  top = Math.max(2, Math.min(Math.max(2, h - 2 - totalH), top));
+  laid.forEach(function(l, i){
+    l.lx = onRight ? (w - 2 - l.pw) : colX;
+    l.ly = top + i * (ph + gap);
+    l.m._lab = { x: l.lx / w, y: l.ly / h, w: l.pw / w, h: ph / h };
+  });
+  laid.forEach(function(l){
+    var m = l.m, color = frameMarkColor(m.color);
     ctx.strokeStyle = color;
     ctx.lineWidth = Math.max(2, w * 0.006);
     ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.lineTo(right ? lx : lx + pw, ly + ph / 2);
+    ctx.moveTo(l.cx, l.cy);
+    ctx.lineTo(onRight ? l.lx : l.lx + l.pw, l.ly + ph / 2);
     ctx.stroke();
-    ctx.fillStyle = 'rgba(0,0,0,0.72)';
+    ctx.fillStyle = 'rgba(0,0,0,0.78)';
     ctx.beginPath();
-    if(ctx.roundRect) ctx.roundRect(lx, ly, pw, ph, ph / 2);
-    else ctx.rect(lx, ly, pw, ph);
+    if(ctx.roundRect) ctx.roundRect(l.lx, l.ly, l.pw, ph, ph / 2);
+    else ctx.rect(l.lx, l.ly, l.pw, ph);
     ctx.fill();
     ctx.fillStyle = color;
-    ctx.fillText(m.label, lx + pad, ly + ph / 2 + 1);
+    ctx.fillText(l.label, l.lx + pad, l.ly + ph / 2 + 1);
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.arc(cx, cy, Math.max(6, w * 0.02), 0, Math.PI * 2);
+    ctx.arc(l.cx, l.cy, Math.max(6, w * 0.02), 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 2;
@@ -316,6 +358,9 @@ function frameMarkAt(marks, nx, ny, w, h){
   var tol = Math.max(0.12, (30 / Math.max(1, w)));
   var best = null, bestD = Infinity;
   marks.forEach(function(m){
+    /* v3.2.0: a tap on the label counts too — labels now live in an
+     * edge column, away from their markers. */
+    if(m._lab && nx >= m._lab.x && nx <= m._lab.x + m._lab.w && ny >= m._lab.y && ny <= m._lab.y + m._lab.h){ best = m; bestD = 0; return; }
     var d = Math.sqrt(Math.pow(m.x - nx, 2) + Math.pow(m.y - ny, 2));
     if(d < bestD){ bestD = d; best = m; }
   });
@@ -418,13 +463,13 @@ function renderLatestAiPhoto(){
   if(s.bestFrames.length){
     framesHtml = '<h4>Best frames</h4><div class="ai-best-frames">' + s.bestFrames.map(function(fr, i){
       return frameMarksFigureHtml('best' + i, fr,
-        (ACTIVITY_LABEL[fr.activity] || fr.activity) + ' · ' + fr.score + '%', rep, true);
+        (ACTIVITY_LABEL[fr.activity] || fr.activity) + ' · ' + pct(fr.score) + '%', rep, true);
     }).join('') + '</div>';
   }
   if(AI.deep.worst){
     var wf = AI.deep.worst;
     framesHtml += '<h4>Worst frame</h4>' + frameMarksFigureHtml('worst', wf,
-      (ACTIVITY_LABEL[wf.activity] || wf.activity) + ' · ~' + wf.score + '%', rep, false);
+      (ACTIVITY_LABEL[wf.activity] || wf.activity) + ' · ~' + pct(wf.score) + '%', rep, false);
   }
   body.innerHTML = repsHtml + faultsHtml + framesHtml;
   card.hidden = false;
@@ -865,6 +910,36 @@ function scoreFrame(activity, f){
   var score = avail.length ? Math.round(avail.reduce(function(s, v){ return s + v; }, 0) / avail.length) : 0;
   return { score: score, metrics: metrics, labels: labels, tripped: tripped };
 }
+/* v3.2.0: label stabilization. The raw classifier re-decides every
+ * frame, so on the owner's block-start clip the "Seeing:" line flipped
+ * Moving / Arm swings / Hip hinge / Squat / Set position second by
+ * second, and coaching praised a "strong hinge angle" mid-start.
+ * Two guards now sit between classify() and everything downstream:
+ *  1. Persistence — a new label must hold ~450ms before it can replace
+ *     the current one (transitions inside the start family are exempt:
+ *     set -> drive -> sprint is fast and must not lag).
+ *  2. Start lock — once a clip shows a block start / sprint (or Block
+ *     Starts mode is on), the vocabulary locks to the start family:
+ *     squat / hinge / bench / arm-swing labels can no longer appear
+ *     inside a sprint clip at all. */
+var START_FAMILY = { 'block-start': 1, 'sprint': 1, 'set': 1, 'moving': 1 };
+var LABEL_HOLD_MS = 450;
+function stabilizeLabel(raw, now){
+  if(raw === 'block-start' || raw === 'sprint' || AI.blockMode) AI.startLocked = true;
+  if(AI.startLocked && raw !== 'none' && raw !== 'rest' && !START_FAMILY[raw]){
+    raw = START_FAMILY[AI.state] ? AI.state : 'moving';
+  }
+  /* Rest is the absence of an activity, not a label worth defending:
+   * a real label replaces it at once (otherwise a set position that
+   * follows rest would need 450ms just to register, and a quick
+   * set -> drive sequence would lose the start entirely). */
+  if(!AI.state || AI.state === 'none' || AI.state === 'rest' || raw === 'none' || raw === 'rest'){ AI.labelCand = null; return raw; }
+  if(raw === AI.state){ AI.labelCand = null; return raw; }
+  if(AI.startLocked && START_FAMILY[raw] && START_FAMILY[AI.state]){ AI.labelCand = null; return raw; }
+  if(AI.labelCand !== raw){ AI.labelCand = raw; AI.labelCandSince = now; return AI.state; }
+  if(now - AI.labelCandSince >= LABEL_HOLD_MS){ AI.labelCand = null; return raw; }
+  return AI.state;
+}
 function countRep(activity){
   AI.session.reps[activity] = (AI.session.reps[activity] || 0) + 1;
   setText('aiRepCount', String(totalReps()));
@@ -923,7 +998,8 @@ function onFrame(f, angle, nowMs){
   }
   if(typeof disp === 'number') AI.lastDisp = disp;
   var prev = AI.state;
-  var activity = classify(f, AI.hist, nowMs);
+  var activity = stabilizeLabel(classify(f, AI.hist, nowMs),
+    (typeof nowMs === 'number' && isFinite(nowMs)) ? nowMs : Date.now());
   var now = (typeof nowMs === 'number' && isFinite(nowMs)) ? nowMs : Date.now();
   // Squat cycle tracking (hip dips then returns).
   if(activity === 'squat' && f && !f.missing){
@@ -1639,6 +1715,11 @@ function setGestureStatus(kind){
   var msgs = {
     watching: '👁 Watching… look at the camera + hold up 1 finger to start recording',
     coaching: '● Recording… hold up 2 fingers to stop, or tap Stop recording.',
+    /* v3.2.0: uploaded clips are not recordings — no recording
+     * language, no finger gestures, just analysis state + progress. */
+    clip: '🔍 Analyzing clip… the AI is watching your video.',
+    clipDone: '✓ Clip analyzed — your results are below.',
+    clipStopped: 'Clip analysis stopped.',
     holdStart: '✋ 1 finger — starting recording… (keep holding)',
     holdStop: '✌️ 2 fingers — stopping recording… (keep holding)',
     unavailable: 'Gesture control unavailable — use the Start recording / Stop recording buttons.',
@@ -1818,7 +1899,10 @@ function startCoachingFromWatch(){
 }
 
 /* ================= Deep analysis (full-clip review after Stop) ================= */
-var REP_ACTIVITIES = ['block-start', 'sprint', 'drill', 'squat', 'hinge', 'bench', 'moving', 'arm-swing'];
+/* v3.2.0: 'moving' is locomotion, not a rep — it used to segment
+ * into "Rep 1 (Moving)" junk in the deep check while the summary
+ * counted 0, the self-contradiction in the owner's recording. */
+var REP_ACTIVITIES = ['block-start', 'sprint', 'drill', 'squat', 'hinge', 'bench', 'arm-swing'];
 function absorbFrame(state, fr){
   if(REP_ACTIVITIES.indexOf(fr.activity) === -1){ state.cur = null; return; }
   var cur = state.cur;
@@ -1836,6 +1920,32 @@ function segmentReps(frames){
   var state = { reps: [], cur: null };
   frames.forEach(function(fr){ absorbFrame(state, fr); });
   return state.reps;
+}
+/* v3.2.0: ONE source of truth for rep counting. A raw segment only
+ * becomes a rep when it is long enough to be a real movement
+ * (>= 3 measured frames spanning >= 300ms); shorter blips are
+ * classifier noise and are dropped everywhere at once. The deep
+ * report counts these validated segments, and the session summary's
+ * rep map is rebuilt from the same list (syncSessionReps), so the
+ * summary, deep check, Last session card and AI Photo can never
+ * disagree again. Scores are clamped into range here too. */
+function validateSegments(reps){
+  return (reps || []).filter(function(r){
+    if(!r || REP_ACTIVITIES.indexOf(r.activity) === -1) return false;
+    if(r.frames < 3) return false;
+    if(r.endT - r.startT < 300) return false;
+    return true;
+  }).map(function(r){
+    r.best = r.best < 0 ? -1 : pct(r.best);
+    r.worst = r.worst > 100 ? 101 : pct(r.worst);
+    return r;
+  });
+}
+function syncSessionReps(validated){
+  if(!AI.lastSession) return;
+  var map = {};
+  (validated || []).forEach(function(r){ map[r.activity] = (map[r.activity] || 0) + 1; });
+  AI.lastSession.reps = map;
 }
 var CHECK_LABEL = {
   overstride: 'Overstriding', earlyRise: 'Popping up too early', armCross: 'Arms crossing',
@@ -1944,7 +2054,7 @@ function buildDeepReport(reps, frames2count, opts){
       video: kb ? (kb.video || '') : '' };
   }).sort(function(a, b){ return (b.severity - a.severity) || (b.count - a.count); });
   var strengths = reps.filter(function(r){ return r.best >= 80; }).map(function(r, i){
-    return 'Rep ' + (i + 1) + ' (' + (ACTIVITY_LABEL[r.activity] || r.activity) + '): held strong shape — best frame ~' + r.best + '%.';
+    return 'Rep ' + (i + 1) + ' (' + (ACTIVITY_LABEL[r.activity] || r.activity) + '): held strong shape — best frame ~' + pct(r.best) + '%.';
   });
   if(!strengths.length) strengths = ['No rep scored 80% or higher — the fixes below are where the gains are.'];
   function medOf(samples, key){
@@ -1954,10 +2064,10 @@ function buildDeepReport(reps, frames2count, opts){
   var measurements = reps.map(function(r, i){
     var lean = medOf(r.samples, 'lean'), knee = medOf(r.samples, 'kneeL');
     var line = 'Rep ' + (i + 1) + ' (' + (ACTIVITY_LABEL[r.activity] || r.activity) + '): ~' +
-      Math.max(0, Math.round((r.endT - r.startT) / 1000)) + 's · best ~' + (r.best < 0 ? '—' : r.best + '%') +
-      ' · worst ~' + (r.worst > 100 ? '—' : r.worst + '%');
-    if(lean !== null) line += ' · trunk lean ~' + lean + '° (estimated)';
-    if(knee !== null) line += ' · front knee ~' + knee + '° (estimated)';
+      Math.max(0, Math.round((r.endT - r.startT) / 1000)) + 's · best ~' + (r.best < 0 ? '—' : pct(r.best) + '%') +
+      ' · worst ~' + (r.worst > 100 ? '—' : pct(r.worst) + '%');
+    if(lean !== null) line += ' · trunk lean ~' + deg(lean) + '° (estimated)';
+    if(knee !== null) line += ' · front knee ~' + deg(knee) + '° (estimated)';
     return line;
   });
   var span = reps.length ? Math.max(0, Math.round((reps[reps.length - 1].endT - reps[0].startT) / 1000)) : 0;
@@ -2100,12 +2210,12 @@ function renderDeepReport(report){
   if(report.best.length){
     var b = report.best[0];
     html += '<h5>Best frame</h5><div class="ai-frame-skel"><figure><img src="' + b.url + '" alt="Best frame"><figcaption>' +
-      escHtml(ACTIVITY_LABEL[b.activity] || b.activity) + ' · ~' + b.score + '%</figcaption></figure>' +
+      escHtml(ACTIVITY_LABEL[b.activity] || b.activity) + ' · ~' + pct(b.score) + '%</figcaption></figure>' +
       '<canvas id="deepSkelBest" width="320" height="240"></canvas></div>';
   }
   if(report.worst){
     html += '<h5>Worst frame</h5><div class="ai-frame-skel"><figure><img src="' + report.worst.url + '" alt="Worst frame"><figcaption>' +
-      escHtml(ACTIVITY_LABEL[report.worst.activity] || report.worst.activity) + ' · ~' + report.worst.score + '%</figcaption></figure>' +
+      escHtml(ACTIVITY_LABEL[report.worst.activity] || report.worst.activity) + ' · ~' + pct(report.worst.score) + '%</figcaption></figure>' +
       '<canvas id="deepSkelWorst" width="320" height="240"></canvas></div>';
   }
   if(report.faultList.length){
@@ -2182,7 +2292,15 @@ function runDeepAnalysis(){
       var aBar = $('aiAnalyzeBar'); if(aBar) aBar.style.width = pct + '%';
       setText('aiAnalyzeDetail', 'Reps found so far: ' + state.reps.length + '. Camera 2 frames: ' + frames2count + '.');
       if(idx < frames1.length){ setTimeout(step, 0); return; }
+      /* v3.2.0: validate once, then every surface counts from this
+       * same list — summary included (via syncSessionReps). */
+      state.reps = validateSegments(state.reps);
+      syncSessionReps(state.reps);
       var vidEl = $('aiVideo');
+      /* v3.2.0: for a clip, the summary's "Time" is the CLIP's length,
+       * not the wall-clock time the phone spent processing it. */
+      if(AI.lastSession && AI.clipMode && vidEl && isFinite(vidEl.duration) && vidEl.duration > 0)
+        AI.lastSession.clipMs = Math.round(vidEl.duration * 1000);
       var report = buildDeepReport(state.reps, frames2count, {
         ref: ref,
         best: AI.lastSession ? AI.lastSession.bestFrames : [],
@@ -2205,7 +2323,7 @@ function runDeepAnalysis(){
 }
 function stopAndAnalyze(){
   if(!AI.running && AI.mode !== 'coaching') return;
-  announce('Recording has ended.');
+  announce(AI.clipMode ? 'Clip analysis finished.' : 'Recording has ended.');
   AI.lastSession = AI.session;
   /* v2.2.0: keep an uploaded clip playable after analysis (replay +
    * AI moments). Live recordings have no saved clip to keep. */
@@ -2223,7 +2341,7 @@ function stopAndAnalyze(){
     if(AI.clipMode) setupReplayAutoSlow();
     notifyAnalysisDone();
     saveLastSession();
-    renderLastSession();
+    renderLastSession(true);
     if(AI.clipMode) renderClipMarkers();
     var s = $('aiSummary');
     if(s){
@@ -2234,8 +2352,10 @@ function stopAndAnalyze(){
 }
 /* v2.2.0: AI moments for an uploaded clip — the worst frame, the best
  * frame, and the first moment of each distinct fault, as seek buttons.
- * Times are clip-relative: frames1 timestamps are wall-clock, so
- * subtract the session start. */
+ * v3.2.0: frame times are clip-relative for uploads (0-based) and
+ * wall-clock for live sessions; sessionBaseMs() picks the right base.
+ * The old code always subtracted the wall-clock session start, which
+ * sent every uploaded clip's moments to 0:00. */
 function fmtClipTime(secs){
   var s = Math.max(0, Math.round(secs));
   return Math.floor(s / 60) + ':' + (s % 60 < 10 ? '0' : '') + (s % 60);
@@ -2244,7 +2364,7 @@ function renderClipMarkers(){
   var wrap = $('aiClipMarkers');
   if(!wrap) return;
   var frames = AI.deep.frames1 || [];
-  var start = (AI.lastSession && AI.lastSession.startedAt) || 0;
+  var start = sessionBaseMs();
   var usable = frames.filter(function(fr){ return fr && fr.f && fr.score > 0; });
   if(!usable.length){ wrap.innerHTML = ''; showEl(wrap, false); return; }
   var worst = usable[0], best = usable[0];
@@ -2255,11 +2375,11 @@ function renderClipMarkers(){
     if(fr.tripped && !faultFirst[fr.tripped]) faultFirst[fr.tripped] = fr;
   });
   var markers = [];
-  markers.push({ fr: worst, kind: 'fix', label: 'Needs work', detail: (CHECK_LABEL[worst.tripped] || worst.tripped || 'Lowest score') + ' · ~' + worst.score + '%' });
-  if(best !== worst) markers.push({ fr: best, kind: 'good', label: 'Looks good here', detail: 'Best frame · ~' + best.score + '%' });
+  markers.push({ fr: worst, kind: 'fix', label: 'Needs work', detail: (CHECK_LABEL[worst.tripped] || worst.tripped || 'Lowest score') + ' · ~' + pct(worst.score) + '%' });
+  if(best !== worst) markers.push({ fr: best, kind: 'good', label: 'Looks good here', detail: 'Best frame · ~' + pct(best.score) + '%' });
   Object.keys(faultFirst).forEach(function(check){
     if(faultFirst[check] === worst) return;
-    markers.push({ fr: faultFirst[check], kind: 'fix', label: 'First: ' + (CHECK_LABEL[check] || check), detail: 'Fault first appears · ~' + faultFirst[check].score + '%' });
+    markers.push({ fr: faultFirst[check], kind: 'fix', label: 'First: ' + (CHECK_LABEL[check] || check), detail: 'Fault first appears · ~' + pct(faultFirst[check].score) + '%' });
   });
   /* v3.0.0: fast segments get their own moment — replay auto-slows there. */
   var fastSegs = findFastSegments(frames, start);
@@ -2436,7 +2556,7 @@ function setupReplayAutoSlow(){
   var v = $('aiVideo');
   if(!v) return;
   var frames = AI.deep.frames1 || [];
-  var start = (AI.lastSession && AI.lastSession.startedAt) || 0;
+  var start = sessionBaseMs();
   var segs = findFastSegments(frames, start);
   AI.fastSegments = segs;
   var worstT = null, worstScore = Infinity;
@@ -2461,7 +2581,8 @@ function setupReplayAutoSlow(){
 }
 function renderSessionSummary(s){
   if(!s) return;
-  var secs = Math.round((Date.now() - s.startedAt) / 1000);
+  var secs = typeof s.clipMs === 'number' ? Math.round(s.clipMs / 1000)
+    : Math.round((Date.now() - s.startedAt) / 1000);
   var repsHtml = Object.keys(s.reps).length
     ? Object.keys(s.reps).map(function(k){ return '<div class="ai-sum-row"><span>' + (ACTIVITY_LABEL[k] || k) + '</span><span>' + s.reps[k] + '</span></div>'; }).join('')
     : '<p>No full reps yet — do a rep and it will show up here.</p>';
@@ -2471,7 +2592,7 @@ function renderSessionSummary(s){
     : '<p>No repeated faults — nice.</p>';
   var fixesHtml = s.fixes.length ? '<ul>' + s.fixes.map(function(f){ return '<li>' + f + '</li>'; }).join('') + '</ul>' : '<p>No fixes yet.</p>';
   var framesHtml = s.bestFrames.length
-    ? '<div class="ai-best-frames">' + s.bestFrames.map(function(fr){ return '<figure><img src="' + fr.url + '" alt="Best frame"><figcaption>' + (ACTIVITY_LABEL[fr.activity] || fr.activity) + ' · ' + fr.score + '%</figcaption></figure>'; }).join('') + '</div>'
+    ? '<div class="ai-best-frames">' + s.bestFrames.map(function(fr){ return '<figure><img src="' + fr.url + '" alt="Best frame"><figcaption>' + (ACTIVITY_LABEL[fr.activity] || fr.activity) + ' · ' + pct(fr.score) + '%</figcaption></figure>'; }).join('') + '</div>'
     : '<p>No best frames yet — finish a rep and they will show up here.</p>';
   var body = $('aiSummaryBody');
   if(body) body.innerHTML =
@@ -2532,22 +2653,32 @@ function lastSessionDelta(r, prev){
   if(d < 0) return ' — down ' + Math.abs(d) + ' from last session';
   return ' — same best as last session';
 }
-function renderLastSession(){
+function renderLastSession(skipLatest){
   var card = $('aiLastSession'), body = $('aiLastSessionBody');
   if(!card || !body) return;
-  showEl(card, true);
   var arr = loadLastSessions();
-  if(!arr.length){
+  /* v3.2.0: right after a session finishes, that session is already
+   * on screen in full under "Your results" — showing the same session
+   * again in this card is the stacked duplication the owner filmed.
+   * In that moment this card shows the session BEFORE it (or hides);
+   * on a fresh visit it shows the latest, as before. */
+  var title = $('aiLastSessionTitle');
+  if(title) title.textContent = skipLatest ? '🕘 Previous session' : '🕘 Last session';
+  var idx = skipLatest ? 1 : 0;
+  if(!arr.length || !arr[idx]){
+    if(skipLatest){ showEl(card, false); return; }
+    showEl(card, true);
     body.innerHTML = '<p>No sessions yet — record a rep above and your last session will be saved here, on this device only.</p>';
     return;
   }
-  var r = arr[0], prev = arr[1];
+  showEl(card, true);
+  var r = arr[idx], prev = arr[idx + 1];
   var d = new Date(r.t);
   var when = d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' · ' +
     d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   var acts = Object.keys(r.reps || {}).map(function(k){ return (ACTIVITY_LABEL[k] || k) + ' ×' + r.reps[k]; }).join(' · ');
   var html = '<p><strong>' + escHtml(when) + '</strong> — ' + r.total + ' rep' + (r.total === 1 ? '' : 's') + (acts ? ' (' + escHtml(acts) + ')' : '') + '</p>';
-  if(typeof r.best === 'number') html += '<p>Best frame: <strong>' + r.best + '%</strong>' + escHtml(lastSessionDelta(r, prev)) + '</p>';
+  if(typeof r.best === 'number') html += '<p>Best frame: <strong>' + pct(r.best) + '%</strong>' + escHtml(lastSessionDelta(r, prev)) + '</p>';
   if(r.topFix) html += '<p>Top fix: ' + escHtml(r.topFix) + '</p>';
   html += '<p class="ai-note">Saved on this device only — beat the best frame next session.</p>';
   body.innerHTML = html;
@@ -2561,6 +2692,7 @@ function startAI(reuseStream, opts){
   if(AI.clipUrl){ try{ URL.revokeObjectURL(AI.clipUrl); }catch(e){} AI.clipUrl = null; }
   AI.keepClip = false;
   AI.clipMode = !!(opts && opts.clipUrl);
+  if(!AI.clipMode){ var pc = $('aiVideo') && $('aiVideo').closest ? $('aiVideo').closest('.ai-preview-card') : null; if(pc) pc.style.aspectRatio = ''; }
   AI.clipUrl = (opts && opts.clipUrl) || null;
   if(!AI.clipMode) showEl($('aiClipPlay'), false);
   AI.lastClassic = null; AI.lastTripped = null; AI.lastGuideIssue = '';
@@ -2572,6 +2704,7 @@ function startAI(reuseStream, opts){
   hideAutoSlowNote();
   var dr = $('aiDeepReport'); if(dr) dr.innerHTML = '';
   AI.hist = []; AI.state = 'none'; AI.lastCallout = 0; AI.lastFixKey = '';
+  AI.labelCand = null; AI.labelCandSince = 0; AI.startLocked = !!AI.blockMode;
   /* v3.1.0: fresh subject lock + quality counters per session. */
   AI.subject = null; AI.subjectGoneAt = null; AI.startDir = 0; AI.lastSetT = -1e9; AI.pendingExitRep = null;
   AI.quality = { sampled: 0, detected: 0, accepted: 0, rejected: 0, scored: 0 };
@@ -2588,15 +2721,17 @@ function startAI(reuseStream, opts){
   showEl($('aiStopBtn'), true);
   showEl($('aiEndSessionBtn'), true);
   showEl($('aiCamOff'), false); // recording/clip — no off overlay
-  setGestureStatus('coaching');
-  setText('aiSeeing', 'Starting camera…');
+  /* v3.2.0: an uploaded clip gets its own state language — it is not
+   * a recording and there are no hand gestures to stop it. */
+  setGestureStatus(AI.clipMode ? 'clip' : 'coaching');
+  setText('aiSeeing', AI.clipMode ? 'Loading clip…' : 'Starting camera…');
   var dual = getDual();
   var useDual = !!(dual && dual.connected && dual.localStream);
   AI.usingDual = useDual;
   function begin(){
     AI.running = true;
     if(!window.Pose){ setText('aiSeeing', 'Analyzer didn’t start — reload and try again.'); return; }
-    if(opts.announce) announce('Recording has started.');
+    if(opts.announce && !AI.clipMode) announce('Recording has started.');
     /* v2.9.0: guard the constructor like startWatching does — a
      * half-loaded pose library used to throw here and leave a dead
      * "Starting camera…" with no explanation. */
@@ -2639,6 +2774,13 @@ function startAI(reuseStream, opts){
         cv.onended = function(){ if(AI.running) stopAndAnalyze(); };
         cv.onerror = function(){ if(AI.running) stopAndAnalyze(); };
         cv.onloadedmetadata = function(){
+          /* v3.2.0: the preview card takes the CLIP's own shape. The
+           * fixed 4/3 card letterboxed a 16:9 clip into a giant black
+           * box with the athlete (and rig) shrunk to the middle —
+           * now the video and its skeleton overlay fill the frame. */
+          var card = cv.closest ? cv.closest('.ai-preview-card') : null;
+          if(card && cv.videoWidth > 0 && cv.videoHeight > 0)
+            card.style.aspectRatio = cv.videoWidth + ' / ' + cv.videoHeight;
           var dur = cv.duration;
           if(isFinite(dur) && dur > 0){
             /* Only auto-finish if the clip actually played: a frozen clip
@@ -2713,7 +2855,7 @@ function startAI(reuseStream, opts){
         }
       }
     }, 150);
-    setText('aiSeeing', useDual ? 'Watching both cameras…' : 'Watching — move into frame.');
+    setText('aiSeeing', AI.clipMode ? 'Analyzing clip…' : (useDual ? 'Watching both cameras…' : 'Watching — move into frame.'));
   }
   if(AI.clipMode){ begin(); return; }
   if(useDual){ begin(); return; }
@@ -2760,13 +2902,16 @@ function stopAI(){
   var sb = $('aiStartBtn'); if(sb){ sb.textContent = 'Start recording'; showEl(sb, true); }
   showEl($('aiStopBtn'), false);
   showEl($('aiEndSessionBtn'), false);
-  setGestureStatus('off');
+  /* v3.2.0: a kept clip stays on screen for replay — no "camera off"
+   * overlay or status over the video the user is about to rewatch. */
+  var keptClip = !!(AI.clipMode && AI.lastSession);
+  setGestureStatus(keptClip ? 'clipDone' : 'off');
   /* v2.1.8: stopping ends the camera too — sync the toggle so it
    * tells the truth (one tap turns it back on). */
   AI.camOff = true;
   var camBtn = $('aiCamToggleBtn');
   if(camBtn){ camBtn.setAttribute('aria-pressed', 'false'); camBtn.textContent = 'Camera: off'; }
-  showEl($('aiCamOff'), true);
+  showEl($('aiCamOff'), !keptClip);
 }
 
 function endSession(){
@@ -2891,7 +3036,7 @@ function initAI(){
     if(AI.running || AI.mode === 'watching') stopAI();
     var url = URL.createObjectURL(file);
     showEl($('aiLivePanel'), true);
-    startAI(false, { clipUrl: url, announce: true });
+    startAI(false, { clipUrl: url, announce: false });
   });
   var slowBtn = $('aiSlowReview');
   if(slowBtn) slowBtn.addEventListener('click', function(){
@@ -2992,6 +3137,9 @@ window.TrackAI = { setBlockStarts: setBlockStarts, getBlockStarts: function(){ r
   _test: { classify: classify, scoreFrame: scoreFrame, notifyScanDone: notifyScanDone,
     /* v2.9.0 */ storeLastSessionRecord: storeLastSessionRecord, loadLastSessions: loadLastSessions,
     renderLastSession: renderLastSession, lastSessionDelta: lastSessionDelta,
+    /* v3.2.0 */ stabilizeLabel: stabilizeLabel, validateSegments: validateSegments,
+    segmentReps: segmentReps, pct: pct, deg: deg, sessionBaseMs: sessionBaseMs,
+    setStartLocked: function(v){ AI.startLocked = !!v; }, setState: function(v){ AI.state = v; },
     prefersReducedMotion: prefersReducedMotion } };
 window.TrackFrameMarks = { build: buildFrameMarks, draw: drawFrameMarks, at: frameMarkAt,
   figureHtml: frameMarksFigureHtml, drawAll: drawAllFrameMarks,

@@ -1253,3 +1253,20 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{
 .ai-last-session strong{color:var(--volt)}
 .reveal-pop{animation:popIn .38s var(--ease-spring) both}
 @keyframes popIn{from{opacity:0;transform:translateY(10px) scale(.985)}to{opacity:1;transform:none}}
+
+/* v3.2.0 — single clean render. The owner's phone recording showed
+ * headings and lines painted twice, offset a few px. The page itself
+ * mounts every module once (verified in the DOM); the doubling is a
+ * mobile-compositor artifact of three stacked effects: gradient-
+ * clipped text (background-clip:text + color:transparent) on the
+ * headings, backdrop-filter blur on the fixed bars and panels, and
+ * transform entrance/hover animations repainting text layers. All
+ * three are removed here: solid heading colors, solid bars, no
+ * transform animations on content. */
+.screen-title h1,.panel h2,.brand-name,.score b,.sheet-score,.nut-target-num{
+  background:none;-webkit-background-clip:initial;background-clip:initial;color:var(--ink);
+}
+.topbar,.app-tabbar,.app-sidebar,.ghost-control{backdrop-filter:none;-webkit-backdrop-filter:none}
+body[data-active-view] .view-section{animation:none}
+.reveal-pop{animation:none}
+.panel:hover,.photo-slot:hover{transform:none}
