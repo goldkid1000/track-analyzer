@@ -180,7 +180,7 @@ function analyze(lm){
         var hipLift=median(featureWindow.map(function(x){return x.hipLift}));
         var crossRate=featureWindow.reduce(function(sum,x){return sum+x.crossing},0)/featureWindow.length;
         var frontView=median(featureWindow.map(function(x){return x.sideRatio}))>.58;
-        var metrics,headline,copy,issue;
+        var metrics,headline,copy,issue,setAngles=null;
         if(blockStartsOn){
           if(frontView){analysisStub.textContent='Turn side-on so block angles can be measured';setProgress(76,'Side view needed','Turn the phone or your body side-on so the angles can be measured.','working');return null;}
           var peakLean=Math.max.apply(null,featureWindow.map(function(x){return x.lean}));
@@ -196,6 +196,12 @@ function analyze(lm){
           var hasClearancePhase=startRange<.09&&Math.abs(finishCenter-startCenter)/torso>.22&&initialRearKnee<145;
           if(!hasClearancePhase){analysisStub.textContent='Include the set position and first two steps';setProgress(82,'Need the full block start','Begin with a still set position, then include the first two steps in the same clip or camera view.','working');return null;}
           metrics=[bandScore(peakLean,28,55,25),floorScore(armSplit,.65,.5),floorScore(rearExtension,150,35)];
+          /* v3.3.0: keep the measured set angles, not just their scores —
+           * the numbers themselves are what tunes a block setup (front near
+           * 90°, rear 120–135°). rearExtension is the longest rear knee
+           * reached through clearance; all three are measured, never
+           * estimated, and null outside block mode where no set exists. */
+          setAngles={frontKnee:Math.round(initialFrontKnee),rearKnee:Math.round(initialRearKnee),rearExtension:Math.round(rearExtension)};
           if(initialFrontKnee<75||initialFrontKnee>108){issue='frontKnee';headline='Set the front knee near 90°';copy='Move the front block until the knee is close to a right angle with the full foot loaded.';}
           else if(initialRearKnee<112||initialRearKnee>143){issue='rearKnee';headline='Set the rear knee at 120–135°';copy='Adjust the rear pedal until that knee sits inside the power range.';}
           else if(first.hipLift<.06){issue='hipHeight';headline='Raise the hips into the set position';copy='Put the hips a few inches above the shoulders without letting the shoulders drift past the hands.';}
@@ -232,7 +238,7 @@ function analyze(lm){
         }
         }
         var available=metrics.filter(function(v){return v!==null});
-        return {metrics:metrics,score:available.reduce(function(sum,v){return sum+v},0)/available.length,headline:headline,copy:copy,issue:issue,asym:asym};
+        return {metrics:metrics,score:available.reduce(function(sum,v){return sum+v},0)/available.length,headline:headline,copy:copy,issue:issue,asym:asym,setAngles:setAngles};
       }
 
 /* Pointing markers for AI Photo: green checks where form looks good,
@@ -583,7 +589,8 @@ function analyzeClassic(lm){
   latestClassic = {
     score: Math.max(0, Math.min(100, Math.round(a.score))), metrics: a.metrics, metricNames: content[blockStartsOn ? 'block' : 'sprint'].metrics.slice(),
     headline: a.headline, copy: a.copy, review: fb.review, goodText: fb.goodText,
-    issue: a.issue, asym: a.asym, fix: fb.fix, mode: blockStartsOn ? 'block' : 'sprint', blockStarts: blockStartsOn
+    issue: a.issue, asym: a.asym, fix: fb.fix, mode: blockStartsOn ? 'block' : 'sprint', blockStarts: blockStartsOn,
+    setAngles: a.setAngles || null
   };
   try{ window.__trackLastClassic = latestClassic; }catch(e){}
   return latestClassic;
@@ -764,7 +771,7 @@ function bindChrome(){
       if(copyEl) copyEl.textContent = latest.review;
       if(metricsEl) metricsEl.innerHTML = latest.metrics.map(function(v, i){
         return '<div class="sheet-metric"><span>' + (latest.metricNames[i] || '') + '</span><span>' + (v === null ? '—' : v + '%') + '</span></div>';
-      }).join('');
+      }).join('') + (latest.setAngles ? '<div class="sheet-metric"><span>Set position (measured)</span><span>front ' + latest.setAngles.frontKnee + '° · rear ' + latest.setAngles.rearKnee + '° · extension ' + latest.setAngles.rearExtension + '°</span></div>' : '');
     } else {
       if(scoreEl) scoreEl.textContent = '—';
       if(headEl) headEl.textContent = 'Complete a rep first';

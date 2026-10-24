@@ -3350,7 +3350,7 @@ function analyze(lm){
         var hipLift=median(featureWindow.map(function(x){return x.hipLift}));
         var crossRate=featureWindow.reduce(function(sum,x){return sum+x.crossing},0)/featureWindow.length;
         var frontView=median(featureWindow.map(function(x){return x.sideRatio}))>.58;
-        var metrics,headline,copy,issue;
+        var metrics,headline,copy,issue,setAngles=null;
         if(blockStartsOn){
           if(frontView){analysisStub.textContent='Turn side-on so block angles can be measured';setProgress(76,'Side view needed','Turn the phone or your body side-on so the angles can be measured.','working');return null;}
           var peakLean=Math.max.apply(null,featureWindow.map(function(x){return x.lean}));
@@ -3366,6 +3366,12 @@ function analyze(lm){
           var hasClearancePhase=startRange<.09&&Math.abs(finishCenter-startCenter)/torso>.22&&initialRearKnee<145;
           if(!hasClearancePhase){analysisStub.textContent='Include the set position and first two steps';setProgress(82,'Need the full block start','Begin with a still set position, then include the first two steps in the same clip or camera view.','working');return null;}
           metrics=[bandScore(peakLean,28,55,25),floorScore(armSplit,.65,.5),floorScore(rearExtension,150,35)];
+          /* v3.3.0: keep the measured set angles, not just their scores —
+           * the numbers themselves are what tunes a block setup (front near
+           * 90°, rear 120–135°). rearExtension is the longest rear knee
+           * reached through clearance; all three are measured, never
+           * estimated, and null outside block mode where no set exists. */
+          setAngles={frontKnee:Math.round(initialFrontKnee),rearKnee:Math.round(initialRearKnee),rearExtension:Math.round(rearExtension)};
           if(initialFrontKnee<75||initialFrontKnee>108){issue='frontKnee';headline='Set the front knee near 90°';copy='Move the front block until the knee is close to a right angle with the full foot loaded.';}
           else if(initialRearKnee<112||initialRearKnee>143){issue='rearKnee';headline='Set the rear knee at 120–135°';copy='Adjust the rear pedal until that knee sits inside the power range.';}
           else if(first.hipLift<.06){issue='hipHeight';headline='Raise the hips into the set position';copy='Put the hips a few inches above the shoulders without letting the shoulders drift past the hands.';}
@@ -3402,7 +3408,7 @@ function analyze(lm){
         }
         }
         var available=metrics.filter(function(v){return v!==null});
-        return {metrics:metrics,score:available.reduce(function(sum,v){return sum+v},0)/available.length,headline:headline,copy:copy,issue:issue,asym:asym};
+        return {metrics:metrics,score:available.reduce(function(sum,v){return sum+v},0)/available.length,headline:headline,copy:copy,issue:issue,asym:asym,setAngles:setAngles};
       }
 
 /* Pointing markers for AI Photo: green checks where form looks good,
@@ -3753,7 +3759,8 @@ function analyzeClassic(lm){
   latestClassic = {
     score: Math.max(0, Math.min(100, Math.round(a.score))), metrics: a.metrics, metricNames: content[blockStartsOn ? 'block' : 'sprint'].metrics.slice(),
     headline: a.headline, copy: a.copy, review: fb.review, goodText: fb.goodText,
-    issue: a.issue, asym: a.asym, fix: fb.fix, mode: blockStartsOn ? 'block' : 'sprint', blockStarts: blockStartsOn
+    issue: a.issue, asym: a.asym, fix: fb.fix, mode: blockStartsOn ? 'block' : 'sprint', blockStarts: blockStartsOn,
+    setAngles: a.setAngles || null
   };
   try{ window.__trackLastClassic = latestClassic; }catch(e){}
   return latestClassic;
@@ -3934,7 +3941,7 @@ function bindChrome(){
       if(copyEl) copyEl.textContent = latest.review;
       if(metricsEl) metricsEl.innerHTML = latest.metrics.map(function(v, i){
         return '<div class="sheet-metric"><span>' + (latest.metricNames[i] || '') + '</span><span>' + (v === null ? '—' : v + '%') + '</span></div>';
-      }).join('');
+      }).join('') + (latest.setAngles ? '<div class="sheet-metric"><span>Set position (measured)</span><span>front ' + latest.setAngles.frontKnee + '° · rear ' + latest.setAngles.rearKnee + '° · extension ' + latest.setAngles.rearExtension + '°</span></div>' : '');
     } else {
       if(scoreEl) scoreEl.textContent = '—';
       if(headEl) headEl.textContent = 'Complete a rep first';
@@ -5450,7 +5457,7 @@ window.TrackDual = {
 
 </script>
   <script>
-/* Track Analyzer — update system (v3.2.0)
+/* Track Analyzer — update system (v3.3.0)
  *
  * Tenno Vault-style: visible version, What's New panel, Check for updates,
  * and an update banner. The banner fires ONLY when version.json reports a
@@ -5499,9 +5506,10 @@ window.TrackDual = {
  */
 (function(){
 'use strict';
-var VERSION = '3.2.0';
+var VERSION = '3.3.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "3.3.0", date: "2026-10-24", notes: ["Block starts now show the measured set angles under the scores: front knee, rear knee, and the longest rear-leg extension through clearance — the actual numbers that tune a block setup (front near 90°, rear 120–135°), measured from your clip, never estimated. Sprint mode shows no set line, because no set position exists there."] },
   { version: "3.2.0", date: "2026-10-22", notes: ["Fix pass from a real phone test: text no longer doubles or ghosts on screen, and the same results no longer stack two and three times — after a session, the card under your results shows your PREVIOUS session, not the same one again.", "Uploaded clips are analyzed as clips now: the banner says “Analyzing clip…” (no more “Recording… hold up 2 fingers”), and AI moments carry real timestamps from your video — tap one and the replay jumps to that second.", "Steadier eyes: the activity label has to hold for a beat before it can change, and once your clip is a start or sprint, squat and deadlift labels can't sneak in — no more “one fix: hinge angle” in the middle of a block start.", "One rep count everywhere: your summary, the deep check and your saved sessions all count from the same checked list, so they can't disagree — and short blips no longer turn into fake reps. Scores and angles are also kept in their real ranges (no more -50% or -174°).", "Photo labels fixed — the big one: labels on your worst frame and AI Photo now sit in one neat column at the edge of the picture with lines pointing to each joint, so they never pile on top of each other or get cut off.", "Your clip fills its frame: the preview now takes your video's own shape and the skeleton rides on you at full size, instead of a tiny figure lost in a black box."] },
   { version: "3.1.0", date: "2026-10-22", notes: ["Real-video fix pass, tested on an actual block-start clip: side-view starts now measure. The camera sees your near leg clearly and your far leg barely — the analyzer used to demand both, so a clean side-on start scored nothing at all. It now measures the leg it can see and says so.", "Subject lock: the analysis stays on YOUR athlete. Someone crossing in the background — or the camera 'finding' a person in the scenery after you leave the frame — is set aside, not measured.", "Clean endings: when you run out of frame, the start still counts, and the report says when you left (\"left the frame at ~4.2s\") and how much of the clip was really measured.", "Starts register both ways now — driving out to the left counts the same as to the right — and the push out of the blocks is read as part of the start instead of being split into fake squat and hinge reps.", "Every deep check now ends with an analysis-quality line: frames measured, frames set aside, and a camera tip when the yield was low."] },
   { version: "3.0.0", date: "2026-10-21", notes: [
@@ -7380,7 +7388,7 @@ function renderClassicMetrics(cr){
   var box = $('aiClassicMetrics');
   if(!box) return;
   if(!cr){ box.innerHTML = ''; return; }
-  box.innerHTML = cr.metrics.map(function(v, i){
+  var html = cr.metrics.map(function(v, i){
     var name = cr.metricNames[i] || '';
     var pct = v === null ? 0 : Math.round(v);
     var label = v === null ? 'Side view needed' : pct + '%';
@@ -7388,6 +7396,12 @@ function renderClassicMetrics(cr){
     return '<div class="ai-metric"><div class="ai-metric-row"><span>' + name + '</span><span>' + label + '</span></div>' +
       '<div class="ai-metric-bar"><i style="width:' + pct + '%;background:' + color + '"></i></div></div>';
   }).join('');
+  /* v3.3.0: block starts also show the measured set angles — the numbers
+   * that actually tune a setup — under the scores, never instead of them. */
+  if(cr.setAngles){
+    html += '<div class="ai-metric"><div class="ai-metric-row"><span>Set position (measured)</span><span>front ' + cr.setAngles.frontKnee + '° · rear ' + cr.setAngles.rearKnee + '° · extension ' + cr.setAngles.rearExtension + '°</span></div></div>';
+  }
+  box.innerHTML = html;
 }
 /* Keep the Guide tab's fix video in step with the live rep check. */
 function updateGuideVideo(cr){
@@ -9554,6 +9568,7 @@ window.TrackAI = { setBlockStarts: setBlockStarts, getBlockStarts: function(){ r
     renderLastSession: renderLastSession, lastSessionDelta: lastSessionDelta,
     /* v3.2.0 */ stabilizeLabel: stabilizeLabel, validateSegments: validateSegments,
     segmentReps: segmentReps, pct: pct, deg: deg, sessionBaseMs: sessionBaseMs,
+    /* v3.3.0 */ renderClassicMetrics: renderClassicMetrics,
     setStartLocked: function(v){ AI.startLocked = !!v; }, setState: function(v){ AI.state = v; },
     prefersReducedMotion: prefersReducedMotion } };
 window.TrackFrameMarks = { build: buildFrameMarks, draw: drawFrameMarks, at: frameMarkAt,

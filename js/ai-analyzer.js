@@ -965,7 +965,7 @@ function renderClassicMetrics(cr){
   var box = $('aiClassicMetrics');
   if(!box) return;
   if(!cr){ box.innerHTML = ''; return; }
-  box.innerHTML = cr.metrics.map(function(v, i){
+  var html = cr.metrics.map(function(v, i){
     var name = cr.metricNames[i] || '';
     var pct = v === null ? 0 : Math.round(v);
     var label = v === null ? 'Side view needed' : pct + '%';
@@ -973,6 +973,12 @@ function renderClassicMetrics(cr){
     return '<div class="ai-metric"><div class="ai-metric-row"><span>' + name + '</span><span>' + label + '</span></div>' +
       '<div class="ai-metric-bar"><i style="width:' + pct + '%;background:' + color + '"></i></div></div>';
   }).join('');
+  /* v3.3.0: block starts also show the measured set angles — the numbers
+   * that actually tune a setup — under the scores, never instead of them. */
+  if(cr.setAngles){
+    html += '<div class="ai-metric"><div class="ai-metric-row"><span>Set position (measured)</span><span>front ' + cr.setAngles.frontKnee + '° · rear ' + cr.setAngles.rearKnee + '° · extension ' + cr.setAngles.rearExtension + '°</span></div></div>';
+  }
+  box.innerHTML = html;
 }
 /* Keep the Guide tab's fix video in step with the live rep check. */
 function updateGuideVideo(cr){
@@ -3139,6 +3145,7 @@ window.TrackAI = { setBlockStarts: setBlockStarts, getBlockStarts: function(){ r
     renderLastSession: renderLastSession, lastSessionDelta: lastSessionDelta,
     /* v3.2.0 */ stabilizeLabel: stabilizeLabel, validateSegments: validateSegments,
     segmentReps: segmentReps, pct: pct, deg: deg, sessionBaseMs: sessionBaseMs,
+    /* v3.3.0 */ renderClassicMetrics: renderClassicMetrics,
     setStartLocked: function(v){ AI.startLocked = !!v; }, setState: function(v){ AI.state = v; },
     prefersReducedMotion: prefersReducedMotion } };
 window.TrackFrameMarks = { build: buildFrameMarks, draw: drawFrameMarks, at: frameMarkAt,

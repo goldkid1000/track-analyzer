@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.3.0",
+    "date": "2026-10-24",
+    "notify": true,
+    "notes": [
+      "Block starts now show the measured set angles under the scores: front knee, rear knee, and the longest rear-leg extension through clearance — the actual numbers that tune a block setup (front near 90°, rear 120–135°), measured from your clip, never estimated. Sprint mode shows no set line, because no set position exists there."
+    ]
+  },
+  {
     "version": "3.2.0",
     "date": "2026-10-22",
     "notify": true,
