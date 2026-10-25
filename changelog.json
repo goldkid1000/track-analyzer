@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.4.0",
+    "date": "2026-10-25",
+    "notify": true,
+    "notes": [
+      "Block-start rear extension is now measured from the moment your hips leave the set position — a long set hold used to make the app report your set angle (~126°) as your clearance extension even when you fully extended. The reported extension is now the real peak you reached through clearance."
+    ]
+  },
+  {
     "version": "3.3.0",
     "date": "2026-10-24",
     "notify": true,

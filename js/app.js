@@ -187,8 +187,20 @@ function analyze(lm){
           var first=featureWindow[0],rearIsLeft=(first.ankleLx*first.facing)<(first.ankleRx*first.facing);
           var initialRearKnee=rearIsLeft?first.kneeL:first.kneeR;
           var initialFrontKnee=rearIsLeft?first.kneeR:first.kneeL;
-          var clearanceFrames=featureWindow.slice(0,18);
-          var rearExtension=Math.max.apply(null,clearanceFrames.map(function(x){return rearIsLeft?x.kneeL:x.kneeR}));
+          /* v3.4.0: the rear leg's longest extension is measured from
+           * the moment the hips first leave the set position through
+           * the end of the window — not from the window's oldest
+           * frames. A real set hold (24+ frames) used to push the whole
+           * clearance into the window's newer half, so the old
+           * slice(0,18) only ever saw set frames and reported the set
+           * angle (~126°) as the "extension" of a leg that had fully
+           * extended. The first six frames are verified still by
+           * hasClearancePhase, so their mean centerX (startCenter)
+           * is a valid set baseline; 0.05 torso units sits above
+           * hip jitter and far below the 0.22 clearance threshold. */
+          var clearanceStart=0;
+          for(var ci=0;ci<featureWindow.length;ci++){ if(Math.abs(featureWindow[ci].centerX-startCenter)/torso>0.05){ clearanceStart=ci; break; } }
+          var rearExtension=Math.max.apply(null,featureWindow.slice(clearanceStart).map(function(x){return rearIsLeft?x.kneeL:x.kneeR}));
           var firstSix=featureWindow.slice(0,6),lastSix=featureWindow.slice(-6);
           var startRange=range(firstSix.map(function(x){return x.centerX}))/torso;
           var startCenter=firstSix.reduce(function(sum,x){return sum+x.centerX},0)/firstSix.length;

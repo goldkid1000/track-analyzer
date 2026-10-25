@@ -1,8 +1,8 @@
 {
-  "version": "3.3.0",
-  "updated": "2026-10-24",
+  "version": "3.4.0",
+  "updated": "2026-10-25",
   "notify": true,
   "notes": [
-    "Block starts now show the measured set angles under the scores: front knee, rear knee, and the longest rear-leg extension through clearance — the actual numbers that tune a block setup (front near 90°, rear 120–135°), measured from your clip, never estimated. Sprint mode shows no set line, because no set position exists there."
+    "Block-start rear extension is now measured from the moment your hips leave the set position — a long set hold used to make the app report your set angle (~126°) as your clearance extension even when you fully extended. The reported extension is now the real peak you reached through clearance."
   ]
 }
