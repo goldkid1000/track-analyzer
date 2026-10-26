@@ -3367,14 +3367,21 @@ function analyze(lm){
            * extended. The first six frames are verified still by
            * hasClearancePhase, so their mean centerX (startCenter)
            * is a valid set baseline; 0.05 torso units sits above
-           * hip jitter and far below the 0.22 clearance threshold. */
-          var clearanceStart=0;
-          for(var ci=0;ci<featureWindow.length;ci++){ if(Math.abs(featureWindow[ci].centerX-startCenter)/torso>0.05){ clearanceStart=ci; break; } }
-          var rearExtension=Math.max.apply(null,featureWindow.slice(clearanceStart).map(function(x){return rearIsLeft?x.kneeL:x.kneeR}));
+           * hip jitter and far below the 0.22 clearance threshold.
+           * v3.5.0: ORDER FIX — v3.4.0's loop read startCenter BEFORE
+           * its var assignment below, so it was undefined, every
+           * comparison was NaN, clearanceStart stayed 0, and the
+           * extension was still a whole-window max. A rear leg
+           * straightened while settling in the set (~177°) leaked in
+           * as the "extension" of a clearance that only reached
+           * ~149°. The baseline is now computed FIRST, then used. */
           var firstSix=featureWindow.slice(0,6),lastSix=featureWindow.slice(-6);
           var startRange=range(firstSix.map(function(x){return x.centerX}))/torso;
           var startCenter=firstSix.reduce(function(sum,x){return sum+x.centerX},0)/firstSix.length;
           var finishCenter=lastSix.reduce(function(sum,x){return sum+x.centerX},0)/lastSix.length;
+          var clearanceStart=0;
+          for(var ci=0;ci<featureWindow.length;ci++){ if(Math.abs(featureWindow[ci].centerX-startCenter)/torso>0.05){ clearanceStart=ci; break; } }
+          var rearExtension=Math.max.apply(null,featureWindow.slice(clearanceStart).map(function(x){return rearIsLeft?x.kneeL:x.kneeR}));
           var hasClearancePhase=startRange<.09&&Math.abs(finishCenter-startCenter)/torso>.22&&initialRearKnee<145;
           if(!hasClearancePhase){analysisStub.textContent='Include the set position and first two steps';setProgress(82,'Need the full block start','Begin with a still set position, then include the first two steps in the same clip or camera view.','working');return null;}
           metrics=[bandScore(peakLean,28,55,25),floorScore(armSplit,.65,.5),floorScore(rearExtension,150,35)];
@@ -5469,7 +5476,7 @@ window.TrackDual = {
 
 </script>
   <script>
-/* Track Analyzer — update system (v3.4.0)
+/* Track Analyzer — update system (v3.5.0)
  *
  * Tenno Vault-style: visible version, What's New panel, Check for updates,
  * and an update banner. The banner fires ONLY when version.json reports a
@@ -5518,9 +5525,10 @@ window.TrackDual = {
  */
 (function(){
 'use strict';
-var VERSION = '3.4.0';
+var VERSION = '3.5.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "3.5.0", date: "2026-10-26", notes: ["Block-start rear extension really is clearance-only now — v3.4.0's fix read its set baseline before it was computed, so it silently measured the whole window and a rear leg straightened while settling in the set (~177°) still leaked in as your clearance extension. The baseline is computed first now, so the reported extension is the peak you actually reached after your hips left the set position."] },
   { version: "3.4.0", date: "2026-10-25", notes: ["Block-start rear extension is now measured from the moment your hips leave the set position — a long set hold used to make the app report your set angle (~126°) as your clearance extension even when you fully extended. The reported extension is now the real peak you reached through clearance."] },
   { version: "3.3.0", date: "2026-10-24", notes: ["Block starts now show the measured set angles under the scores: front knee, rear knee, and the longest rear-leg extension through clearance — the actual numbers that tune a block setup (front near 90°, rear 120–135°), measured from your clip, never estimated. Sprint mode shows no set line, because no set position exists there."] },
   { version: "3.2.0", date: "2026-10-22", notes: ["Fix pass from a real phone test: text no longer doubles or ghosts on screen, and the same results no longer stack two and three times — after a session, the card under your results shows your PREVIOUS session, not the same one again.", "Uploaded clips are analyzed as clips now: the banner says “Analyzing clip…” (no more “Recording… hold up 2 fingers”), and AI moments carry real timestamps from your video — tap one and the replay jumps to that second.", "Steadier eyes: the activity label has to hold for a beat before it can change, and once your clip is a start or sprint, squat and deadlift labels can't sneak in — no more “one fix: hinge angle” in the middle of a block start.", "One rep count everywhere: your summary, the deep check and your saved sessions all count from the same checked list, so they can't disagree — and short blips no longer turn into fake reps. Scores and angles are also kept in their real ranges (no more -50% or -174°).", "Photo labels fixed — the big one: labels on your worst frame and AI Photo now sit in one neat column at the edge of the picture with lines pointing to each joint, so they never pile on top of each other or get cut off.", "Your clip fills its frame: the preview now takes your video's own shape and the skeleton rides on you at full size, instead of a tiny figure lost in a black box."] },

@@ -197,14 +197,21 @@ function analyze(lm){
            * extended. The first six frames are verified still by
            * hasClearancePhase, so their mean centerX (startCenter)
            * is a valid set baseline; 0.05 torso units sits above
-           * hip jitter and far below the 0.22 clearance threshold. */
-          var clearanceStart=0;
-          for(var ci=0;ci<featureWindow.length;ci++){ if(Math.abs(featureWindow[ci].centerX-startCenter)/torso>0.05){ clearanceStart=ci; break; } }
-          var rearExtension=Math.max.apply(null,featureWindow.slice(clearanceStart).map(function(x){return rearIsLeft?x.kneeL:x.kneeR}));
+           * hip jitter and far below the 0.22 clearance threshold.
+           * v3.5.0: ORDER FIX — v3.4.0's loop read startCenter BEFORE
+           * its var assignment below, so it was undefined, every
+           * comparison was NaN, clearanceStart stayed 0, and the
+           * extension was still a whole-window max. A rear leg
+           * straightened while settling in the set (~177°) leaked in
+           * as the "extension" of a clearance that only reached
+           * ~149°. The baseline is now computed FIRST, then used. */
           var firstSix=featureWindow.slice(0,6),lastSix=featureWindow.slice(-6);
           var startRange=range(firstSix.map(function(x){return x.centerX}))/torso;
           var startCenter=firstSix.reduce(function(sum,x){return sum+x.centerX},0)/firstSix.length;
           var finishCenter=lastSix.reduce(function(sum,x){return sum+x.centerX},0)/lastSix.length;
+          var clearanceStart=0;
+          for(var ci=0;ci<featureWindow.length;ci++){ if(Math.abs(featureWindow[ci].centerX-startCenter)/torso>0.05){ clearanceStart=ci; break; } }
+          var rearExtension=Math.max.apply(null,featureWindow.slice(clearanceStart).map(function(x){return rearIsLeft?x.kneeL:x.kneeR}));
           var hasClearancePhase=startRange<.09&&Math.abs(finishCenter-startCenter)/torso>.22&&initialRearKnee<145;
           if(!hasClearancePhase){analysisStub.textContent='Include the set position and first two steps';setProgress(82,'Need the full block start','Begin with a still set position, then include the first two steps in the same clip or camera view.','working');return null;}
           metrics=[bandScore(peakLean,28,55,25),floorScore(armSplit,.65,.5),floorScore(rearExtension,150,35)];

@@ -1,8 +1,8 @@
 {
-  "version": "3.4.0",
-  "updated": "2026-10-25",
+  "version": "3.5.0",
+  "updated": "2026-10-26",
   "notify": true,
   "notes": [
-    "Block-start rear extension is now measured from the moment your hips leave the set position — a long set hold used to make the app report your set angle (~126°) as your clearance extension even when you fully extended. The reported extension is now the real peak you reached through clearance."
+    "Block-start rear extension really is clearance-only now — v3.4.0's fix read its set baseline before it was computed, so it silently measured the whole window and a rear leg straightened while settling in the set (~177°) still leaked in as your clearance extension. The baseline is computed first now, so the reported extension is the peak you actually reached after your hips left the set position."
   ]
 }
