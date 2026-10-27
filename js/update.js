@@ -1,4 +1,4 @@
-/* Track Analyzer — update system (v3.5.0)
+/* Track Analyzer — update system (v3.6.0)
  *
  * Tenno Vault-style: visible version, What's New panel, Check for updates,
  * and an update banner. The banner fires ONLY when version.json reports a
@@ -47,9 +47,10 @@
  */
 (function(){
 'use strict';
-var VERSION = '3.5.0';
+var VERSION = '3.6.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "3.6.0", date: "2026-10-27", notes: ["Block-start set angles are now read from the median of your first six still set frames instead of a single frame — one jittery camera frame used to move the reported rear knee from 126° to 142° and could even throw out a good rep. The numbers you tune your blocks with now stay steady even when one frame wobbles."] },
   { version: "3.5.0", date: "2026-10-26", notes: ["Block-start rear extension really is clearance-only now — v3.4.0's fix read its set baseline before it was computed, so it silently measured the whole window and a rear leg straightened while settling in the set (~177°) still leaked in as your clearance extension. The baseline is computed first now, so the reported extension is the peak you actually reached after your hips left the set position."] },
   { version: "3.4.0", date: "2026-10-25", notes: ["Block-start rear extension is now measured from the moment your hips leave the set position — a long set hold used to make the app report your set angle (~126°) as your clearance extension even when you fully extended. The reported extension is now the real peak you reached through clearance."] },
   { version: "3.3.0", date: "2026-10-24", notes: ["Block starts now show the measured set angles under the scores: front knee, rear knee, and the longest rear-leg extension through clearance — the actual numbers that tune a block setup (front near 90°, rear 120–135°), measured from your clip, never estimated. Sprint mode shows no set line, because no set position exists there."] },

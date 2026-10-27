@@ -184,9 +184,23 @@ function analyze(lm){
         if(blockStartsOn){
           if(frontView){analysisStub.textContent='Turn side-on so block angles can be measured';setProgress(76,'Side view needed','Turn the phone or your body side-on so the angles can be measured.','working');return null;}
           var peakLean=Math.max.apply(null,featureWindow.map(function(x){return x.lean}));
-          var first=featureWindow[0],rearIsLeft=(first.ankleLx*first.facing)<(first.ankleRx*first.facing);
-          var initialRearKnee=rearIsLeft?first.kneeL:first.kneeR;
-          var initialFrontKnee=rearIsLeft?first.kneeR:first.kneeL;
+          /* v3.6.0: the set readings below come from the MEDIAN of the
+           * first six still frames, not from featureWindow[0] alone.
+           * One jittery MediaPipe frame used to move the reported rear
+           * set angle 126° -> 142° (and could push it past the 145°
+           * clearance gate, killing a valid rep outright) — a false
+           * coaching cue on a correctly-set block. The median of six
+           * still frames shrugs off a lone bad frame; hasClearancePhase
+           * already verifies those six frames are still, so they are
+           * all genuine set frames. */
+          var firstSix=featureWindow.slice(0,6),lastSix=featureWindow.slice(-6);
+          var setFacing=featureWindow[0].facing;
+          var medAnkleL=median(firstSix.map(function(x){return x.ankleLx}));
+          var medAnkleR=median(firstSix.map(function(x){return x.ankleRx}));
+          var rearIsLeft=(medAnkleL*setFacing)<(medAnkleR*setFacing);
+          var initialRearKnee=median(firstSix.map(function(x){return rearIsLeft?x.kneeL:x.kneeR}));
+          var initialFrontKnee=median(firstSix.map(function(x){return rearIsLeft?x.kneeR:x.kneeL}));
+          var setHipLift=median(firstSix.map(function(x){return x.hipLift}));
           /* v3.4.0: the rear leg's longest extension is measured from
            * the moment the hips first leave the set position through
            * the end of the window — not from the window's oldest
@@ -205,7 +219,6 @@ function analyze(lm){
            * straightened while settling in the set (~177°) leaked in
            * as the "extension" of a clearance that only reached
            * ~149°. The baseline is now computed FIRST, then used. */
-          var firstSix=featureWindow.slice(0,6),lastSix=featureWindow.slice(-6);
           var startRange=range(firstSix.map(function(x){return x.centerX}))/torso;
           var startCenter=firstSix.reduce(function(sum,x){return sum+x.centerX},0)/firstSix.length;
           var finishCenter=lastSix.reduce(function(sum,x){return sum+x.centerX},0)/lastSix.length;
@@ -223,7 +236,7 @@ function analyze(lm){
           setAngles={frontKnee:Math.round(initialFrontKnee),rearKnee:Math.round(initialRearKnee),rearExtension:Math.round(rearExtension)};
           if(initialFrontKnee<75||initialFrontKnee>108){issue='frontKnee';headline='Set the front knee near 90°';copy='Move the front block until the knee is close to a right angle with the full foot loaded.';}
           else if(initialRearKnee<112||initialRearKnee>143){issue='rearKnee';headline='Set the rear knee at 120–135°';copy='Adjust the rear pedal until that knee sits inside the power range.';}
-          else if(first.hipLift<.06){issue='hipHeight';headline='Raise the hips into the set position';copy='Put the hips a few inches above the shoulders without letting the shoulders drift past the hands.';}
+          else if(setHipLift<.06){issue='hipHeight';headline='Raise the hips into the set position';copy='Put the hips a few inches above the shoulders without letting the shoulders drift past the hands.';}
           else if(metrics[0]<=metrics[1]&&(metrics[2]===null||metrics[0]<=metrics[2])){
             issue=peakLean<28?'earlyRise':'foldedHips';
             headline=peakLean<28?'Earn your height':'Connect the clearance line';

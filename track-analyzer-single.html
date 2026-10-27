@@ -3354,9 +3354,23 @@ function analyze(lm){
         if(blockStartsOn){
           if(frontView){analysisStub.textContent='Turn side-on so block angles can be measured';setProgress(76,'Side view needed','Turn the phone or your body side-on so the angles can be measured.','working');return null;}
           var peakLean=Math.max.apply(null,featureWindow.map(function(x){return x.lean}));
-          var first=featureWindow[0],rearIsLeft=(first.ankleLx*first.facing)<(first.ankleRx*first.facing);
-          var initialRearKnee=rearIsLeft?first.kneeL:first.kneeR;
-          var initialFrontKnee=rearIsLeft?first.kneeR:first.kneeL;
+          /* v3.6.0: the set readings below come from the MEDIAN of the
+           * first six still frames, not from featureWindow[0] alone.
+           * One jittery MediaPipe frame used to move the reported rear
+           * set angle 126° -> 142° (and could push it past the 145°
+           * clearance gate, killing a valid rep outright) — a false
+           * coaching cue on a correctly-set block. The median of six
+           * still frames shrugs off a lone bad frame; hasClearancePhase
+           * already verifies those six frames are still, so they are
+           * all genuine set frames. */
+          var firstSix=featureWindow.slice(0,6),lastSix=featureWindow.slice(-6);
+          var setFacing=featureWindow[0].facing;
+          var medAnkleL=median(firstSix.map(function(x){return x.ankleLx}));
+          var medAnkleR=median(firstSix.map(function(x){return x.ankleRx}));
+          var rearIsLeft=(medAnkleL*setFacing)<(medAnkleR*setFacing);
+          var initialRearKnee=median(firstSix.map(function(x){return rearIsLeft?x.kneeL:x.kneeR}));
+          var initialFrontKnee=median(firstSix.map(function(x){return rearIsLeft?x.kneeR:x.kneeL}));
+          var setHipLift=median(firstSix.map(function(x){return x.hipLift}));
           /* v3.4.0: the rear leg's longest extension is measured from
            * the moment the hips first leave the set position through
            * the end of the window — not from the window's oldest
@@ -3375,7 +3389,6 @@ function analyze(lm){
            * straightened while settling in the set (~177°) leaked in
            * as the "extension" of a clearance that only reached
            * ~149°. The baseline is now computed FIRST, then used. */
-          var firstSix=featureWindow.slice(0,6),lastSix=featureWindow.slice(-6);
           var startRange=range(firstSix.map(function(x){return x.centerX}))/torso;
           var startCenter=firstSix.reduce(function(sum,x){return sum+x.centerX},0)/firstSix.length;
           var finishCenter=lastSix.reduce(function(sum,x){return sum+x.centerX},0)/lastSix.length;
@@ -3393,7 +3406,7 @@ function analyze(lm){
           setAngles={frontKnee:Math.round(initialFrontKnee),rearKnee:Math.round(initialRearKnee),rearExtension:Math.round(rearExtension)};
           if(initialFrontKnee<75||initialFrontKnee>108){issue='frontKnee';headline='Set the front knee near 90°';copy='Move the front block until the knee is close to a right angle with the full foot loaded.';}
           else if(initialRearKnee<112||initialRearKnee>143){issue='rearKnee';headline='Set the rear knee at 120–135°';copy='Adjust the rear pedal until that knee sits inside the power range.';}
-          else if(first.hipLift<.06){issue='hipHeight';headline='Raise the hips into the set position';copy='Put the hips a few inches above the shoulders without letting the shoulders drift past the hands.';}
+          else if(setHipLift<.06){issue='hipHeight';headline='Raise the hips into the set position';copy='Put the hips a few inches above the shoulders without letting the shoulders drift past the hands.';}
           else if(metrics[0]<=metrics[1]&&(metrics[2]===null||metrics[0]<=metrics[2])){
             issue=peakLean<28?'earlyRise':'foldedHips';
             headline=peakLean<28?'Earn your height':'Connect the clearance line';
@@ -5476,7 +5489,7 @@ window.TrackDual = {
 
 </script>
   <script>
-/* Track Analyzer — update system (v3.5.0)
+/* Track Analyzer — update system (v3.6.0)
  *
  * Tenno Vault-style: visible version, What's New panel, Check for updates,
  * and an update banner. The banner fires ONLY when version.json reports a
@@ -5525,9 +5538,10 @@ window.TrackDual = {
  */
 (function(){
 'use strict';
-var VERSION = '3.5.0';
+var VERSION = '3.6.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "3.6.0", date: "2026-10-27", notes: ["Block-start set angles are now read from the median of your first six still set frames instead of a single frame — one jittery camera frame used to move the reported rear knee from 126° to 142° and could even throw out a good rep. The numbers you tune your blocks with now stay steady even when one frame wobbles."] },
   { version: "3.5.0", date: "2026-10-26", notes: ["Block-start rear extension really is clearance-only now — v3.4.0's fix read its set baseline before it was computed, so it silently measured the whole window and a rear leg straightened while settling in the set (~177°) still leaked in as your clearance extension. The baseline is computed first now, so the reported extension is the peak you actually reached after your hips left the set position."] },
   { version: "3.4.0", date: "2026-10-25", notes: ["Block-start rear extension is now measured from the moment your hips leave the set position — a long set hold used to make the app report your set angle (~126°) as your clearance extension even when you fully extended. The reported extension is now the real peak you reached through clearance."] },
   { version: "3.3.0", date: "2026-10-24", notes: ["Block starts now show the measured set angles under the scores: front knee, rear knee, and the longest rear-leg extension through clearance — the actual numbers that tune a block setup (front near 90°, rear 120–135°), measured from your clip, never estimated. Sprint mode shows no set line, because no set position exists there."] },
