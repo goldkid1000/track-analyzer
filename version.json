@@ -1,8 +1,8 @@
 {
-  "version": "3.6.0",
-  "updated": "2026-10-27",
-  "notify": true,
   "notes": [
-    "Block-start set angles are now read from the median of your first six still set frames instead of a single frame \u2014 one jittery camera frame used to move the reported rear knee from 126\u00b0 to 142\u00b0 and could even throw out a good rep. The numbers you tune your blocks with now stay steady even when one frame wobbles."
-  ]
+    "Block-start facing no longer comes from a single frame — it is now the majority of your first six still set frames, falling back to the direction you actually ran when the nose is hidden for the whole set. A leftward start whose first set frame lost the nose used to report the front and rear knees swapped (front 126° / rear 90°) with a false front-knee cue; the set numbers now stay true even when the nose flickers."
+  ],
+  "notify": true,
+  "updated": "2026-10-28",
+  "version": "3.7.0"
 }

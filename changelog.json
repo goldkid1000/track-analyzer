@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.7.0",
+    "date": "2026-10-28",
+    "notify": true,
+    "notes": [
+      "Block-start facing no longer comes from a single frame — it is now the majority of your first six still set frames, falling back to the direction you actually ran when the nose is hidden for the whole set. A leftward start whose first set frame lost the nose used to report the front and rear knees swapped (front 126° / rear 90°) with a false front-knee cue; the set numbers now stay true even when the nose flickers."
+    ]
+  },
+  {
     "version": "3.6.0",
     "date": "2026-10-27",
     "notify": true,

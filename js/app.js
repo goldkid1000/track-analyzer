@@ -137,7 +137,7 @@ function extractFeatures(lm){
         if((lm[15].x-shoulderMid)*(lm[11].x-shoulderMid)<0)crossing++;
         if((lm[16].x-shoulderMid)*(lm[12].x-shoulderMid)<0)crossing++;
         return {
-          torso:torso,centerX:hip.x,kneeY:(lm[25].y+lm[26].y)/2,facing:facing,ankleLx:lm[27].x,ankleRx:lm[28].x,
+          torso:torso,centerX:hip.x,kneeY:(lm[25].y+lm[26].y)/2,facing:facing,noseVis:(lm[0]&&lm[0].visibility)||0,ankleLx:lm[27].x,ankleRx:lm[28].x,
           shoulderY:shoulder.y,hipY:hip.y,headY:lm[0]?lm[0].y:shoulder.y,
           lean:Math.atan2(Math.abs(shoulder.x-hip.x),Math.abs(shoulder.y-hip.y))*180/Math.PI,
           elbow:(angle(lm[11],lm[13],lm[15])+angle(lm[12],lm[14],lm[16]))/2,
@@ -194,7 +194,24 @@ function analyze(lm){
            * already verifies those six frames are still, so they are
            * all genuine set frames. */
           var firstSix=featureWindow.slice(0,6),lastSix=featureWindow.slice(-6);
-          var setFacing=featureWindow[0].facing;
+          /* v3.7.0: facing comes from the SET, not from one frame.
+           * v3.6.0 moved the angles to a six-frame median but left
+           * setFacing as featureWindow[0].facing — and the nose is
+           * NOT in the visibility gate, so a frame whose nose MediaPipe
+           * lost reports facing +1 by default. A leftward athlete
+           * whose first set frame lost the nose got front/rear swapped
+           * (front 126 / rear 90) and the extension read off the wrong
+           * leg — a false front-knee cue on a correct set. Majority
+           * vote of the set frames with a visible nose; if none has
+           * one, the measured clearance direction (finish minus start)
+           * is the facing — the athlete runs the way they face, and
+           * hasClearancePhase already requires real displacement. */
+          var startRange=range(firstSix.map(function(x){return x.centerX}))/torso;
+          var startCenter=firstSix.reduce(function(sum,x){return sum+x.centerX},0)/firstSix.length;
+          var finishCenter=lastSix.reduce(function(sum,x){return sum+x.centerX},0)/lastSix.length;
+          var noseVotes=0;
+          for(var ni=0;ni<firstSix.length;ni++){ if(firstSix[ni].noseVis>.45) noseVotes+=firstSix[ni].facing; }
+          var setFacing=noseVotes!==0?Math.sign(noseVotes):(finishCenter>=startCenter?1:-1);
           var medAnkleL=median(firstSix.map(function(x){return x.ankleLx}));
           var medAnkleR=median(firstSix.map(function(x){return x.ankleRx}));
           var rearIsLeft=(medAnkleL*setFacing)<(medAnkleR*setFacing);
@@ -219,9 +236,6 @@ function analyze(lm){
            * straightened while settling in the set (~177°) leaked in
            * as the "extension" of a clearance that only reached
            * ~149°. The baseline is now computed FIRST, then used. */
-          var startRange=range(firstSix.map(function(x){return x.centerX}))/torso;
-          var startCenter=firstSix.reduce(function(sum,x){return sum+x.centerX},0)/firstSix.length;
-          var finishCenter=lastSix.reduce(function(sum,x){return sum+x.centerX},0)/lastSix.length;
           var clearanceStart=0;
           for(var ci=0;ci<featureWindow.length;ci++){ if(Math.abs(featureWindow[ci].centerX-startCenter)/torso>0.05){ clearanceStart=ci; break; } }
           var rearExtension=Math.max.apply(null,featureWindow.slice(clearanceStart).map(function(x){return rearIsLeft?x.kneeL:x.kneeR}));
