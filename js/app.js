@@ -238,15 +238,29 @@ function analyze(lm){
            * ~149°. The baseline is now computed FIRST, then used. */
           var clearanceStart=0;
           for(var ci=0;ci<featureWindow.length;ci++){ if(Math.abs(featureWindow[ci].centerX-startCenter)/torso>0.05){ clearanceStart=ci; break; } }
-          var rearExtension=Math.max.apply(null,featureWindow.slice(clearanceStart).map(function(x){return rearIsLeft?x.kneeL:x.kneeR}));
+          /* v3.8.0: the extension is a SUSTAINED peak, not a one-frame max.
+           * v3.6.0 proved a lone MediaPipe frame can swing a knee angle
+           * by 16°+; the old whole-window max let exactly one such frame
+           * set the reported extension — a modest clearance (~149° on
+           * every other frame) reported as 177° because a single frame
+           * glitched straight. A real drive-phase extension lasts
+           * several frames at phone frame rates, so the reported value
+           * is the second-highest clearance reading: a peak confirmed
+           * by at least two frames. With only one clearance frame the
+           * single reading stands (nothing else exists to confirm it). */
+          var rearVals=featureWindow.slice(clearanceStart).map(function(x){return rearIsLeft?x.kneeL:x.kneeR});
+          rearVals.sort(function(a,b){return b-a;});
+          var rearExtension=rearVals.length>1?rearVals[1]:(rearVals.length?rearVals[0]:0);
           var hasClearancePhase=startRange<.09&&Math.abs(finishCenter-startCenter)/torso>.22&&initialRearKnee<145;
           if(!hasClearancePhase){analysisStub.textContent='Include the set position and first two steps';setProgress(82,'Need the full block start','Begin with a still set position, then include the first two steps in the same clip or camera view.','working');return null;}
           metrics=[bandScore(peakLean,28,55,25),floorScore(armSplit,.65,.5),floorScore(rearExtension,150,35)];
           /* v3.3.0: keep the measured set angles, not just their scores —
            * the numbers themselves are what tunes a block setup (front near
            * 90°, rear 120–135°). rearExtension is the longest rear knee
-           * reached through clearance; all three are measured, never
-           * estimated, and null outside block mode where no set exists. */
+           * sustained through clearance (v3.8.0: confirmed by at least
+           * two frames, never a single-frame spike); all three are
+           * measured, never estimated, and null outside block mode
+           * where no set exists. */
           setAngles={frontKnee:Math.round(initialFrontKnee),rearKnee:Math.round(initialRearKnee),rearExtension:Math.round(rearExtension)};
           if(initialFrontKnee<75||initialFrontKnee>108){issue='frontKnee';headline='Set the front knee near 90°';copy='Move the front block until the knee is close to a right angle with the full foot loaded.';}
           else if(initialRearKnee<112||initialRearKnee>143){issue='rearKnee';headline='Set the rear knee at 120–135°';copy='Adjust the rear pedal until that knee sits inside the power range.';}

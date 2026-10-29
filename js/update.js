@@ -47,9 +47,10 @@
  */
 (function(){
 'use strict';
-var VERSION = '3.7.0';
+var VERSION = '3.8.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "3.8.0", date: "2026-10-29", notes: ["Block-start rear extension is now a sustained peak, not a one-frame max — a clearance that only reached about 149° used to report 177° because a single camera frame glitched straight. The reported extension now has to show up on at least two frames, so one wobbly frame can't inflate the number you tune your drive with; a full extension held through clearance still reports near-straight."] },
   { version: "3.7.0", date: "2026-10-28", notes: ["Block-start facing no longer comes from a single frame — it is now the majority of your first six still set frames, falling back to the direction you actually ran when the nose is hidden for the whole set. A leftward start whose first set frame lost the nose used to report the front and rear knees swapped (front 126° / rear 90°) with a false front-knee cue; the set numbers now stay true even when the nose flickers."] },
   { version: "3.6.0", date: "2026-10-27", notes: ["Block-start set angles are now read from the median of your first six still set frames instead of a single frame — one jittery camera frame used to move the reported rear knee from 126° to 142° and could even throw out a good rep. The numbers you tune your blocks with now stay steady even when one frame wobbles."] },
   { version: "3.5.0", date: "2026-10-26", notes: ["Block-start rear extension really is clearance-only now — v3.4.0's fix read its set baseline before it was computed, so it silently measured the whole window and a rear leg straightened while settling in the set (~177°) still leaked in as your clearance extension. The baseline is computed first now, so the reported extension is the peak you actually reached after your hips left the set position."] },
