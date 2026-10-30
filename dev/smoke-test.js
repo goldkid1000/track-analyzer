@@ -1377,15 +1377,63 @@ const W = sandbox;
     T32.sessionBaseMs() === 0);
   W.TrackAI.stopNow(); await sleep(30);
 
-  // Version stamps: 3.2.0 everywhere, single file rebuilt + carries the new code.
-  t('v3.2.0 version: changelog tops at 3.2.0 with notify:true',
+  // Version stamps: dynamic since v2.9.0 — the old pins to '3.2.0' failed
+  // on every release after it (2 stale failures at 3.8.0). The changelog
+  // must top at whatever version.json says, and the single-file build
+  // must carry that same version plus the fix pass.
+  t('v3.2.0 version: changelog tops at the current version with notify:true',
     (() => { const cl = JSON.parse(fs.readFileSync(ROOT + 'changelog.json', 'utf8'));
-      return cl[0].version === '3.2.0' && cl[0].notify === true; })());
-  t('v3.2.0 version: single-file build is 3.2.0 and contains the fix pass',
+      return cl[0].version === CURVER && cl[0].notify === true; })());
+  t('v3.2.0 version: single-file build is the current version and contains the fix pass',
     (() => { const single = fs.readFileSync(ROOT + 'track-analyzer-single.html', 'utf8');
-      return single.indexOf("var VERSION = '3.2.0'") >= 0 && single.indexOf('stabilizeLabel') >= 0 &&
+      return single.indexOf("var VERSION = '" + CURVER + "'") >= 0 && single.indexOf('stabilizeLabel') >= 0 &&
         single.indexOf('validateSegments') >= 0 && single.indexOf('Analyzing clip') >= 0 &&
         single.indexOf('layoutPhotoLabels') >= 0 && single.indexOf('sessionBaseMs') >= 0; })());
+
+  /* ================= v3.9.0 ================= */
+  // Sprint asymmetry peaks are sustained peaks, not one-frame maxes.
+  // A single glitched frame (one leg reading straight for a frame)
+  // used to invent an asymmetry callout and send the athlete to
+  // single-leg work on the wrong side — the same failure mode v3.8.0
+  // fixed for the block-start extension.
+  const SP39 = W.TrackClassic._test.sustainedPeak;
+  t('v3.9.0 sustainedPeak: one 178° spike over 150° readings reports 150°',
+    SP39([178, 150, 150, 149, 150]) === 150);
+  t('v3.9.0 sustainedPeak: a peak held on two frames reports it (177/176)',
+    SP39([177, 176, 150]) === 176);
+  t('v3.9.0 sustainedPeak: single reading stands, empty reads 0',
+    SP39([162]) === 162 && SP39([]) === 0);
+  // End to end through the classic engine: 24 synthetic side-view
+  // frames, knee angle set geometrically (hip-knee vertical, ankle at
+  // the chosen angle from the knee). Whole body drifts +0.004/frame
+  // so the window has real motion.
+  function classicPose39(kneeLdeg, kneeRdeg, i){
+    const dx = i * 0.004, lm = [];
+    for(let k = 0; k < 33; k++) lm.push({ x: 0.5, y: 0.5, visibility: 0.95 });
+    const P = (idx, x, y) => { lm[idx] = { x: x, y: y, visibility: 0.95 }; };
+    const ankle = (kx, deg) => { const r = deg * Math.PI / 180; return [kx + 0.2 * Math.sin(r), 0.70 + 0.2 * (-Math.cos(r))]; };
+    P(0, 0.70 + dx, 0.20);
+    P(11, 0.47 + dx, 0.30); P(12, 0.53 + dx, 0.30);
+    P(13, 0.47 + dx, 0.50); P(14, 0.53 + dx, 0.50);
+    P(15, 0.47 + dx, 0.70); P(16, 0.53 + dx, 0.70);
+    P(23, 0.46 + dx, 0.50); P(24, 0.54 + dx, 0.50);
+    P(25, 0.46 + dx, 0.70); P(26, 0.54 + dx, 0.70);
+    const aL = ankle(0.46 + dx, kneeLdeg), aR = ankle(0.54 + dx, kneeRdeg);
+    P(27, aL[0], aL[1]); P(28, aR[0], aR[1]);
+    return lm;
+  }
+  function runClassic39(kneeL, kneeR){
+    W.TrackClassic.setBlockStarts(false);
+    let out = null;
+    for(let i = 0; i < 24; i++){ const r = W.TrackClassic.analyze(classicPose39(kneeL(i), kneeR(i), i)); if(r) out = r; }
+    return out;
+  }
+  t('v3.9.0 asym: one 178° glitch frame on the right leg reports NO asymmetry',
+    (() => { const r = runClassic39(() => 150, i => i === 0 ? 178 : 150);
+      return !!r && r.asym === null; })());
+  t('v3.9.0 asym: a real sustained gap (150° vs 175°) still reports the lagging leg',
+    (() => { const r = runClassic39(() => 150, () => 175);
+      return !!r && r.asym && r.asym.type === 'knee' && r.asym.lagging === 'left' && r.asym.diff === 25; })());
 
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);

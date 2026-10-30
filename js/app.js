@@ -54,6 +54,15 @@ function floorScore(v, min, falloff){ return v >= min ? 100 : clamp(100 - (min -
 function ceilingScore(v, max, falloff){ return v <= max ? 100 : clamp(100 - (v - max) / falloff * 100, 0, 100); }
 function median(values){ var a = values.slice().sort(function(x, y){ return x - y; }); return a[Math.floor(a.length / 2)]; }
 function range(values){ return Math.max.apply(null, values) - Math.min.apply(null, values); }
+/* v3.9.0: a SUSTAINED peak — the second-highest reading, i.e. a peak
+ * confirmed by at least two frames. v3.8.0 proved a lone MediaPipe
+ * frame can swing a knee angle by 16°+; any one-frame max lets exactly
+ * one glitched frame set a reported number. A real extension lasts
+ * several frames at phone frame rates. With only one reading the
+ * single value stands (nothing else exists to confirm it); with none,
+ * 0. Shared by the block-start rear extension and the sprint
+ * asymmetry peaks so both report the same honest rule. */
+function sustainedPeak(values){ var a = values.slice().sort(function(x, y){ return y - x; }); return a.length > 1 ? a[1] : (a.length ? a[0] : 0); }
 
 
 var content={
@@ -249,8 +258,7 @@ function analyze(lm){
            * by at least two frames. With only one clearance frame the
            * single reading stands (nothing else exists to confirm it). */
           var rearVals=featureWindow.slice(clearanceStart).map(function(x){return rearIsLeft?x.kneeL:x.kneeR});
-          rearVals.sort(function(a,b){return b-a;});
-          var rearExtension=rearVals.length>1?rearVals[1]:(rearVals.length?rearVals[0]:0);
+          var rearExtension=sustainedPeak(rearVals);
           var hasClearancePhase=startRange<.09&&Math.abs(finishCenter-startCenter)/torso>.22&&initialRearKnee<145;
           if(!hasClearancePhase){analysisStub.textContent='Include the set position and first two steps';setProgress(82,'Need the full block start','Begin with a still set position, then include the first two steps in the same clip or camera view.','working');return null;}
           metrics=[bandScore(peakLean,28,55,25),floorScore(armSplit,.65,.5),floorScore(rearExtension,150,35)];
@@ -284,10 +292,15 @@ function analyze(lm){
         // through flexion and extension. In block mode the legs have different
         // jobs (rear extends once, front has not yet) and in arms mode the legs
         // may not cycle at all, so a peak gap there would be a false positive.
+        // v3.9.0: the knee peaks are SUSTAINED peaks, not one-frame maxes —
+        // the old Math.max let a single glitched frame (one leg reading
+        // straight for a frame) invent an asymmetry callout and send the
+        // athlete to single-leg work on the wrong side. Same rule as the
+        // v3.8.0 block-start extension fix.
         var asym=null;
         if(!blockStartsOn){
-        var kneeExtL=Math.max.apply(null,featureWindow.map(function(x){return x.kneeL}));
-        var kneeExtR=Math.max.apply(null,featureWindow.map(function(x){return x.kneeR}));
+        var kneeExtL=sustainedPeak(featureWindow.map(function(x){return x.kneeL}));
+        var kneeExtR=sustainedPeak(featureWindow.map(function(x){return x.kneeR}));
         var kneeGap=kneeExtL-kneeExtR;
         if(Math.abs(kneeGap)>=18)asym={type:'knee',diff:Math.round(Math.abs(kneeGap)),strong:kneeGap>0?'left':'right',lagging:kneeGap>0?'right':'left'};
         else{
@@ -858,6 +871,8 @@ window.TrackClassic = {
   analyzeClassic: analyzeClassic,
   analyze: analyze,
   extractFeatures: extractFeatures,
+  /* v3.9.0 test hooks (smoke tests only). */
+  _test: { sustainedPeak: sustainedPeak },
   content: content,
   fixVideos: fixVideos,
   coachFix: coachFix,

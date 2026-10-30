@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.9.0",
+    "date": "2026-10-30",
+    "notify": true,
+    "notes": [
+      "Sprint asymmetry now uses a sustained peak, not a one-frame max — one glitched frame with a leg reading straight used to invent an asymmetry callout and send you to single-leg work on the wrong side. A real left/right gap held across frames still reports, with the lagging leg named."
+    ]
+  },
+  {
     "version": "3.8.0",
     "date": "2026-10-29",
     "notify": true,
