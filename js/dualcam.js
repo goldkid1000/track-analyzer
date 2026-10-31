@@ -950,6 +950,10 @@ function dFloor(v, min, fall){ return v >= min ? 100 : dClamp(100 - (min - v) / 
 function dCeil(v, max, fall){ return v <= max ? 100 : dClamp(100 - (v - max) / fall * 100, 0, 100); }
 function dMedian(vals){ var a = vals.slice().sort(function(x, y){ return x - y; }); return a[Math.floor(a.length / 2)]; }
 function dRange(vals){ return Math.max.apply(null, vals) - Math.min.apply(null, vals); }
+/* v3.10.0: SUSTAINED peak — the second-highest reading, mirroring the
+ * classic engine's sustainedPeak (v3.8.0/v3.9.0). A peak confirmed by at
+ * least two frames; a single reading stands, empty reads 0. */
+function dSustainedPeak(vals){ var a = vals.slice().sort(function(x, y){ return y - x; }); return a.length > 1 ? a[1] : (a.length ? a[0] : 0); }
 function extractDualFeatures(lm){
   var ids = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
   for(var i = 0; i < ids.length; i++){ var p = lm[ids[i]]; if(!p || (p.visibility !== undefined && p.visibility <= 0.58)) return null; }
@@ -992,7 +996,11 @@ function summarizeDual(mode, feats){
   var thighSep = Math.max.apply(null, feats.map(function(f){ return f.thighSep; }));
   var shin = dMedian(feats.map(function(f){ return f.shinReach; }));
   var armSplit = Math.max.apply(null, feats.map(function(f){ return f.armSplit; }));
-  var rearExt = Math.max.apply(null, feats.map(function(f){ return Math.max(f.kneeL, f.kneeR); }));
+  /* v3.10.0: rear extension is a SUSTAINED peak, not a one-frame max —
+   * the classic engine fixed this in v3.8.0 but this two-camera port
+   * still took Math.max, so one glitched straight-leg frame inflated
+   * the reported extension (and could flip the headline fix). */
+  var rearExt = dSustainedPeak(feats.map(function(f){ return Math.max(f.kneeL, f.kneeR); }));
   var minKnee = Math.min.apply(null, feats.map(function(f){ return Math.min(f.kneeL, f.kneeR); }));
   var armExc = Math.max(dRange(feats.map(function(f){ return f.wristLY; })), dRange(feats.map(function(f){ return f.wristRY; }))) / dMedian(feats.map(function(f){ return f.torso; }));
   var cross = feats.reduce(function(s, f){ return s + f.crossing; }, 0) / feats.length;
@@ -1012,7 +1020,10 @@ function summarizeDual(mode, feats){
     metrics = [dBand(elbow, 60, 110, 40), dCeil(cross, 0.2, 0.4), dFloor(maxHand, 0.15, 0.6)];
     issues = ['elbowShape', 'straightTrack', 'backDrive'];
   } else if(mode === 'block'){
-    metrics = [dBand(Math.max.apply(null, feats.map(function(f){ return f.lean; })), 28, 55, 25), dFloor(armSplit, 0.65, 0.5), dFloor(rearExt, 150, 35)];
+    /* v3.10.0: peak lean is a SUSTAINED peak too — one wobbly frame
+     * reading 70° used to tank the projection metric (100 -> 40) and
+     * crown projection the headline fix on an otherwise clean start. */
+    metrics = [dBand(dSustainedPeak(feats.map(function(f){ return f.lean; })), 28, 55, 25), dFloor(armSplit, 0.65, 0.5), dFloor(rearExt, 150, 35)];
     issues = ['projection', 'armSplit', 'rearPush'];
   } else {
     metrics = [dCeil(lean, 16, 22), dCeil(thigh, 26, 34), dFloor(armExc, 0.5, 0.55)];
@@ -1467,7 +1478,7 @@ window.TrackDual = {
   setCamera: setDualCamera, switchCamera: switchDualCamera,
   startSkeleton: startDualRig, stopSkeleton: stopDualRig,
   _test: { gestureTick: dualGestureTick, setRigStatus: setDualRigStatus, setGestureStatus: setDualGestureStatus, setRole: function(r){ D.role = r; },
-    summarizeDual: summarizeDual, extractDualFeatures: extractDualFeatures, dualSampleScore: dualSampleScore, dualMoments: dualMoments, dualScoreText: dualScoreText },
+    summarizeDual: summarizeDual, extractDualFeatures: extractDualFeatures, dualSampleScore: dualSampleScore, dualMoments: dualMoments, dualScoreText: dualScoreText, dSustainedPeak: dSustainedPeak },
   isCamOff: function(){ return D.camOff; }
 };
 })();

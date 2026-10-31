@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.10.0",
+    "date": "2026-10-31",
+    "notify": true,
+    "notes": [
+      "Two-camera block starts now use sustained peaks, not one-frame maxes — the single-camera engine fixed this in v3.8.0/v3.9.0 but the two-camera port still took the max, so one glitched frame could inflate the reported rear-leg extension or tank the projection score and crown the wrong headline fix. A real extension or lean held across frames still reports; one wobbly frame no longer moves the number."
+    ]
+  },
+  {
     "version": "3.9.0",
     "date": "2026-10-30",
     "notify": true,

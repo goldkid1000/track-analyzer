@@ -47,9 +47,10 @@
  */
 (function(){
 'use strict';
-var VERSION = '3.9.0';
+var VERSION = '3.10.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "3.10.0", date: "2026-10-31", notes: ["Two-camera block starts now use sustained peaks, not one-frame maxes — the single-camera engine fixed this in v3.8.0/v3.9.0 but the two-camera port still took the max, so one glitched frame could inflate the reported rear-leg extension or tank the projection score and crown the wrong headline fix. A real extension or lean held across frames still reports; one wobbly frame no longer moves the number."] },
   { version: "3.9.0", date: "2026-10-30", notes: ["Sprint asymmetry now uses a sustained peak, not a one-frame max — one glitched frame with a leg reading straight used to invent an asymmetry callout and send you to single-leg work on the wrong side. A real left/right gap held across frames still reports, with the lagging leg named."] },
   { version: "3.8.0", date: "2026-10-29", notes: ["Block-start rear extension is now a sustained peak, not a one-frame max — a clearance that only reached about 149° used to report 177° because a single camera frame glitched straight. The reported extension now has to show up on at least two frames, so one wobbly frame can't inflate the number you tune your drive with; a full extension held through clearance still reports near-straight."] },
   { version: "3.7.0", date: "2026-10-28", notes: ["Block-start facing no longer comes from a single frame — it is now the majority of your first six still set frames, falling back to the direction you actually ran when the nose is hidden for the whole set. A leftward start whose first set frame lost the nose used to report the front and rear knees swapped (front 126° / rear 90°) with a false front-knee cue; the set numbers now stay true even when the nose flickers."] },

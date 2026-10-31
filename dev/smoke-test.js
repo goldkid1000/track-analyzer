@@ -1435,6 +1435,42 @@ const W = sandbox;
     (() => { const r = runClassic39(() => 150, () => 175);
       return !!r && r.asym && r.asym.type === 'knee' && r.asym.lagging === 'left' && r.asym.diff === 25; })());
 
+  /* ================= v3.10.0 ================= */
+  // The two-camera port still took one-frame maxes for its block-start
+  // numbers (v3.8.0/v3.9.0 fixed only the single-camera engine): one
+  // glitched frame reading a leg straight inflated the reported rear
+  // extension, and one wobbly lean frame tanked the projection score
+  // (70° lean -> metric 40) and crowned the wrong headline fix. Both
+  // are sustained peaks now, same rule as the classic engine.
+  const DSP310 = W.TrackDual._test.dSustainedPeak;
+  t('v3.10.0 dual sustainedPeak: one 178° spike over 149° readings reports 149°',
+    DSP310([178, 149, 149, 149]) === 149);
+  t('v3.10.0 dual sustainedPeak: a peak held on two frames reports it, single stands, empty reads 0',
+    DSP310([177, 176, 149]) === 176 && DSP310([162]) === 162 && DSP310([]) === 0);
+  // End to end through summarizeDual('block'): wrists steady so the
+  // clip is not read as an arm swing; armSplit high so it is not the
+  // worst metric. Metrics order: [projection, armSplit, rearPush].
+  function dualFeat310(lean, knee){
+    return { lean: lean, elbow: 90, thigh: 40, thighSep: 40, shinReach: 0.5,
+      armSplit: 0.9, kneeL: knee, kneeR: knee, wristLY: 0.3, wristRY: 0.3,
+      torso: 0.5, crossing: 0, hipLift: 1, shoulderY: 0.3 };
+  }
+  t('v3.10.0 dual block: one glitch frame (177° knee, 70° lean) moves neither block number',
+    (() => { const feats = [];
+      for(let i = 0; i < 9; i++) feats.push(dualFeat310(40, 149));
+      feats.push(dualFeat310(70, 177));
+      const r = W.TrackDual._test.summarizeDual('block', feats);
+      return r.metrics[0] === 100 && Math.abs(r.metrics[2] - (100 - 100 / 35)) < 0.01; })());
+  t('v3.10.0 dual block: a real extension held on two frames still reports full rear push',
+    (() => { const feats = [];
+      for(let i = 0; i < 8; i++) feats.push(dualFeat310(40, 149));
+      feats.push(dualFeat310(40, 175)); feats.push(dualFeat310(40, 175));
+      const r = W.TrackDual._test.summarizeDual('block', feats);
+      return r.metrics[0] === 100 && r.metrics[2] === 100; })());
+  t('v3.10.0 dual block: a single-frame clip stands on its one reading',
+    (() => { const r = W.TrackDual._test.summarizeDual('block', [dualFeat310(40, 177)]);
+      return r.metrics[2] === 100; })());
+
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR', e && e.stack || e); process.exit(2); });
