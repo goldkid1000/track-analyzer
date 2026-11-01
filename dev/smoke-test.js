@@ -1471,6 +1471,52 @@ const W = sandbox;
     (() => { const r = W.TrackDual._test.summarizeDual('block', [dualFeat310(40, 177)]);
       return r.metrics[2] === 100; })());
 
+  /* ================= v3.11.0 ================= */
+  // The two-camera port re-decided facing on EVERY frame and defaulted
+  // to +1 whenever MediaPipe lost the nose — and a head-down block
+  // start loses the nose a lot, so a whole leftward clip could read
+  // with flipped shin reach and 90° fallback thighs. Facing is now
+  // remembered across the clip (nose sets it, memory holds it), falls
+  // back to the direction actually travelled, and resets per clip.
+  // Geometry below runs LEFT: knees/ankles ahead of the hips toward
+  // -x, so correct facing (-1) reads shinReach POSITIVE and the old
+  // +1 default reads it NEGATIVE — the sign is the assertion.
+  function dualLm311(o){
+    const pt = (x, y, v) => ({ x, y, visibility: v === undefined ? 1 : v });
+    const lm = [];
+    lm[0] = pt(o.noseX === undefined ? 0.5 : o.noseX, 0.2, o.noseVis === undefined ? 1 : o.noseVis);
+    const sx = o.shoulderX === undefined ? 0.5 : o.shoulderX;
+    lm[11] = pt(sx - 0.05, 0.3); lm[12] = pt(sx + 0.05, 0.3);
+    lm[13] = pt(sx - 0.1, 0.4); lm[14] = pt(sx + 0.1, 0.4);
+    lm[15] = pt(sx - 0.1, 0.5); lm[16] = pt(sx + 0.1, 0.5);
+    lm[23] = pt(0.45, 0.7); lm[24] = pt(0.55, 0.7);
+    lm[25] = pt(0.38, 0.85); lm[26] = pt(0.42, 0.85);
+    lm[27] = pt(0.28, 1.0); lm[28] = pt(0.32, 1.0);
+    return lm;
+  }
+  const dualEx = W.TrackDual._test.extractDualFeatures, dualReset = W.TrackDual._test.resetDualFacing;
+  t('v3.11.0 dual facing: nose lost mid-clip keeps the remembered leftward facing',
+    (() => { dualReset();
+      const f1 = dualEx(dualLm311({ noseX: 0.3 }));
+      const f2 = dualEx(dualLm311({ noseVis: 0 }));
+      return !!f1 && !!f2 && f1.shinReach > 0 && f2.shinReach > 0; })());
+  t('v3.11.0 dual facing: nose never seen, travelled direction takes over once moving',
+    (() => { dualReset();
+      const first = dualEx(dualLm311({ noseVis: 0, shoulderX: 0.6 }));
+      const later = [0.55, 0.5, 0.45].map(x => dualEx(dualLm311({ noseVis: 0, shoulderX: x })));
+      return !!first && first.shinReach < 0 && later.every(f => !!f && f.shinReach > 0); })());
+  t('v3.11.0 dual facing: reset clears memory, no leak into the next clip',
+    (() => { dualReset();
+      dualEx(dualLm311({ noseX: 0.3 }));
+      dualReset();
+      const f = dualEx(dualLm311({ noseVis: 0 }));
+      return !!f && f.shinReach < 0; })());
+  t('v3.11.0 dual facing: a visible nose overrides remembered facing',
+    (() => { dualReset();
+      dualEx(dualLm311({ noseX: 0.3 }));
+      const f = dualEx(dualLm311({ noseX: 0.7 }));
+      return !!f && f.shinReach < 0; })());
+
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR', e && e.stack || e); process.exit(2); });

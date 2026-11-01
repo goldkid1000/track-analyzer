@@ -47,9 +47,10 @@
  */
 (function(){
 'use strict';
-var VERSION = '3.10.0';
+var VERSION = '3.11.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "3.11.0", date: "2026-11-01", notes: ["Two-camera facing is now remembered across the clip instead of re-decided every frame — a head-down block start loses the nose a lot, and the old per-frame default (+1 whenever the nose was lost) could flip a whole leftward clip's shin reach and thigh readings. A visible nose still sets the direction; while it is lost, the last confirmed direction holds, and if no nose was ever seen, the direction you actually travelled is used. The memory resets for every clip, so one clip's direction never leaks into the next."] },
   { version: "3.10.0", date: "2026-10-31", notes: ["Two-camera block starts now use sustained peaks, not one-frame maxes — the single-camera engine fixed this in v3.8.0/v3.9.0 but the two-camera port still took the max, so one glitched frame could inflate the reported rear-leg extension or tank the projection score and crown the wrong headline fix. A real extension or lean held across frames still reports; one wobbly frame no longer moves the number."] },
   { version: "3.9.0", date: "2026-10-30", notes: ["Sprint asymmetry now uses a sustained peak, not a one-frame max — one glitched frame with a leg reading straight used to invent an asymmetry callout and send you to single-leg work on the wrong side. A real left/right gap held across frames still reports, with the lagging leg named."] },
   { version: "3.8.0", date: "2026-10-29", notes: ["Block-start rear extension is now a sustained peak, not a one-frame max — a clearance that only reached about 149° used to report 177° because a single camera frame glitched straight. The reported extension now has to show up on at least two frames, so one wobbly frame can't inflate the number you tune your drive with; a full extension held through clearance still reports near-straight."] },

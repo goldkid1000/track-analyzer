@@ -180,6 +180,10 @@ var D = {
   watchPose: null, watchTimer: null, poseSeen: false, poseMissingSince: 0,
   calib: null, calibPending: false,
   localAnalysis: null, remoteAnalysis: null,
+  /* v3.11.0: two-camera facing memory — the last nose-confirmed
+   * direction (0 = none yet) plus the shoulder track used for the
+   * travelled-direction fallback. Reset per clip. */
+  faceMem: 0, faceFirstX: null, faceLastX: null,
   clipExpected: 0, clipGot: 0, clipParts: {},
   cameraReady: null,
   /* v2.2.0 stop-sync: host Stop must reach the joiner even if the first
@@ -954,6 +958,9 @@ function dRange(vals){ return Math.max.apply(null, vals) - Math.min.apply(null, 
  * classic engine's sustainedPeak (v3.8.0/v3.9.0). A peak confirmed by at
  * least two frames; a single reading stands, empty reads 0. */
 function dSustainedPeak(vals){ var a = vals.slice().sort(function(x, y){ return y - x; }); return a.length > 1 ? a[1] : (a.length ? a[0] : 0); }
+/* v3.11.0: per-clip facing memory — reset by runLocalAnalysis before
+ * each clip, so one clip's direction never leaks into the next. */
+function resetDualFacing(){ D.faceMem = 0; D.faceFirstX = null; D.faceLastX = null; }
 function extractDualFeatures(lm){
   var ids = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
   for(var i = 0; i < ids.length; i++){ var p = lm[ids[i]]; if(!p || (p.visibility !== undefined && p.visibility <= 0.58)) return null; }
@@ -961,7 +968,24 @@ function extractDualFeatures(lm){
   var torso = Math.hypot(shoulder.x - hip.x, shoulder.y - hip.y);
   if(torso < 0.04) return null;
   if(D.calib && D.calib.torso) torso = (torso + D.calib.torso) / 2; // lined-up scale reference (smoothing only)
-  var facing = ((lm[0] && lm[0].visibility > 0.45) ? Math.sign(lm[0].x - shoulder.x) : 0) || 1;
+  /* v3.11.0: facing is REMEMBERED across the clip, not re-decided per
+   * frame. The old line defaulted to +1 whenever MediaPipe lost the
+   * nose — and a head-down block start loses the nose a lot, so a
+   * whole leftward clip could read with flipped shin reach and 90°
+   * fallback thighs. Now: a visible nose sets the facing and it is
+   * kept while the nose is lost; with no nose seen yet, the direction
+   * the shoulders have actually travelled is the facing (the athlete
+   * runs the way they face, mirroring the single-camera set vote in
+   * v3.7.0); +1 remains only as the last resort for a still clip
+   * whose nose never appeared. */
+  if(D.faceFirstX === null) D.faceFirstX = shoulder.x;
+  D.faceLastX = shoulder.x;
+  var noseSign = (lm[0] && lm[0].visibility > 0.45) ? Math.sign(lm[0].x - shoulder.x) : 0;
+  var facing;
+  if(noseSign !== 0){ facing = noseSign; D.faceMem = noseSign; }
+  else if(D.faceMem) facing = D.faceMem;
+  else if(Math.abs(D.faceLastX - D.faceFirstX) >= 0.03) facing = Math.sign(D.faceLastX - D.faceFirstX);
+  else facing = 1;
   function fwdThigh(hipP, kneeP){
     if((kneeP.x - hipP.x) * facing <= 0) return 90;
     var a = Math.abs(Math.atan2(kneeP.y - hipP.y, kneeP.x - hipP.x) * 180 / Math.PI);
@@ -1062,6 +1086,7 @@ function dualMoments(mode, samples, analysis){
   return out;
 }
 function runLocalAnalysis(){
+  resetDualFacing(); // v3.11.0: facing memory is per clip, never carried over
   if(!D.localBlob || !window.Pose){ D.localAnalysis = { label: D.localLabel, score: null, metrics: [0, 0, 0], issue: 'unavailable', headline: 'Check unavailable on this clip', fix: DUAL_FIX.unavailable, frames: 0, activity: 'none', moments: [] }; finishLocalAnalysis(); return; }
   var url = URL.createObjectURL(D.localBlob);
   var v = document.createElement('video');
@@ -1478,7 +1503,7 @@ window.TrackDual = {
   setCamera: setDualCamera, switchCamera: switchDualCamera,
   startSkeleton: startDualRig, stopSkeleton: stopDualRig,
   _test: { gestureTick: dualGestureTick, setRigStatus: setDualRigStatus, setGestureStatus: setDualGestureStatus, setRole: function(r){ D.role = r; },
-    summarizeDual: summarizeDual, extractDualFeatures: extractDualFeatures, dualSampleScore: dualSampleScore, dualMoments: dualMoments, dualScoreText: dualScoreText, dSustainedPeak: dSustainedPeak },
+    summarizeDual: summarizeDual, extractDualFeatures: extractDualFeatures, resetDualFacing: resetDualFacing, dualSampleScore: dualSampleScore, dualMoments: dualMoments, dualScoreText: dualScoreText, dSustainedPeak: dSustainedPeak },
   isCamOff: function(){ return D.camOff; }
 };
 })();
