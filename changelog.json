@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.12.0",
+    "date": "2026-11-02",
+    "notify": true,
+    "notes": [
+      "The main analyzer's facing is now remembered across the clip, like the two-camera fix yesterday — the old code read the nose every frame with no visibility check (a lost nose's guessed position set the direction) and fell back to where you stood in the frame, so a leftward athlete on the left half of the frame could read with a flipped shin reach and a real overstride looking clean. A visible nose still sets the direction; while it is lost, the last confirmed direction holds, and if no nose was ever seen, the direction you actually travelled is used. The memory resets for every clip, so one clip's direction never leaks into the next."
+    ]
+  },
+  {
     "version": "3.11.0",
     "date": "2026-11-01",
     "notify": true,

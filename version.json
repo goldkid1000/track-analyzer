@@ -1,8 +1,8 @@
 {
   "notes": [
-    "Two-camera facing is now remembered across the clip instead of re-decided every frame \u2014 a head-down block start loses the nose a lot, and the old per-frame default (+1 whenever the nose was lost) could flip a whole leftward clip's shin reach and thigh readings. A visible nose still sets the direction; while it is lost, the last confirmed direction holds, and if no nose was ever seen, the direction you actually travelled is used. The memory resets for every clip, so one clip's direction never leaks into the next."
+    "The main analyzer's facing is now remembered across the clip, like the two-camera fix yesterday — the old code read the nose every frame with no visibility check (a lost nose's guessed position set the direction) and fell back to where you stood in the frame, so a leftward athlete on the left half of the frame could read with a flipped shin reach and a real overstride looking clean. A visible nose still sets the direction; while it is lost, the last confirmed direction holds, and if no nose was ever seen, the direction you actually travelled is used. The memory resets for every clip, so one clip's direction never leaks into the next."
   ],
   "notify": true,
-  "updated": "2026-11-01",
-  "version": "3.11.0"
+  "updated": "2026-11-02",
+  "version": "3.12.0"
 }

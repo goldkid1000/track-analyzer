@@ -1517,6 +1517,56 @@ const W = sandbox;
       const f = dualEx(dualLm311({ noseX: 0.7 }));
       return !!f && f.shinReach < 0; })());
 
+  /* ================= v3.12.0 ================= */
+  // The MAIN AI engine (extractAI, used for uploaded clips and live
+  // camera) had the same disease v3.11.0 cured in the two-camera
+  // port — worse: its nose read had NO visibility gate at all (a
+  // lost nose's guessed x set the facing) and its fallback was
+  // absolute frame position (hips left of centre -> +1), so a
+  // leftward athlete on the left half of the frame read with a
+  // flipped shinReach sign — a real overstride reading as clean.
+  // Facing is now remembered like v3.11.0: visible nose sets it,
+  // memory holds it while the nose is lost, travelled direction
+  // wins when no nose was ever seen, +1 only for a still clip.
+  // Geometry runs LEFT: ankle ahead of the knee toward -x, so
+  // correct facing (-1) reads shinReach POSITIVE, +1 NEGATIVE.
+  function aiLm312(o){
+    const pt = (x, y, v) => ({ x, y, visibility: v === undefined ? 0.95 : v });
+    const lm = [];
+    for(let i = 0; i < 33; i++) lm[i] = pt(0.5, 0.5);
+    lm[0] = pt(o.noseX === undefined ? 0.5 : o.noseX, 0.14, o.noseVis === undefined ? 0.95 : o.noseVis);
+    const hx = o.hipX === undefined ? 0.5 : o.hipX;
+    lm[11] = pt(hx - 0.03, 0.25); lm[12] = pt(hx + 0.03, 0.25);
+    lm[13] = pt(hx - 0.06, 0.4); lm[14] = pt(hx + 0.06, 0.4);
+    lm[15] = pt(hx - 0.06, 0.52); lm[16] = pt(hx + 0.06, 0.52);
+    lm[23] = pt(hx - 0.03, 0.55); lm[24] = pt(hx + 0.03, 0.55);
+    lm[25] = pt(hx - 0.12, 0.72); lm[26] = pt(hx + 0.09, 0.72);
+    lm[27] = pt(hx - 0.22, 0.88); lm[28] = pt(hx + 0.07, 0.88);
+    return lm;
+  }
+  const aiEx = W.TrackAIQuality.extractAI, aiReset = W.TrackAIQuality.resetAIFacing;
+  t('v3.12.0 AI facing: nose lost mid-clip keeps remembered leftward facing (guessed nose ignored)',
+    (() => { aiReset();
+      const f1 = aiEx(aiLm312({ noseX: 0.41 }));
+      const f2 = aiEx(aiLm312({ noseX: 0.7, noseVis: 0 }));
+      return !!f1 && !!f2 && !f1.missing.length && !f2.missing.length && f1.shinReach > 0 && f2.shinReach > 0; })());
+  t('v3.12.0 AI facing: nose never seen, left-half athlete travelling left — travel beats frame position',
+    (() => { aiReset();
+      const first = aiEx(aiLm312({ noseVis: 0, hipX: 0.4 }));
+      const later = [0.37, 0.34].map(x => aiEx(aiLm312({ noseVis: 0, hipX: x })));
+      return !!first && first.shinReach < 0 && later.every(f => !!f && f.shinReach > 0); })());
+  t('v3.12.0 AI facing: reset clears memory, no leak into the next clip',
+    (() => { aiReset();
+      aiEx(aiLm312({ noseX: 0.41 }));
+      aiReset();
+      const f = aiEx(aiLm312({ noseVis: 0 }));
+      return !!f && f.shinReach < 0; })());
+  t('v3.12.0 AI facing: a visible nose overrides remembered facing',
+    (() => { aiReset();
+      aiEx(aiLm312({ noseX: 0.41 }));
+      const f = aiEx(aiLm312({ noseX: 0.59 }));
+      return !!f && f.shinReach < 0; })());
+
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR', e && e.stack || e); process.exit(2); });

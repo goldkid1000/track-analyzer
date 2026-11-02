@@ -112,6 +112,8 @@ var AI = {
   deep: { frames1: [], frames2: [], worst: null },
   /* v3.1.0: subject lock + analysis quality (real-video fix pass). */
   subject: null, subjectGoneAt: null, startDir: 0, lastSetT: -1e9,
+  /* v3.12.0: per-clip facing memory (mirrors the two-camera fix). */
+  faceMem: 0, faceFirstX: null, faceLastX: null,
   quality: null,
   deepReport: null, lastSession: null,
   frameAnnotations: {}, frameMarksHidden: {},
@@ -705,6 +707,7 @@ function gatePose(lm){
   if(q) q.accepted++;
   return lm;
 }
+function resetAIFacing(){ AI.faceMem = 0; AI.faceFirstX = null; AI.faceLastX = null; }
 function extractAI(lm){
   /* v3.1.0: side-aware, like the photo path. The old gate demanded
    * BOTH knees and BOTH ankles above 0.58 visibility. On a side-view
@@ -732,9 +735,29 @@ function extractAI(lm){
   var sh = midVis(11, 12), hip = midVis(23, 24);
   var torso = Math.hypot(sh.x - hip.x, sh.y - hip.y);
   if(torso < 0.04) return { missing: ['full body'] };
-  var hipC = { x: (lm[23].x + lm[24].x) / 2 };
-  var facing = (lm[0] && lm[0].x >= hipC.x) || Math.abs(lm[11].x - lm[12].x) < 0.01 && lm[23].x < 0.5 ? 1 : -1;
-  facing = (lm[0] && lm[0].x >= hipC.x) ? 1 : ((lm[23].x + lm[24].x) / 2 <= 0.5 ? 1 : -1);
+  /* v3.12.0: facing is REMEMBERED across the clip, mirroring the
+   * two-camera fix (v3.11.0). The old code re-decided facing every
+   * frame from the nose with NO visibility gate — MediaPipe returns
+   * all 33 landmarks even for joints it cannot see, so a lost nose's
+   * guessed x set the facing — and fell back to absolute frame
+   * position (hips left of centre -> +1), which is wrong for a
+   * leftward athlete standing on the left half of the frame. A
+   * flipped facing flips shinReach's sign and fwdThigh, so a real
+   * overstride could read as clean (or vice versa). Now: a visible
+   * nose sets the facing and it holds while the nose is lost; with
+   * no nose seen yet, the direction the hips have actually travelled
+   * (>= 0.03, same threshold as v3.11.0) is the facing; +1 remains
+   * only as the last resort for a still clip whose nose never
+   * appeared. Memory resets in startAI, so one clip never leaks
+   * into the next. */
+  if(AI.faceFirstX === null || AI.faceFirstX === undefined) AI.faceFirstX = hip.x;
+  AI.faceLastX = hip.x;
+  var noseSign = (lm[0] && visOf(lm[0]) > 0.45) ? Math.sign(lm[0].x - sh.x) : 0;
+  var facing;
+  if(noseSign !== 0){ facing = noseSign; AI.faceMem = noseSign; }
+  else if(AI.faceMem) facing = AI.faceMem;
+  else if(Math.abs(AI.faceLastX - AI.faceFirstX) >= 0.03) facing = Math.sign(AI.faceLastX - AI.faceFirstX);
+  else facing = 1;
   var hipI = side === 'L' ? 23 : 24, kneeI = side === 'L' ? 25 : 26, ankI = side === 'L' ? 27 : 28;
   var oHipI = side === 'L' ? 24 : 23, oKneeI = side === 'L' ? 26 : 25, oAnkI = side === 'L' ? 28 : 27;
   var kneeNear = ang(lm[hipI], lm[kneeI], lm[ankI]);
@@ -2713,6 +2736,8 @@ function startAI(reuseStream, opts){
   AI.labelCand = null; AI.labelCandSince = 0; AI.startLocked = !!AI.blockMode;
   /* v3.1.0: fresh subject lock + quality counters per session. */
   AI.subject = null; AI.subjectGoneAt = null; AI.startDir = 0; AI.lastSetT = -1e9; AI.pendingExitRep = null;
+  /* v3.12.0: fresh facing memory per session/clip. */
+  resetAIFacing();
   AI.quality = { sampled: 0, detected: 0, accepted: 0, rejected: 0, scored: 0 };
   AI.squatPhase = 'up'; AI.squatDip = 0;
   AI.mode = 'coaching';
@@ -3157,6 +3182,7 @@ window.TrackAIAnnounce = { announce: announce, speakNow: announce };
 window.TrackAIGesture = { countFingers: countFingers, isFrontal: isFrontal,
   tick: gestureTick, setStatus: setGestureStatus, bestHandCount: bestHandCount };
 window.TrackAIQuality = { extractAI: extractAI, gatePose: gatePose, poseHipTorso: poseHipTorso,
+  resetAIFacing: resetAIFacing,
   getQuality: function(){ return AI.quality; }, getSubject: function(){ return AI.subject; },
   getGoneAt: function(){ return AI.subjectGoneAt; }, classify: classify };
 window.TrackAIDeep = { segmentReps: segmentReps, buildDeepReport: buildDeepReport, pickVideos: pickVideos, absorbFrame: absorbFrame };
