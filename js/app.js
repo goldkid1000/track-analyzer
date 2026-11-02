@@ -788,6 +788,7 @@ var screenCopy = {
   ai: ['AI Analyzer', 'Live coaching, two cameras, photo check, and your results — one screen'],
   'ai-photo': ['AI Photo', 'Photo reports from the AI Analyzer, plus your form vs pro form'],
   guide: ['Guide', 'Technique cues, drills, and the video for each fix'],
+  times: ['Times', 'PRs, season bests, wind and hand-time checks, and your progression'],
   nutrition: ['Nutrition', 'Daily fuel targets, meal timing, dorm-friendly meals, and a hydration tracker']
 };
 var viewSwitching = false, pendingView = null;

@@ -9,6 +9,7 @@ Private rebuild of the Track & Field Analyzer. No voice, buttery-smooth UI, same
 | `index.html` | App shell — Analyze / Photos / Side View / Guide tabs |
 | `css/app.css` | Nike-style dark athletic theme, spring-eased animations |
 | `js/app.js` | All analysis + coaching logic (pose scoring, photo analyzer, cues, videos) |
+| `js/times.js` | Times tab — results log, PR / season best / wind-aided best, hand→FAT conversion, progression chart, goal gap, 200/400 split targets, CSV export |
 | `js/mediapipe-pose.js` | MediaPipe Pose wrapper (defines `Pose`, `POSE_CONNECTIONS`) |
 | `js/mediapipe-draw.js` | Skeleton drawing helpers (`drawConnectors`, `drawLandmarks`) |
 

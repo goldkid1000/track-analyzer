@@ -25,7 +25,7 @@ def inline_js(html: str) -> str:
     # v2.9.0: full script list in index.html order (nutrition.js and
     # cam-mode.js were missing — the single file silently shipped
     # without the Nutrition tab and the mode picker), ?v= allowed.
-    for name in ["mediapipe-pose.js", "mediapipe-draw.js", "camera-kit.js", "rig.js", "app.js", "dualcam.js", "update.js", "ai-knowledge.js", "ai-analyzer.js", "nutrition.js", "cam-mode.js"]:
+    for name in ["mediapipe-pose.js", "mediapipe-draw.js", "camera-kit.js", "rig.js", "app.js", "dualcam.js", "update.js", "ai-knowledge.js", "ai-analyzer.js", "nutrition.js", "cam-mode.js", "times.js"]:
         js = (ROOT / "js" / name).read_text(encoding="utf-8")
         assert "</script" not in js, f"{name} contains a closing script tag"
         pattern = re.compile(r'<script src="js/' + re.escape(name) + r'(\?v=[0-9.]+)?"></script>')
