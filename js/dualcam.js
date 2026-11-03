@@ -1068,19 +1068,33 @@ function dualSampleScore(mode, f){
   if(mode === 'arm-swing') return (dBand(f.elbow, 60, 110, 40) + dCeil(f.lean, 25, 25)) / 2;
   return (dCeil(f.lean, 16, 22) + dCeil(f.thigh, 26, 34)) / 2;
 }
+/* v3.14.0: the 'Needs work' moment must be HELD, not a one-frame
+ * glitch — mirrors the main engine's heldWorstFrame rule (dualcam
+ * loads before ai-analyzer.js, so it carries its own copy). A sample
+ * only counts if a neighbouring sample scored within 15 points of it
+ * either way; a lone dip (neighbours ~50 points away) is a pose
+ * misread, not a fault. The fix moment is only shown when that held
+ * worst is actually worse than the best sample — a uniform clip has
+ * no demonstrated fault to fix. */
 function dualMoments(mode, samples, analysis){
   var scored = [];
   samples.forEach(function(s){
     if(s && s.f){ var sc = dualSampleScore(mode, s.f); if(sc >= 0) scored.push({ t: s.t, score: sc, f: s.f }); }
   });
   if(scored.length < 2) return [];
-  var worst = scored[0], best = scored[0];
-  scored.forEach(function(s){ if(s.score < worst.score) worst = s; if(s.score > best.score) best = s; });
+  var worst = null, best = scored[0];
+  scored.forEach(function(s, i){
+    var held = false;
+    if(i > 0 && Math.abs(scored[i - 1].score - s.score) <= 15) held = true;
+    if(i + 1 < scored.length && Math.abs(scored[i + 1].score - s.score) <= 15) held = true;
+    if(held && (!worst || s.score < worst.score)) worst = s;
+    if(s.score > best.score) best = s;
+  });
   var out = [];
   var fixText = analysis && analysis.fix ? analysis.fix.cue : '';
-  out.push({ t: worst.t, kind: 'fix', label: 'Needs work',
+  if(worst && worst.score < best.score) out.push({ t: worst.t, kind: 'fix', label: 'Needs work',
     detail: 'Elbow ~' + Math.round(worst.f.elbow) + '° · lean ~' + Math.round(worst.f.lean) + '°' + (fixText ? ' — ' + fixText : '') });
-  if(best.t !== worst.t) out.push({ t: best.t, kind: 'good', label: 'Looks good here',
+  out.push({ t: best.t, kind: 'good', label: 'Looks good here',
     detail: 'Elbow ~' + Math.round(best.f.elbow) + '° · lean ~' + Math.round(best.f.lean) + '°' });
   out.sort(function(a, b){ return a.t - b.t; });
   return out;

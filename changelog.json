@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.14.0",
+    "date": "2026-11-03",
+    "notify": true,
+    "notes": [
+      "Worst-frame callouts now have to be held, not glitched — the report's Worst frame photo and the clip's 'Needs work' jump point used to come from the single lowest-scoring frame, so one pose misread could send you to fix a fault that never happened. A low frame only counts once the next frame is low too, and a lone dip with good frames around it is skipped, so the fault you get sent to fix is one you actually held."
+    ]
+  },
+  {
     "version": "3.13.0",
     "date": "2026-11-02",
     "notify": true,

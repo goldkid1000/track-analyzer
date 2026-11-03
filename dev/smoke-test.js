@@ -779,17 +779,28 @@ const W = sandbox;
   t('v2.2.0 dual no-shape: dualScoreText(null) renders "Couldn’t score"',
     W.TrackDual._test.dualScoreText(emptySum) === 'Couldn’t score');
   // Dual moments: worst/best sample markers.
+  // v3.14.0: the worst moment must be HELD — the bad elbow reading
+  // spans t=3 AND t=4 here, so it counts; a lone dip does not (next test).
   const samples = [
     { t: 0, f: { elbow: 85, lean: 10, thigh: 60 } },
     { t: 1, f: { elbow: 90, lean: 10, thigh: 60 } },
     { t: 2, f: { elbow: 90, lean: 10, thigh: 60 } },
     { t: 3, f: { elbow: 150, lean: 10, thigh: 60 } },
-    { t: 4, f: { elbow: 90, lean: 10, thigh: 60 } }
+    { t: 4, f: { elbow: 150, lean: 10, thigh: 60 } }
   ];
   const moments = W.TrackDual._test.dualMoments('arm-swing', samples, { fix: { cue: 'Test cue' } });
   t('v2.2.0 dual moments: best (elbow 85) + worst (elbow 150) markers, sorted by time',
     moments.length === 2 && moments[0].kind === 'good' && moments[0].t === 0 &&
     moments[1].kind === 'fix' && moments[1].t === 3, JSON.stringify(moments));
+  const loneDip = [
+    { t: 0, f: { elbow: 85, lean: 10, thigh: 60 } },
+    { t: 1, f: { elbow: 90, lean: 10, thigh: 60 } },
+    { t: 2, f: { elbow: 150, lean: 10, thigh: 60 } },
+    { t: 3, f: { elbow: 90, lean: 10, thigh: 60 } }
+  ];
+  const loneMoments = W.TrackDual._test.dualMoments('arm-swing', loneDip, { fix: { cue: 'Test cue' } });
+  t('v3.14.0 dual moments: a lone bad sample is a glitch, not a fix moment — only the good marker survives',
+    loneMoments.length === 1 && loneMoments[0].kind === 'good', JSON.stringify(loneMoments));
   // AI Photo bridge + notifications + slow-mo wired in source + HTML.
   const appSrc = fs.readFileSync(ROOT + 'js/app.js', 'utf8');
   t('v2.2.0 AI Photo bridge: TrackPhoto.receiveFrame exists; analyzer + dualcam call it',
@@ -1566,6 +1577,58 @@ const W = sandbox;
       aiEx(aiLm312({ noseX: 0.41 }));
       const f = aiEx(aiLm312({ noseX: 0.59 }));
       return !!f && f.shinReach < 0; })());
+
+  // v3.14.0: worst-frame callouts must be HELD. The report's Worst
+  // frame photo used to be the single lowest-scoring frame, so one
+  // pose misread (~20% between ~75% frames) became the fault Giel
+  // was sent to fix. Now the live capture needs two consecutive low
+  // frames, and the clip markers need a neighbouring low frame.
+  const aiTest = W.TrackAI._test;
+  t('v3.14.0 worst capture: a lone low frame captures nothing',
+    (() => { aiTest.resetDeep();
+      aiTest.maybeCaptureWorst(30, 'sprint', null);
+      return aiTest.getDeep().worst === null; })());
+  t('v3.14.0 worst capture: a second consecutive low frame captures, and a later lower frame in the run replaces it',
+    (() => { aiTest.resetDeep();
+      aiTest.maybeCaptureWorst(30, 'sprint', null);
+      aiTest.maybeCaptureWorst(45, 'sprint', null);
+      const first = aiTest.getDeep().worst;
+      aiTest.maybeCaptureWorst(15, 'sprint', null);
+      const second = aiTest.getDeep().worst;
+      aiTest.maybeCaptureWorst(40, 'sprint', null);
+      return !!first && first.score === 45 && !!second && second.score === 15 &&
+        aiTest.getDeep().worst.score === 15; })());
+  t('v3.14.0 worst capture: recovery resets the streak, and an activity change restarts it',
+    (() => { aiTest.resetDeep();
+      aiTest.maybeCaptureWorst(30, 'sprint', null);
+      aiTest.maybeCaptureWorst(80, 'sprint', null); // recovery: streak gone
+      aiTest.maybeCaptureWorst(25, 'sprint', null); // lone again
+      if(aiTest.getDeep().worst !== null) return false;
+      aiTest.maybeCaptureWorst(25, 'squat', null); // activity change: streak restarts
+      if(aiTest.getDeep().worst !== null) return false;
+      aiTest.maybeCaptureWorst(20, 'squat', null);
+      return !!aiTest.getDeep().worst && aiTest.getDeep().worst.score === 20; })());
+  const heldF = (activity, score) => ({ activity, score, f: { lean: 10 }, t: 0 });
+  t('v3.14.0 held worst: lone dip excluded, held run picks its lowest, activity change breaks the run',
+    (() => {
+      const lone = aiTest.heldWorstFrame([heldF('sprint', 75), heldF('sprint', 20), heldF('sprint', 78)]);
+      const held = aiTest.heldWorstFrame([heldF('sprint', 75), heldF('sprint', 40), heldF('sprint', 38), heldF('sprint', 72)]);
+      const cross = aiTest.heldWorstFrame([heldF('sprint', 40), heldF('squat', 38)]);
+      const single = aiTest.heldWorstFrame([heldF('sprint', 30)]);
+      return lone === null && !!held && held.score === 38 && cross === null && single === null; })());
+  t('v3.14.0 clip markers: lone dip shows no Needs-work marker; held low run does',
+    (() => { aiTest.resetDeep();
+      const d = aiTest.getDeep();
+      d.frames1 = [heldF('sprint', 75), Object.assign(heldF('sprint', 20), { t: 1000, tripped: 'overstride' }), heldF('sprint', 78)];
+      d.frames1.forEach((fr, i) => { fr.t = (i + 1) * 1000; });
+      aiTest.renderClipMarkers();
+      const htmlLone = W.document.getElementById('aiClipMarkers').innerHTML;
+      d.frames1 = [heldF('sprint', 75), Object.assign(heldF('sprint', 30), { tripped: 'overstride' }), heldF('sprint', 28), heldF('sprint', 78)];
+      d.frames1.forEach((fr, i) => { fr.t = (i + 1) * 1000; });
+      aiTest.renderClipMarkers();
+      const htmlHeld = W.document.getElementById('aiClipMarkers').innerHTML;
+      return htmlLone.indexOf('Needs work') < 0 && htmlLone.indexOf('Looks good here') >= 0 &&
+        htmlHeld.indexOf('Needs work') >= 0; })());
 
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);

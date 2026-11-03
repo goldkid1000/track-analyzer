@@ -1,9 +1,8 @@
 {
   "notes": [
-    "NEW Times tab: log your meets and time trials and the app works out your PR, season best and wind-aided best for each event (55 m to 1600 m, hurdles, long, triple and high jump). Tailwinds above +2.0 m/s are kept as wind-aided and never count as a PR; hand times are converted to FAT (+0.24 s under 400 m, +0.14 s at 400 m and up) so a stopwatch time can't fake a PR. Includes a progression chart (higher = better), a goal tracker that shows the gap in seconds and percent, 200 m / 400 m split targets, and CSV export.",
-    "Fixed phones: every screen was about 55 px wider than the screen, so text and cards were cut off on the right edge. The layout now fits the phone width exactly."
+    "Worst-frame callouts now have to be held, not glitched — the report's Worst frame photo and the clip's 'Needs work' jump point used to come from the single lowest-scoring frame, so one pose misread could send you to fix a fault that never happened. A low frame only counts once the next frame is low too, and a lone dip with good frames around it is skipped, so the fault you get sent to fix is one you actually held."
   ],
   "notify": true,
-  "updated": "2026-11-02",
-  "version": "3.13.0"
+  "updated": "2026-11-03",
+  "version": "3.14.0"
 }

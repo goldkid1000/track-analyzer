@@ -109,7 +109,7 @@ var AI = {
   clipMode: false, clipUrl: null,
   lastClassic: null, lastTripped: null, lastGuideIssue: '',
   announcingUntil: 0,
-  deep: { frames1: [], frames2: [], worst: null },
+  deep: { frames1: [], frames2: [], worst: null, worstStreak: 0, worstStreakAct: null },
   /* v3.1.0: subject lock + analysis quality (real-video fix pass). */
   subject: null, subjectGoneAt: null, startDir: 0, lastSetT: -1e9,
   /* v3.12.0: per-clip facing memory (mirrors the two-camera fix). */
@@ -1062,9 +1062,10 @@ function onFrame(f, angle, nowMs){
     AI.prevDispLm = null; // gap in tracking — the next displacement would span it
     AI.deep.frames1.push({ t: now, activity: 'none', score: 0, tripped: null, f: null, disp: disp });
     if(AI.deep.frames1.length > 900) AI.deep.frames1.shift();
+    AI.deep.worstStreak = 0; // v3.14.0: a tracking gap breaks a held-low run
     return;
   }
-  if(!f) return;
+  if(!f){ AI.deep.worstStreak = 0; return; }
   setText('aiCantSee', 'All key joints visible ✓');
   if(AI.quality) AI.quality.scored++;
   var scored = scoreFrame(activity, f);
@@ -1131,7 +1132,7 @@ function onFrame(f, angle, nowMs){
   if(scored.score >= 70 && (activity === 'sprint' || activity === 'block-start' || activity === 'squat' || activity === 'arm-swing')){
     maybeCaptureBest(scored.score, activity, AI.lastLandmarks1);
   }
-  if(scored.score <= 55 && (activity === 'sprint' || activity === 'block-start' || activity === 'squat' || activity === 'drill' || activity === 'hinge' || activity === 'bench' || activity === 'arm-swing')){
+  if(activity === 'sprint' || activity === 'block-start' || activity === 'squat' || activity === 'drill' || activity === 'hinge' || activity === 'bench' || activity === 'arm-swing'){
     maybeCaptureWorst(scored.score, activity, AI.lastLandmarks1);
   }
 }
@@ -1155,11 +1156,50 @@ function maybeCaptureBest(score, activity, lm){
   frames.sort(function(a, b){ return b.score - a.score; });
   AI.session.bestFrames = frames.slice(0, 3);
 }
+/* v3.14.0: the Worst frame must be HELD, not a one-frame glitch — the
+ * same one-frame-max disease v3.8.0–v3.10.0 cured for block-start and
+ * asymmetry peaks. A single pose misread can score ~20% while the
+ * frames around it score ~75%, and the old code crowned that frame
+ * the report's Worst frame and the deep-dive skeleton, sending Giel
+ * to fix a fault that never happened. Now a low frame only counts
+ * once the NEXT scored frame is low too (streak >= 2, same activity,
+ * no tracking gap in between): the captured frame is then a real
+ * held fault, and a lone dip is discarded when the next frame
+ * recovers. Later frames of an already-held run can still beat the
+ * stored worst, since each is itself confirmed by its predecessor. */
 function maybeCaptureWorst(score, activity, lm){
+  if(!AI.deep) return;
+  if(activity !== AI.deep.worstStreakAct){ AI.deep.worstStreak = 0; AI.deep.worstStreakAct = activity; }
+  if(score > 55){ AI.deep.worstStreak = 0; return; }
+  AI.deep.worstStreak++;
+  if(AI.deep.worstStreak < 2) return; // first low frame: unconfirmed, capture nothing
   if(AI.deep.worst && score >= AI.deep.worst.score) return;
   var url = snapshotVideo();
   if(!url) return;
   AI.deep.worst = { score: score, activity: activity, url: url, lm: lm || null };
+}
+/* v3.14.0: held-worst pick for the clip markers (same rule, applied
+ * after the fact to stored frames). A frame only counts if a
+ * neighbouring usable frame of the same activity scored within 15
+ * points of it either way — a real held fault keeps its neighbours
+ * nearly as low, while a lone dip sits ~50 points from both of its
+ * neighbours and a good frame next to a dip is not a dip itself.
+ * Returns null when no frame is held. The caller only shows a
+ * 'Needs work' marker when this worst is actually worse than the
+ * best frame; otherwise there is no demonstrated fault to fix. */
+function heldWorstFrame(frames){
+  var usable = [];
+  (frames || []).forEach(function(fr){
+    if(fr && fr.f && fr.score > 0) usable.push(fr);
+  });
+  var worst = null;
+  for(var i = 0; i < usable.length; i++){
+    var fr = usable[i], held = false;
+    if(i > 0 && usable[i - 1].activity === fr.activity && Math.abs(usable[i - 1].score - fr.score) <= 15) held = true;
+    if(i + 1 < usable.length && usable[i + 1].activity === fr.activity && Math.abs(usable[i + 1].score - fr.score) <= 15) held = true;
+    if(held && (!worst || fr.score < worst.score)) worst = fr;
+  }
+  return worst;
 }
 
 /* Full pose dict: all 33 landmarks the camera can see (not just the
@@ -2396,16 +2436,15 @@ function renderClipMarkers(){
   var start = sessionBaseMs();
   var usable = frames.filter(function(fr){ return fr && fr.f && fr.score > 0; });
   if(!usable.length){ wrap.innerHTML = ''; showEl(wrap, false); return; }
-  var worst = usable[0], best = usable[0];
+  var worst = heldWorstFrame(frames), best = usable[0];
   var faultFirst = {};
   usable.forEach(function(fr){
-    if(fr.score < worst.score) worst = fr;
     if(fr.score > best.score) best = fr;
     if(fr.tripped && !faultFirst[fr.tripped]) faultFirst[fr.tripped] = fr;
   });
   var markers = [];
-  markers.push({ fr: worst, kind: 'fix', label: 'Needs work', detail: (CHECK_LABEL[worst.tripped] || worst.tripped || 'Lowest score') + ' · ~' + pct(worst.score) + '%' });
-  if(best !== worst) markers.push({ fr: best, kind: 'good', label: 'Looks good here', detail: 'Best frame · ~' + pct(best.score) + '%' });
+  if(worst && worst.score < best.score) markers.push({ fr: worst, kind: 'fix', label: 'Needs work', detail: (CHECK_LABEL[worst.tripped] || worst.tripped || 'Lowest score') + ' · ~' + pct(worst.score) + '%' });
+  markers.push({ fr: best, kind: 'good', label: 'Looks good here', detail: 'Best frame · ~' + pct(best.score) + '%' });
   Object.keys(faultFirst).forEach(function(check){
     if(faultFirst[check] === worst) return;
     markers.push({ fr: faultFirst[check], kind: 'fix', label: 'First: ' + (CHECK_LABEL[check] || check), detail: 'Fault first appears · ~' + pct(faultFirst[check].score) + '%' });
@@ -2727,7 +2766,7 @@ function startAI(reuseStream, opts){
   AI.lastClassic = null; AI.lastTripped = null; AI.lastGuideIssue = '';
   renderClassicMetrics(null);
   AI.session = { startedAt: Date.now(), reps: {}, faultCounts: {}, fixes: [], bestFrames: [] };
-  AI.deep = { frames1: [], frames2: [], worst: null };
+  AI.deep = { frames1: [], frames2: [], worst: null, worstStreak: 0, worstStreakAct: null };
   AI.deepReport = null;
   AI.prevDispLm = null; AI.lastDisp = null; AI.autoSlowed = false; AI.replayAutoSlowed = false; AI.fastSegments = [];
   hideAutoSlowNote();
@@ -3171,6 +3210,9 @@ window.TrackAI = { setBlockStarts: setBlockStarts, getBlockStarts: function(){ r
     /* v3.2.0 */ stabilizeLabel: stabilizeLabel, validateSegments: validateSegments,
     segmentReps: segmentReps, pct: pct, deg: deg, sessionBaseMs: sessionBaseMs,
     /* v3.3.0 */ renderClassicMetrics: renderClassicMetrics,
+    /* v3.14.0 */ maybeCaptureWorst: maybeCaptureWorst, heldWorstFrame: heldWorstFrame,
+    renderClipMarkers: renderClipMarkers, getDeep: function(){ return AI.deep; },
+    resetDeep: function(){ AI.deep = { frames1: [], frames2: [], worst: null, worstStreak: 0, worstStreakAct: null }; },
     setStartLocked: function(v){ AI.startLocked = !!v; }, setState: function(v){ AI.state = v; },
     prefersReducedMotion: prefersReducedMotion } };
 window.TrackFrameMarks = { build: buildFrameMarks, draw: drawFrameMarks, at: frameMarkAt,
