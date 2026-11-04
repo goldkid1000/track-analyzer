@@ -1630,6 +1630,70 @@ const W = sandbox;
       return htmlLone.indexOf('Needs work') < 0 && htmlLone.indexOf('Looks good here') >= 0 &&
         htmlHeld.indexOf('Needs work') >= 0; })());
 
+  // v3.15.0: Best frames must be HELD — the mirror of v3.14.0's
+  // worst-frame fix, which left this hole open. A lone ~98% spike
+  // between ~75% frames used to become the report's top Best frame
+  // and the frame auto-sent to AI Photo. Now live capture needs two
+  // consecutive high frames, and the clip/dual good moments need a
+  // neighbouring high frame; a lone spike is a misread, not a rep.
+  t('v3.15.0 best capture: a lone high frame captures nothing',
+    (() => { aiTest.resetBest();
+      aiTest.maybeCaptureBest(98, 'sprint', null);
+      return aiTest.getBestFrames().length === 0; })());
+  t('v3.15.0 best capture: a second consecutive high frame captures, and a held run fills the top 3 in score order (the lone first frame never lands)',
+    (() => { aiTest.resetBest();
+      aiTest.maybeCaptureBest(88, 'sprint', null);
+      aiTest.maybeCaptureBest(92, 'sprint', null);
+      aiTest.maybeCaptureBest(85, 'sprint', null);
+      aiTest.maybeCaptureBest(95, 'sprint', null);
+      const scores = aiTest.getBestFrames().map(fr => fr.score);
+      return scores.length === 3 && scores.join(',') === '95,92,85'; })());
+  t('v3.15.0 best capture: a dip below 70 resets the streak, and an activity change restarts it',
+    (() => { aiTest.resetBest();
+      aiTest.maybeCaptureBest(90, 'sprint', null);
+      aiTest.maybeCaptureBest(60, 'sprint', null); // dip: streak gone
+      aiTest.maybeCaptureBest(88, 'sprint', null); // lone again
+      if(aiTest.getBestFrames().length !== 0) return false;
+      aiTest.maybeCaptureBest(91, 'sprint', null);
+      if(aiTest.getBestFrames().length !== 1) return false;
+      aiTest.resetBest();
+      aiTest.maybeCaptureBest(90, 'sprint', null);
+      aiTest.maybeCaptureBest(92, 'squat', null); // activity change: streak restarts
+      if(aiTest.getBestFrames().length !== 0) return false;
+      aiTest.maybeCaptureBest(93, 'squat', null);
+      return aiTest.getBestFrames().length === 1 && aiTest.getBestFrames()[0].score === 93; })());
+  t('v3.15.0 held best: lone spike excluded, held run picks its highest, activity change breaks the run, single frame is nothing',
+    (() => {
+      const lone = aiTest.heldBestFrame([heldF('sprint', 75), heldF('sprint', 98), heldF('sprint', 78)]);
+      const held = aiTest.heldBestFrame([heldF('sprint', 75), heldF('sprint', 85), heldF('sprint', 86), heldF('sprint', 72)]);
+      const cross = aiTest.heldBestFrame([heldF('sprint', 98), heldF('squat', 96)]);
+      const single = aiTest.heldBestFrame([heldF('sprint', 90)]);
+      return lone === null && !!held && held.score === 86 && cross === null && single === null; })());
+  t('v3.15.0 clip markers: a lone spike does not beat a held run for Looks-good; with no held run the plain maximum still backs the marker',
+    (() => { aiTest.resetDeep();
+      const d = aiTest.getDeep();
+      d.frames1 = [heldF('sprint', 75), heldF('sprint', 80), heldF('sprint', 82), heldF('sprint', 98), heldF('sprint', 78)];
+      d.frames1.forEach((fr, i) => { fr.t = (i + 1) * 1000; });
+      aiTest.renderClipMarkers();
+      const htmlHeld = W.document.getElementById('aiClipMarkers').innerHTML;
+      d.frames1 = [heldF('sprint', 75), heldF('sprint', 98), heldF('sprint', 78)];
+      d.frames1.forEach((fr, i) => { fr.t = (i + 1) * 1000; });
+      aiTest.renderClipMarkers();
+      const htmlLone = W.document.getElementById('aiClipMarkers').innerHTML;
+      return htmlHeld.indexOf('Looks good here') >= 0 && htmlHeld.indexOf('82%') >= 0 && htmlHeld.indexOf('98%') < 0 &&
+        htmlLone.indexOf('Looks good here') >= 0; })());
+  t('v3.15.0 dual moments: a lone high spike is not the good moment — the held run is',
+    (() => {
+      const spike = [
+        { t: 0, f: { elbow: 150, lean: 10, thigh: 60 } },
+        { t: 1, f: { elbow: 85, lean: 10, thigh: 60 } },
+        { t: 2, f: { elbow: 150, lean: 10, thigh: 60 } },
+        { t: 3, f: { elbow: 90, lean: 10, thigh: 60 } },
+        { t: 4, f: { elbow: 90, lean: 10, thigh: 60 } }
+      ];
+      const m = W.TrackDual._test.dualMoments('arm-swing', spike, { fix: { cue: 'Test cue' } });
+      return m.length === 1 && m[0].kind === 'good' && m[0].t === 3; })());
+
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR', e && e.stack || e); process.exit(2); });

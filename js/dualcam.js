@@ -1075,21 +1075,28 @@ function dualSampleScore(mode, f){
  * either way; a lone dip (neighbours ~50 points away) is a pose
  * misread, not a fault. The fix moment is only shown when that held
  * worst is actually worse than the best sample — a uniform clip has
- * no demonstrated fault to fix. */
+ * no demonstrated fault to fix.
+ * v3.15.0: the 'Looks good here' moment gets the same treatment —
+ * a lone high spike (one perfect-looking sample between mediocre
+ * ones) is a misread, not a rep to copy, so the best moment is the
+ * highest HELD sample; the plain maximum is only the fallback when
+ * no sample is held, so the good marker still exists on short clips. */
 function dualMoments(mode, samples, analysis){
   var scored = [];
   samples.forEach(function(s){
     if(s && s.f){ var sc = dualSampleScore(mode, s.f); if(sc >= 0) scored.push({ t: s.t, score: sc, f: s.f }); }
   });
   if(scored.length < 2) return [];
-  var worst = null, best = scored[0];
+  var worst = null, bestMax = scored[0], heldBest = null;
   scored.forEach(function(s, i){
     var held = false;
     if(i > 0 && Math.abs(scored[i - 1].score - s.score) <= 15) held = true;
     if(i + 1 < scored.length && Math.abs(scored[i + 1].score - s.score) <= 15) held = true;
     if(held && (!worst || s.score < worst.score)) worst = s;
-    if(s.score > best.score) best = s;
+    if(held && (!heldBest || s.score > heldBest.score)) heldBest = s;
+    if(s.score > bestMax.score) bestMax = s;
   });
+  var best = heldBest || bestMax;
   var out = [];
   var fixText = analysis && analysis.fix ? analysis.fix.cue : '';
   if(worst && worst.score < best.score) out.push({ t: worst.t, kind: 'fix', label: 'Needs work',

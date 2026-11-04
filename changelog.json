@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.15.0",
+    "date": "2026-11-04",
+    "notify": true,
+    "notes": [
+      "Best frames now have to be held, not glitched — the mirror of yesterday's worst-frame fix. The report's top Best frame and the frame sent to AI Photo used to come from the single highest-scoring frame, so one pose misread could show you a 'perfect' rep you never actually held. A high frame only counts once the next frame is high too, and the clip and two-camera 'Looks good here' moments now pick the best held frame instead of a lone spike, so the rep you're told to copy is one you really held."
+    ]
+  },
+  {
     "version": "3.14.0",
     "date": "2026-11-03",
     "notify": true,

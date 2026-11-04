@@ -109,7 +109,7 @@ var AI = {
   clipMode: false, clipUrl: null,
   lastClassic: null, lastTripped: null, lastGuideIssue: '',
   announcingUntil: 0,
-  deep: { frames1: [], frames2: [], worst: null, worstStreak: 0, worstStreakAct: null },
+  deep: { frames1: [], frames2: [], worst: null, worstStreak: 0, worstStreakAct: null, bestStreak: 0, bestStreakAct: null },
   /* v3.1.0: subject lock + analysis quality (real-video fix pass). */
   subject: null, subjectGoneAt: null, startDir: 0, lastSetT: -1e9,
   /* v3.12.0: per-clip facing memory (mirrors the two-camera fix). */
@@ -1062,10 +1062,10 @@ function onFrame(f, angle, nowMs){
     AI.prevDispLm = null; // gap in tracking — the next displacement would span it
     AI.deep.frames1.push({ t: now, activity: 'none', score: 0, tripped: null, f: null, disp: disp });
     if(AI.deep.frames1.length > 900) AI.deep.frames1.shift();
-    AI.deep.worstStreak = 0; // v3.14.0: a tracking gap breaks a held-low run
+    AI.deep.worstStreak = 0; AI.deep.bestStreak = 0; // v3.14.0/v3.15.0: a tracking gap breaks a held run
     return;
   }
-  if(!f){ AI.deep.worstStreak = 0; return; }
+  if(!f){ AI.deep.worstStreak = 0; AI.deep.bestStreak = 0; return; }
   setText('aiCantSee', 'All key joints visible ✓');
   if(AI.quality) AI.quality.scored++;
   var scored = scoreFrame(activity, f);
@@ -1147,7 +1147,23 @@ function snapshotVideo(){
     return c.toDataURL('image/jpeg', 0.7);
   }catch(e){ return null; }
 }
+/* v3.15.0: the Best frame must be HELD, not a one-frame glitch — the
+ * mirror of v3.14.0's worst-frame fix, and the flaw that session left
+ * open. The old code crowned the single highest-scoring frame, so one
+ * pose misread scoring ~98% between ~75% frames became the report's
+ * top Best frame and the frame auto-sent to AI Photo — Giel was shown
+ * a "perfect" rep he never actually held. Now a high frame only
+ * counts once the NEXT scored frame is high too (streak >= 2, same
+ * activity, no tracking gap in between): the captured frame is then a
+ * real held shape, and a lone spike is discarded when the next frame
+ * falls back. Later frames of an already-held run can still join the
+ * top 3, since each is itself confirmed by its predecessor. */
 function maybeCaptureBest(score, activity, lm){
+  if(!AI.session || !AI.deep) return;
+  if(activity !== AI.deep.bestStreakAct){ AI.deep.bestStreak = 0; AI.deep.bestStreakAct = activity; }
+  if(score < 70){ AI.deep.bestStreak = 0; return; }
+  AI.deep.bestStreak++;
+  if(AI.deep.bestStreak < 2) return; // first high frame: unconfirmed, capture nothing
   var frames = AI.session.bestFrames;
   if(frames.length >= 3 && score <= frames[frames.length - 1].score) return;
   var url = snapshotVideo();
@@ -1200,6 +1216,29 @@ function heldWorstFrame(frames){
     if(held && (!worst || fr.score < worst.score)) worst = fr;
   }
   return worst;
+}
+/* v3.15.0: held-best pick for the clip markers — the same neighbour
+ * rule as heldWorstFrame, mirrored. A frame only counts if a
+ * neighbouring usable frame of the same activity scored within 15
+ * points of it either way — a real held shape keeps its neighbours
+ * nearly as high, while a lone spike sits ~25 points from both of its
+ * neighbours and a mediocre frame next to a spike is not a spike
+ * itself. Returns null when no frame is held; the caller falls back
+ * to the plain maximum so the 'Looks good here' marker still exists
+ * on clips with no held run at all. */
+function heldBestFrame(frames){
+  var usable = [];
+  (frames || []).forEach(function(fr){
+    if(fr && fr.f && fr.score > 0) usable.push(fr);
+  });
+  var best = null;
+  for(var i = 0; i < usable.length; i++){
+    var fr = usable[i], held = false;
+    if(i > 0 && usable[i - 1].activity === fr.activity && Math.abs(usable[i - 1].score - fr.score) <= 15) held = true;
+    if(i + 1 < usable.length && usable[i + 1].activity === fr.activity && Math.abs(usable[i + 1].score - fr.score) <= 15) held = true;
+    if(held && (!best || fr.score > best.score)) best = fr;
+  }
+  return best;
 }
 
 /* Full pose dict: all 33 landmarks the camera can see (not just the
@@ -2436,10 +2475,15 @@ function renderClipMarkers(){
   var start = sessionBaseMs();
   var usable = frames.filter(function(fr){ return fr && fr.f && fr.score > 0; });
   if(!usable.length){ wrap.innerHTML = ''; showEl(wrap, false); return; }
-  var worst = heldWorstFrame(frames), best = usable[0];
+  var worst = heldWorstFrame(frames), best = heldBestFrame(frames);
   var faultFirst = {};
+  if(!best){
+    best = usable[0];
+    usable.forEach(function(fr){
+      if(fr.score > best.score) best = fr;
+    });
+  }
   usable.forEach(function(fr){
-    if(fr.score > best.score) best = fr;
     if(fr.tripped && !faultFirst[fr.tripped]) faultFirst[fr.tripped] = fr;
   });
   var markers = [];
@@ -2766,7 +2810,7 @@ function startAI(reuseStream, opts){
   AI.lastClassic = null; AI.lastTripped = null; AI.lastGuideIssue = '';
   renderClassicMetrics(null);
   AI.session = { startedAt: Date.now(), reps: {}, faultCounts: {}, fixes: [], bestFrames: [] };
-  AI.deep = { frames1: [], frames2: [], worst: null, worstStreak: 0, worstStreakAct: null };
+  AI.deep = { frames1: [], frames2: [], worst: null, worstStreak: 0, worstStreakAct: null, bestStreak: 0, bestStreakAct: null };
   AI.deepReport = null;
   AI.prevDispLm = null; AI.lastDisp = null; AI.autoSlowed = false; AI.replayAutoSlowed = false; AI.fastSegments = [];
   hideAutoSlowNote();
@@ -3211,8 +3255,12 @@ window.TrackAI = { setBlockStarts: setBlockStarts, getBlockStarts: function(){ r
     segmentReps: segmentReps, pct: pct, deg: deg, sessionBaseMs: sessionBaseMs,
     /* v3.3.0 */ renderClassicMetrics: renderClassicMetrics,
     /* v3.14.0 */ maybeCaptureWorst: maybeCaptureWorst, heldWorstFrame: heldWorstFrame,
+    /* v3.15.0 */ maybeCaptureBest: maybeCaptureBest, heldBestFrame: heldBestFrame,
+    getBestFrames: function(){ return AI.session ? AI.session.bestFrames : []; },
+    resetBest: function(){ AI.session = { startedAt: Date.now(), reps: {}, faultCounts: {}, fixes: [], bestFrames: [] };
+      AI.deep.bestStreak = 0; AI.deep.bestStreakAct = null; },
     renderClipMarkers: renderClipMarkers, getDeep: function(){ return AI.deep; },
-    resetDeep: function(){ AI.deep = { frames1: [], frames2: [], worst: null, worstStreak: 0, worstStreakAct: null }; },
+    resetDeep: function(){ AI.deep = { frames1: [], frames2: [], worst: null, worstStreak: 0, worstStreakAct: null, bestStreak: 0, bestStreakAct: null }; },
     setStartLocked: function(v){ AI.startLocked = !!v; }, setState: function(v){ AI.state = v; },
     prefersReducedMotion: prefersReducedMotion } };
 window.TrackFrameMarks = { build: buildFrameMarks, draw: drawFrameMarks, at: frameMarkAt,
