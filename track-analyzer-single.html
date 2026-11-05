@@ -3462,10 +3462,12 @@ function analyze(lm){
         var lean=median(featureWindow.map(function(x){return x.lean}));
         var elbow=median(featureWindow.map(function(x){return x.elbow}));
         var thigh=Math.min.apply(null,featureWindow.map(function(x){return x.thigh}));
-        var maxKnee=Math.max.apply(null,featureWindow.map(function(x){return Math.max(x.kneeL,x.kneeR)}));
-        var minKnee=Math.min.apply(null,featureWindow.map(function(x){return Math.min(x.kneeL,x.kneeR)}));
-        var armSplit=Math.max.apply(null,featureWindow.map(function(x){return x.armSplit}));
-        var thighSeparation=Math.max.apply(null,featureWindow.map(function(x){return x.thighSeparation}));
+        /* v3.16.0: armSplit is a SUSTAINED peak, not a one-frame max —
+         * the same rule v3.8.0/v3.9.0/v3.10.0 applied to the rear
+         * extension, the asymmetry peaks and the two-camera block
+         * numbers. A single frame with a misread wrist used to report
+         * near-full hand separation and hide weak arms. */
+        var armSplit=sustainedPeak(featureWindow.map(function(x){return x.armSplit}));
         var shinReach=median(featureWindow.map(function(x){return x.shinReach}));
         var hipLift=median(featureWindow.map(function(x){return x.hipLift}));
         var crossRate=featureWindow.reduce(function(sum,x){return sum+x.crossing},0)/featureWindow.length;
@@ -3473,7 +3475,14 @@ function analyze(lm){
         var metrics,headline,copy,issue,setAngles=null;
         if(blockStartsOn){
           if(frontView){analysisStub.textContent='Turn side-on so block angles can be measured';setProgress(76,'Side view needed','Turn the phone or your body side-on so the angles can be measured.','working');return null;}
-          var peakLean=Math.max.apply(null,featureWindow.map(function(x){return x.lean}));
+          /* v3.16.0: peakLean is a SUSTAINED peak, not a one-frame max.
+           * v3.10.0 fixed this exact number in the two-camera port
+           * but the single-camera engine was missed: one wobbly lean
+           * frame (70° between 40° frames) used to tank the projection
+           * score 100 -> 40 and crown 'folded hips' as the fix for a
+           * start that was fine. A real drive-phase lean lasts several
+           * frames, so the second-highest reading is the peak. */
+          var peakLean=sustainedPeak(featureWindow.map(function(x){return x.lean}));
           /* v3.6.0: the set readings below come from the MEDIAN of the
            * first six still frames, not from featureWindow[0] alone.
            * One jittery MediaPipe frame used to move the reported rear
@@ -5750,9 +5759,10 @@ window.TrackDual = {
  */
 (function(){
 'use strict';
-var VERSION = '3.15.0';
+var VERSION = '3.16.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "3.16.0", date: "2026-11-05", notes: ["Block-start scores no longer move on a single glitched frame — the projection (lean) and hand-separation numbers are now sustained peaks, confirmed by at least two frames, like the rear-leg extension and the best/worst frame callouts already are. One wobbly lean frame used to tank the projection score and point at 'folded hips' for a start that was fine; one misread wrist used to report full hand separation and hide weak arms. A real fault held across frames still scores the same."] },
   { version: "3.15.0", date: "2026-11-04", notes: ["Best frames now have to be held, not glitched — the mirror of yesterday's worst-frame fix. The report's top Best frame and the frame sent to AI Photo used to come from the single highest-scoring frame, so one pose misread could show you a 'perfect' rep you never actually held. A high frame only counts once the next frame is high too, and the clip and two-camera 'Looks good here' moments now pick the best held frame instead of a lone spike, so the rep you're told to copy is one you really held."] },
   { version: "3.14.0", date: "2026-11-03", notes: ["Worst-frame callouts now have to be held, not glitched — the report's Worst frame photo and the clip's 'Needs work' jump point used to come from the single lowest-scoring frame, so one pose misread could send you to fix a fault that never happened. A low frame only counts once the next frame is low too, and a lone dip with good frames around it is skipped, so the fault you get sent to fix is one you actually held."] },
   { version: "3.13.0", date: "2026-11-02", notes: ["NEW Times tab: log your meets and time trials and the app works out your PR, season best and wind-aided best for each event (55 m to 1600 m, hurdles, long, triple and high jump). Tailwinds above +2.0 m/s are kept as wind-aided and never count as a PR; hand times are converted to FAT (+0.24 s under 400 m, +0.14 s at 400 m and up) so a stopwatch time can't fake a PR. Includes a progression chart (higher = better), a goal tracker that shows the gap in seconds and percent, 200 m / 400 m split targets, and CSV export.", "Fixed phones: every screen was about 55 px wider than the screen, so text and cards were cut off on the right edge. The layout now fits the phone width exactly."]},

@@ -181,10 +181,12 @@ function analyze(lm){
         var lean=median(featureWindow.map(function(x){return x.lean}));
         var elbow=median(featureWindow.map(function(x){return x.elbow}));
         var thigh=Math.min.apply(null,featureWindow.map(function(x){return x.thigh}));
-        var maxKnee=Math.max.apply(null,featureWindow.map(function(x){return Math.max(x.kneeL,x.kneeR)}));
-        var minKnee=Math.min.apply(null,featureWindow.map(function(x){return Math.min(x.kneeL,x.kneeR)}));
-        var armSplit=Math.max.apply(null,featureWindow.map(function(x){return x.armSplit}));
-        var thighSeparation=Math.max.apply(null,featureWindow.map(function(x){return x.thighSeparation}));
+        /* v3.16.0: armSplit is a SUSTAINED peak, not a one-frame max —
+         * the same rule v3.8.0/v3.9.0/v3.10.0 applied to the rear
+         * extension, the asymmetry peaks and the two-camera block
+         * numbers. A single frame with a misread wrist used to report
+         * near-full hand separation and hide weak arms. */
+        var armSplit=sustainedPeak(featureWindow.map(function(x){return x.armSplit}));
         var shinReach=median(featureWindow.map(function(x){return x.shinReach}));
         var hipLift=median(featureWindow.map(function(x){return x.hipLift}));
         var crossRate=featureWindow.reduce(function(sum,x){return sum+x.crossing},0)/featureWindow.length;
@@ -192,7 +194,14 @@ function analyze(lm){
         var metrics,headline,copy,issue,setAngles=null;
         if(blockStartsOn){
           if(frontView){analysisStub.textContent='Turn side-on so block angles can be measured';setProgress(76,'Side view needed','Turn the phone or your body side-on so the angles can be measured.','working');return null;}
-          var peakLean=Math.max.apply(null,featureWindow.map(function(x){return x.lean}));
+          /* v3.16.0: peakLean is a SUSTAINED peak, not a one-frame max.
+           * v3.10.0 fixed this exact number in the two-camera port
+           * but the single-camera engine was missed: one wobbly lean
+           * frame (70° between 40° frames) used to tank the projection
+           * score 100 -> 40 and crown 'folded hips' as the fix for a
+           * start that was fine. A real drive-phase lean lasts several
+           * frames, so the second-highest reading is the peak. */
+          var peakLean=sustainedPeak(featureWindow.map(function(x){return x.lean}));
           /* v3.6.0: the set readings below come from the MEDIAN of the
            * first six still frames, not from featureWindow[0] alone.
            * One jittery MediaPipe frame used to move the reported rear

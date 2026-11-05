@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.16.0",
+    "date": "2026-11-05",
+    "notify": true,
+    "notes": [
+      "Block-start scores no longer move on a single glitched frame — the projection (lean) and hand-separation numbers are now sustained peaks, confirmed by at least two frames, like the rear-leg extension and the best/worst frame callouts already are. One wobbly lean frame used to tank the projection score and point at 'folded hips' for a start that was fine; one misread wrist used to report full hand separation and hide weak arms. A real fault held across frames still scores the same."
+    ]
+  },
+  {
     "version": "3.15.0",
     "date": "2026-11-04",
     "notify": true,

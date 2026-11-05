@@ -1694,6 +1694,64 @@ const W = sandbox;
       const m = W.TrackDual._test.dualMoments('arm-swing', spike, { fix: { cue: 'Test cue' } });
       return m.length === 1 && m[0].kind === 'good' && m[0].t === 3; })());
 
+  // v3.16.0: the classic engine's block-start numbers were the last
+  // one-frame maxes — v3.10.0 fixed the same two numbers in the
+  // two-camera port but missed the single-camera engine. One wobbly
+  // lean frame used to tank projection 100 -> 40 and crown 'folded
+  // hips' for a fine start; one misread wrist used to report full
+  // hand separation and hide weak arms. Both are sustained peaks now.
+  // Fixture: 24 synthetic side-view frames of a block start — still
+  // set for the first six (rear knee 130°, front 90°, lean 40°),
+  // then a forward drive (dx grows 0.008/frame, rear knee extends
+  // to 149°). Hips sit high (set), nose ahead (facing +1, rear = left).
+  function classicPose316(o, i){
+    const lm = [];
+    for(let k = 0; k < 33; k++) lm.push({ x: 0.5, y: 0.5, visibility: 0.95 });
+    const P = (idx, x, y) => { lm[idx] = { x: x, y: y, visibility: 0.95 }; };
+    const dx = i < 6 ? 0 : (i - 5) * 0.008;
+    const leanR = (o.lean === undefined ? 40 : o.lean) * Math.PI / 180;
+    const hipX = 0.50 + dx, hipY = 0.30, shY = 0.44;
+    const shX = hipX + (shY - hipY) * Math.tan(leanR);
+    const ankle = (kx, deg) => { const r = deg * Math.PI / 180; return [kx + 0.2 * Math.sin(r), 0.62 + 0.2 * (-Math.cos(r))]; };
+    const kneeL = i < 6 ? 130 : 149, kneeR = 90;
+    const torso = Math.hypot(shX - hipX, shY - hipY);
+    const split = o.split === undefined ? 0.3 : o.split;
+    P(0, shX + 0.15, 0.30);
+    P(11, shX - 0.03, shY); P(12, shX + 0.03, shY);
+    P(13, shX - 0.03, 0.55); P(14, shX + 0.03, 0.55);
+    P(15, shX - 0.03, 0.60); P(16, shX + 0.03, 0.60 + split * torso);
+    P(23, hipX - 0.02, hipY); P(24, hipX + 0.02, hipY);
+    P(25, hipX - 0.02, 0.62); P(26, hipX + 0.02, 0.62);
+    const aL = ankle(hipX - 0.02, kneeL), aR = ankle(hipX + 0.02, kneeR);
+    P(27, aL[0], aL[1]); P(28, aR[0], aR[1]);
+    return lm;
+  }
+  function runClassic316(opts){
+    W.TrackClassic.setBlockStarts(true);
+    let out = null;
+    for(let i = 0; i < 24; i++){
+      const o = {};
+      if(opts.lean) o.lean = opts.lean(i);
+      if(opts.split) o.split = opts.split(i);
+      const r = W.TrackClassic.analyze(classicPose316(o, i));
+      if(r) out = r;
+    }
+    W.TrackClassic.setBlockStarts(false);
+    return out;
+  }
+  t('v3.16.0 classic block: one 70° lean glitch frame leaves projection at 100 and never crowns folded hips',
+    (() => { const r = runClassic316({ lean: i => i === 12 ? 70 : 40, split: () => 0.9 });
+      return !!r && r.metrics[0] === 100 && r.issue !== 'foldedHips'; })());
+  t('v3.16.0 classic block: one 0.95 arm-split glitch frame leaves hand separation at 30, not 100',
+    (() => { const r = runClassic316({ lean: () => 40, split: i => i === 12 ? 0.95 : 0.3 });
+      return !!r && Math.abs(r.metrics[1] - 30) < 0.01; })());
+  t('v3.16.0 classic block: hand separation held on two frames still scores 100',
+    (() => { const r = runClassic316({ lean: () => 40, split: i => (i === 10 || i === 11) ? 0.9 : 0.3 });
+      return !!r && r.metrics[1] === 100; })());
+  t('v3.16.0 classic block: a real held lean fault (70° on every frame) still scores 40',
+    (() => { const r = runClassic316({ lean: () => 70, split: () => 0.9 });
+      return !!r && r.metrics[0] === 40; })());
+
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR', e && e.stack || e); process.exit(2); });
