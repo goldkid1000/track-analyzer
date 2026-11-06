@@ -958,6 +958,13 @@ function dRange(vals){ return Math.max.apply(null, vals) - Math.min.apply(null, 
  * classic engine's sustainedPeak (v3.8.0/v3.9.0). A peak confirmed by at
  * least two frames; a single reading stands, empty reads 0. */
 function dSustainedPeak(vals){ var a = vals.slice().sort(function(x, y){ return y - x; }); return a.length > 1 ? a[1] : (a.length ? a[0] : 0); }
+/* v3.17.0: a SUSTAINED minimum — the second-lowest reading, mirroring
+ * dSustainedPeak and the classic engine's sustainedMin. The sprint
+ * thigh metric takes the smallest thigh angle in the clip, so one
+ * glitched frame reading a knee too far forward used to score 100 on
+ * thigh position and hide a real fault. With only one reading the
+ * single value stands; empty reads 0. */
+function dSustainedMin(vals){ var a = vals.slice().sort(function(x, y){ return x - y; }); return a.length > 1 ? a[1] : (a.length ? a[0] : 0); }
 /* v3.11.0: per-clip facing memory — reset by runLocalAnalysis before
  * each clip, so one clip's direction never leaks into the next. */
 function resetDualFacing(){ D.faceMem = 0; D.faceFirstX = null; D.faceLastX = null; }
@@ -1016,8 +1023,11 @@ function summarizeDual(mode, feats){
   if(!feats.length) return { label: D.localLabel, score: null, metrics: [0, 0, 0], issue: 'noShape', headline: 'No clear full-body shape in this clip', fix: DUAL_FIX.noShape, frames: 0, activity: 'none' };
   var lean = dMedian(feats.map(function(f){ return f.lean; }));
   var elbow = dMedian(feats.map(function(f){ return f.elbow; }));
-  var thigh = Math.min.apply(null, feats.map(function(f){ return f.thigh; }));
-  var thighSep = Math.max.apply(null, feats.map(function(f){ return f.thighSep; }));
+  /* v3.17.0: thigh is a SUSTAINED minimum, not a one-frame min — the
+   * same fix as the classic engine this version. One glitched frame
+   * reading a knee too far forward used to score 100 on thigh
+   * position and hide a real fault. */
+  var thigh = dSustainedMin(feats.map(function(f){ return f.thigh; }));
   var shin = dMedian(feats.map(function(f){ return f.shinReach; }));
   var armSplit = Math.max.apply(null, feats.map(function(f){ return f.armSplit; }));
   /* v3.10.0: rear extension is a SUSTAINED peak, not a one-frame max —
@@ -1025,7 +1035,6 @@ function summarizeDual(mode, feats){
    * still took Math.max, so one glitched straight-leg frame inflated
    * the reported extension (and could flip the headline fix). */
   var rearExt = dSustainedPeak(feats.map(function(f){ return Math.max(f.kneeL, f.kneeR); }));
-  var minKnee = Math.min.apply(null, feats.map(function(f){ return Math.min(f.kneeL, f.kneeR); }));
   var armExc = Math.max(dRange(feats.map(function(f){ return f.wristLY; })), dRange(feats.map(function(f){ return f.wristRY; }))) / dMedian(feats.map(function(f){ return f.torso; }));
   var cross = feats.reduce(function(s, f){ return s + f.crossing; }, 0) / feats.length;
   var hipLift = dMedian(feats.map(function(f){ return f.hipLift; }));
@@ -1524,7 +1533,7 @@ window.TrackDual = {
   setCamera: setDualCamera, switchCamera: switchDualCamera,
   startSkeleton: startDualRig, stopSkeleton: stopDualRig,
   _test: { gestureTick: dualGestureTick, setRigStatus: setDualRigStatus, setGestureStatus: setDualGestureStatus, setRole: function(r){ D.role = r; },
-    summarizeDual: summarizeDual, extractDualFeatures: extractDualFeatures, resetDualFacing: resetDualFacing, dualSampleScore: dualSampleScore, dualMoments: dualMoments, dualScoreText: dualScoreText, dSustainedPeak: dSustainedPeak },
+    summarizeDual: summarizeDual, extractDualFeatures: extractDualFeatures, resetDualFacing: resetDualFacing, dualSampleScore: dualSampleScore, dualMoments: dualMoments, dualScoreText: dualScoreText, dSustainedPeak: dSustainedPeak, dSustainedMin: dSustainedMin },
   isCamOff: function(){ return D.camOff; }
 };
 })();

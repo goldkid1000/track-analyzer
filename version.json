@@ -1,8 +1,8 @@
 {
   "notes": [
-    "Block-start scores no longer move on a single glitched frame — the projection (lean) and hand-separation numbers are now sustained peaks, confirmed by at least two frames, like the rear-leg extension and the best/worst frame callouts already are. One wobbly lean frame used to tank the projection score and point at 'folded hips' for a start that was fine; one misread wrist used to report full hand separation and hide weak arms. A real fault held across frames still scores the same."
+    "Sprint thigh position no longer moves on a single glitched frame \u2014 the thigh number is now a sustained minimum, confirmed by at least two frames, like the block-start numbers already are. One frame misreading a knee too far forward used to score 100 on thigh position and hide a real fault; a real thigh drive held across frames still scores the same. The two-camera sprint summary got the same fix, and two values the dual engine computed but never read are gone."
   ],
   "notify": true,
-  "updated": "2026-11-05",
-  "version": "3.16.0"
+  "updated": "2026-11-06",
+  "version": "3.17.0"
 }

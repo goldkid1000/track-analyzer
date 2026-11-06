@@ -3344,6 +3344,16 @@ function range(values){ return Math.max.apply(null, values) - Math.min.apply(nul
  * 0. Shared by the block-start rear extension and the sprint
  * asymmetry peaks so both report the same honest rule. */
 function sustainedPeak(values){ var a = values.slice().sort(function(x, y){ return y - x; }); return a.length > 1 ? a[1] : (a.length ? a[0] : 0); }
+/* v3.17.0: a SUSTAINED minimum — the second-lowest reading, i.e. a
+ * minimum confirmed by at least two frames. The mirror of
+ * sustainedPeak (v3.9.0): the sprint thigh metric takes the smallest
+ * thigh angle in the window, so one glitched frame reading a knee too
+ * far forward used to score 100 on thigh position and hide a real
+ * fault (and crown a different fix instead of 'Review thigh
+ * position'). A real thigh drive lasts several frames at phone frame
+ * rates, so the second-lowest reading is the minimum. With only one
+ * reading the single value stands; with none, 0. */
+function sustainedMin(values){ var a = values.slice().sort(function(x, y){ return x - y; }); return a.length > 1 ? a[1] : (a.length ? a[0] : 0); }
 
 
 var content={
@@ -3461,7 +3471,13 @@ function analyze(lm){
         if(Math.max(motion,armExcursion)<.18){analysisStub.textContent='Ready \u2014 move through one full rep';setProgress(72,'Locked on \u2014 do the rep','The camera can see you. Do the move so it has enough change to score.','working');return null;}
         var lean=median(featureWindow.map(function(x){return x.lean}));
         var elbow=median(featureWindow.map(function(x){return x.elbow}));
-        var thigh=Math.min.apply(null,featureWindow.map(function(x){return x.thigh}));
+        /* v3.17.0: thigh is a SUSTAINED minimum, not a one-frame min —
+         * the last score-feeding one-frame extreme in the classic
+         * engine (v3.16.0 fixed the block numbers the same way, and
+         * the dual engine's sprint thigh is fixed with it). One
+         * glitched frame reading a knee too far forward used to score
+         * 100 on thigh position and hide a real fault. */
+        var thigh=sustainedMin(featureWindow.map(function(x){return x.thigh}));
         /* v3.16.0: armSplit is a SUSTAINED peak, not a one-frame max —
          * the same rule v3.8.0/v3.9.0/v3.10.0 applied to the rear
          * extension, the asymmetry peaks and the two-camera block
@@ -4163,7 +4179,7 @@ window.TrackClassic = {
   analyze: analyze,
   extractFeatures: extractFeatures,
   /* v3.9.0 test hooks (smoke tests only). */
-  _test: { sustainedPeak: sustainedPeak },
+  _test: { sustainedPeak: sustainedPeak, sustainedMin: sustainedMin },
   content: content,
   fixVideos: fixVideos,
   coachFix: coachFix,
@@ -5137,6 +5153,13 @@ function dRange(vals){ return Math.max.apply(null, vals) - Math.min.apply(null, 
  * classic engine's sustainedPeak (v3.8.0/v3.9.0). A peak confirmed by at
  * least two frames; a single reading stands, empty reads 0. */
 function dSustainedPeak(vals){ var a = vals.slice().sort(function(x, y){ return y - x; }); return a.length > 1 ? a[1] : (a.length ? a[0] : 0); }
+/* v3.17.0: a SUSTAINED minimum — the second-lowest reading, mirroring
+ * dSustainedPeak and the classic engine's sustainedMin. The sprint
+ * thigh metric takes the smallest thigh angle in the clip, so one
+ * glitched frame reading a knee too far forward used to score 100 on
+ * thigh position and hide a real fault. With only one reading the
+ * single value stands; empty reads 0. */
+function dSustainedMin(vals){ var a = vals.slice().sort(function(x, y){ return x - y; }); return a.length > 1 ? a[1] : (a.length ? a[0] : 0); }
 /* v3.11.0: per-clip facing memory — reset by runLocalAnalysis before
  * each clip, so one clip's direction never leaks into the next. */
 function resetDualFacing(){ D.faceMem = 0; D.faceFirstX = null; D.faceLastX = null; }
@@ -5195,8 +5218,11 @@ function summarizeDual(mode, feats){
   if(!feats.length) return { label: D.localLabel, score: null, metrics: [0, 0, 0], issue: 'noShape', headline: 'No clear full-body shape in this clip', fix: DUAL_FIX.noShape, frames: 0, activity: 'none' };
   var lean = dMedian(feats.map(function(f){ return f.lean; }));
   var elbow = dMedian(feats.map(function(f){ return f.elbow; }));
-  var thigh = Math.min.apply(null, feats.map(function(f){ return f.thigh; }));
-  var thighSep = Math.max.apply(null, feats.map(function(f){ return f.thighSep; }));
+  /* v3.17.0: thigh is a SUSTAINED minimum, not a one-frame min — the
+   * same fix as the classic engine this version. One glitched frame
+   * reading a knee too far forward used to score 100 on thigh
+   * position and hide a real fault. */
+  var thigh = dSustainedMin(feats.map(function(f){ return f.thigh; }));
   var shin = dMedian(feats.map(function(f){ return f.shinReach; }));
   var armSplit = Math.max.apply(null, feats.map(function(f){ return f.armSplit; }));
   /* v3.10.0: rear extension is a SUSTAINED peak, not a one-frame max —
@@ -5204,7 +5230,6 @@ function summarizeDual(mode, feats){
    * still took Math.max, so one glitched straight-leg frame inflated
    * the reported extension (and could flip the headline fix). */
   var rearExt = dSustainedPeak(feats.map(function(f){ return Math.max(f.kneeL, f.kneeR); }));
-  var minKnee = Math.min.apply(null, feats.map(function(f){ return Math.min(f.kneeL, f.kneeR); }));
   var armExc = Math.max(dRange(feats.map(function(f){ return f.wristLY; })), dRange(feats.map(function(f){ return f.wristRY; }))) / dMedian(feats.map(function(f){ return f.torso; }));
   var cross = feats.reduce(function(s, f){ return s + f.crossing; }, 0) / feats.length;
   var hipLift = dMedian(feats.map(function(f){ return f.hipLift; }));
@@ -5703,7 +5728,7 @@ window.TrackDual = {
   setCamera: setDualCamera, switchCamera: switchDualCamera,
   startSkeleton: startDualRig, stopSkeleton: stopDualRig,
   _test: { gestureTick: dualGestureTick, setRigStatus: setDualRigStatus, setGestureStatus: setDualGestureStatus, setRole: function(r){ D.role = r; },
-    summarizeDual: summarizeDual, extractDualFeatures: extractDualFeatures, resetDualFacing: resetDualFacing, dualSampleScore: dualSampleScore, dualMoments: dualMoments, dualScoreText: dualScoreText, dSustainedPeak: dSustainedPeak },
+    summarizeDual: summarizeDual, extractDualFeatures: extractDualFeatures, resetDualFacing: resetDualFacing, dualSampleScore: dualSampleScore, dualMoments: dualMoments, dualScoreText: dualScoreText, dSustainedPeak: dSustainedPeak, dSustainedMin: dSustainedMin },
   isCamOff: function(){ return D.camOff; }
 };
 })();
@@ -5759,9 +5784,10 @@ window.TrackDual = {
  */
 (function(){
 'use strict';
-var VERSION = '3.16.0';
+var VERSION = '3.17.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "3.17.0", date: "2026-11-06", notes: ["Sprint thigh position no longer moves on a single glitched frame — the thigh number is now a sustained minimum, confirmed by at least two frames, like the block-start numbers already are. One frame misreading a knee too far forward used to score 100 on thigh position and hide a real fault; a real thigh drive held across frames still scores the same. The two-camera sprint summary got the same fix, and two values the dual engine computed but never read are gone."] },
   { version: "3.16.0", date: "2026-11-05", notes: ["Block-start scores no longer move on a single glitched frame — the projection (lean) and hand-separation numbers are now sustained peaks, confirmed by at least two frames, like the rear-leg extension and the best/worst frame callouts already are. One wobbly lean frame used to tank the projection score and point at 'folded hips' for a start that was fine; one misread wrist used to report full hand separation and hide weak arms. A real fault held across frames still scores the same."] },
   { version: "3.15.0", date: "2026-11-04", notes: ["Best frames now have to be held, not glitched — the mirror of yesterday's worst-frame fix. The report's top Best frame and the frame sent to AI Photo used to come from the single highest-scoring frame, so one pose misread could show you a 'perfect' rep you never actually held. A high frame only counts once the next frame is high too, and the clip and two-camera 'Looks good here' moments now pick the best held frame instead of a lone spike, so the rep you're told to copy is one you really held."] },
   { version: "3.14.0", date: "2026-11-03", notes: ["Worst-frame callouts now have to be held, not glitched — the report's Worst frame photo and the clip's 'Needs work' jump point used to come from the single lowest-scoring frame, so one pose misread could send you to fix a fault that never happened. A low frame only counts once the next frame is low too, and a lone dip with good frames around it is skipped, so the fault you get sent to fix is one you actually held."] },

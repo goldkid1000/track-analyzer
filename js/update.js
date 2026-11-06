@@ -47,9 +47,10 @@
  */
 (function(){
 'use strict';
-var VERSION = '3.16.0';
+var VERSION = '3.17.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "3.17.0", date: "2026-11-06", notes: ["Sprint thigh position no longer moves on a single glitched frame — the thigh number is now a sustained minimum, confirmed by at least two frames, like the block-start numbers already are. One frame misreading a knee too far forward used to score 100 on thigh position and hide a real fault; a real thigh drive held across frames still scores the same. The two-camera sprint summary got the same fix, and two values the dual engine computed but never read are gone."] },
   { version: "3.16.0", date: "2026-11-05", notes: ["Block-start scores no longer move on a single glitched frame — the projection (lean) and hand-separation numbers are now sustained peaks, confirmed by at least two frames, like the rear-leg extension and the best/worst frame callouts already are. One wobbly lean frame used to tank the projection score and point at 'folded hips' for a start that was fine; one misread wrist used to report full hand separation and hide weak arms. A real fault held across frames still scores the same."] },
   { version: "3.15.0", date: "2026-11-04", notes: ["Best frames now have to be held, not glitched — the mirror of yesterday's worst-frame fix. The report's top Best frame and the frame sent to AI Photo used to come from the single highest-scoring frame, so one pose misread could show you a 'perfect' rep you never actually held. A high frame only counts once the next frame is high too, and the clip and two-camera 'Looks good here' moments now pick the best held frame instead of a lone spike, so the rep you're told to copy is one you really held."] },
   { version: "3.14.0", date: "2026-11-03", notes: ["Worst-frame callouts now have to be held, not glitched — the report's Worst frame photo and the clip's 'Needs work' jump point used to come from the single lowest-scoring frame, so one pose misread could send you to fix a fault that never happened. A low frame only counts once the next frame is low too, and a lone dip with good frames around it is skipped, so the fault you get sent to fix is one you actually held."] },

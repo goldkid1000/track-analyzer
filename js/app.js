@@ -63,6 +63,16 @@ function range(values){ return Math.max.apply(null, values) - Math.min.apply(nul
  * 0. Shared by the block-start rear extension and the sprint
  * asymmetry peaks so both report the same honest rule. */
 function sustainedPeak(values){ var a = values.slice().sort(function(x, y){ return y - x; }); return a.length > 1 ? a[1] : (a.length ? a[0] : 0); }
+/* v3.17.0: a SUSTAINED minimum — the second-lowest reading, i.e. a
+ * minimum confirmed by at least two frames. The mirror of
+ * sustainedPeak (v3.9.0): the sprint thigh metric takes the smallest
+ * thigh angle in the window, so one glitched frame reading a knee too
+ * far forward used to score 100 on thigh position and hide a real
+ * fault (and crown a different fix instead of 'Review thigh
+ * position'). A real thigh drive lasts several frames at phone frame
+ * rates, so the second-lowest reading is the minimum. With only one
+ * reading the single value stands; with none, 0. */
+function sustainedMin(values){ var a = values.slice().sort(function(x, y){ return x - y; }); return a.length > 1 ? a[1] : (a.length ? a[0] : 0); }
 
 
 var content={
@@ -180,7 +190,13 @@ function analyze(lm){
         if(Math.max(motion,armExcursion)<.18){analysisStub.textContent='Ready \u2014 move through one full rep';setProgress(72,'Locked on \u2014 do the rep','The camera can see you. Do the move so it has enough change to score.','working');return null;}
         var lean=median(featureWindow.map(function(x){return x.lean}));
         var elbow=median(featureWindow.map(function(x){return x.elbow}));
-        var thigh=Math.min.apply(null,featureWindow.map(function(x){return x.thigh}));
+        /* v3.17.0: thigh is a SUSTAINED minimum, not a one-frame min —
+         * the last score-feeding one-frame extreme in the classic
+         * engine (v3.16.0 fixed the block numbers the same way, and
+         * the dual engine's sprint thigh is fixed with it). One
+         * glitched frame reading a knee too far forward used to score
+         * 100 on thigh position and hide a real fault. */
+        var thigh=sustainedMin(featureWindow.map(function(x){return x.thigh}));
         /* v3.16.0: armSplit is a SUSTAINED peak, not a one-frame max —
          * the same rule v3.8.0/v3.9.0/v3.10.0 applied to the rear
          * extension, the asymmetry peaks and the two-camera block
@@ -882,7 +898,7 @@ window.TrackClassic = {
   analyze: analyze,
   extractFeatures: extractFeatures,
   /* v3.9.0 test hooks (smoke tests only). */
-  _test: { sustainedPeak: sustainedPeak },
+  _test: { sustainedPeak: sustainedPeak, sustainedMin: sustainedMin },
   content: content,
   fixVideos: fixVideos,
   coachFix: coachFix,

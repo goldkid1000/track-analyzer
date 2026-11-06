@@ -1752,6 +1752,95 @@ const W = sandbox;
     (() => { const r = runClassic316({ lean: () => 70, split: () => 0.9 });
       return !!r && r.metrics[0] === 40; })());
 
+  /* ================= v3.17.0 ================= */
+  // The sprint thigh metric was the last score-feeding one-frame
+  // extreme in the classic engine: the whole-window Math.min let one
+  // glitched frame reading a knee too far forward score 100 on thigh
+  // position and hide a real fault (and crown a different fix
+  // instead of 'Review thigh position'). The dual engine had the same
+  // min. Both are sustained minima now — the second-lowest reading,
+  // a minimum confirmed by at least two frames, mirroring the
+  // sustainedPeak rule (v3.9.0/v3.10.0/v3.16.0).
+  const SM317 = W.TrackClassic._test.sustainedMin;
+  t('v3.17.0 sustainedMin: one low spike over high readings reports the second-lowest',
+    SM317([5, 45, 45, 45]) === 45);
+  t('v3.17.0 sustainedMin: a minimum held on two frames reports it, single stands, empty reads 0',
+    SM317([12, 12, 45]) === 12 && SM317([40]) === 40 && SM317([]) === 0);
+  const DSM317 = W.TrackDual._test.dSustainedMin;
+  t('v3.17.0 dual sustainedMin: one low spike over high readings reports the second-lowest',
+    DSM317([5, 45, 45, 45]) === 45);
+  t('v3.17.0 dual sustainedMin: a minimum held on two frames reports it, single stands, empty reads 0',
+    DSM317([12, 12, 45]) === 12 && DSM317([40]) === 40 && DSM317([]) === 0);
+  // Fixture: 24 synthetic side-view sprint frames — tall posture
+  // (lean 14°), running across the frame (centerX grows 0.004/frame
+  // so the motion gate passes), arms swinging. One leg drives forward
+  // to the chosen thigh angle each frame; the other trails behind the
+  // hip (reads 90°, so the per-frame thigh is the driven leg's
+  // angle). Baseline thigh 45° is a real fault: the thigh never
+  // reaches the review range (ceilingScore 26/34 -> ~44.12).
+  function classicSprint317(thighDeg, i){
+    const lm = [];
+    for(let k = 0; k < 33; k++) lm.push({ x: 0.5, y: 0.5, visibility: 0.95 });
+    const P = (idx, x, y) => { lm[idx] = { x: x, y: y, visibility: 0.95 }; };
+    const hipX = 0.40 + i * 0.004, hipY = 0.30;
+    const torsoLen = 0.14, leanR = 14 * Math.PI / 180;
+    const shX = hipX + torsoLen * Math.sin(leanR), shY = hipY - torsoLen * Math.cos(leanR);
+    const tR = thighDeg * Math.PI / 180, thighLen = 0.12;
+    const kneeFx = hipX + thighLen * Math.cos(tR), kneeFy = hipY + thighLen * Math.sin(tR);
+    P(0, shX + 0.10, shY - 0.05);
+    P(11, shX - 0.02, shY); P(12, shX + 0.02, shY);
+    P(13, shX - 0.02, shY + 0.07); P(14, shX + 0.02, shY + 0.07);
+    const wSwing = 0.06 * Math.sin(i * Math.PI / 6);
+    P(15, shX - 0.02, 0.55 + wSwing); P(16, shX + 0.02, 0.55 - wSwing);
+    P(23, hipX - 0.02, hipY); P(24, hipX + 0.02, hipY);
+    P(25, kneeFx - 0.02, kneeFy); P(26, hipX - 0.06, 0.44);
+    P(27, kneeFx - 0.02 + 0.03, kneeFy + 0.14); P(28, hipX - 0.06 + 0.03, 0.44 + 0.14);
+    return lm;
+  }
+  function runClassicSprint317(thighFn){
+    W.TrackClassic.setBlockStarts(false);
+    let out = null;
+    for(let i = 0; i < 24; i++){
+      const r = W.TrackClassic.analyze(classicSprint317(thighFn(i), i));
+      if(r) out = r;
+    }
+    return out;
+  }
+  t('v3.17.0 classic sprint: one 5° thigh glitch frame leaves thigh position at ~44 and crowns the real fault',
+    (() => { const r = runClassicSprint317(i => i === 12 ? 5 : 45);
+      return !!r && Math.abs(r.metrics[1] - 44.12) < 0.01 && r.issue === 'frontSide'; })());
+  t('v3.17.0 classic sprint: thigh drive held on two frames still scores 100',
+    (() => { const r = runClassicSprint317(i => (i === 10 || i === 11) ? 12 : 45);
+      return !!r && r.metrics[1] === 100; })());
+  t('v3.17.0 classic sprint: a real held thigh fault (45° on every frame) still scores ~44',
+    (() => { const r = runClassicSprint317(() => 45);
+      return !!r && Math.abs(r.metrics[1] - 44.12) < 0.01 && r.issue === 'frontSide'; })());
+  // End to end through summarizeDual('sprint'): wrists steady so the
+  // clip is not read as an arm swing. Metrics order: [posture, thigh,
+  // arm travel].
+  function dualSprint317(thigh){
+    return { lean: 14, elbow: 90, thigh: thigh, thighSep: 40, shinReach: 0.5,
+      armSplit: 0.3, kneeL: 150, kneeR: 150, wristLY: 0.3, wristRY: 0.3,
+      torso: 0.5, crossing: 0, hipLift: 1, shoulderY: 0.3 };
+  }
+  t('v3.17.0 dual sprint: one 5° thigh glitch frame leaves thigh position at ~44, not 100',
+    (() => { const feats = [];
+      for(let i = 0; i < 9; i++) feats.push(dualSprint317(45));
+      feats.push(dualSprint317(5));
+      const r = W.TrackDual._test.summarizeDual('sprint', feats);
+      return Math.abs(r.metrics[1] - 44.12) < 0.01; })());
+  t('v3.17.0 dual sprint: thigh drive held on two frames still scores 100',
+    (() => { const feats = [];
+      for(let i = 0; i < 8; i++) feats.push(dualSprint317(45));
+      feats.push(dualSprint317(12)); feats.push(dualSprint317(12));
+      const r = W.TrackDual._test.summarizeDual('sprint', feats);
+      return r.metrics[1] === 100; })());
+  t('v3.17.0 dual sprint: a real held thigh fault (45° on every frame) still scores ~44',
+    (() => { const feats = [];
+      for(let i = 0; i < 10; i++) feats.push(dualSprint317(45));
+      const r = W.TrackDual._test.summarizeDual('sprint', feats);
+      return Math.abs(r.metrics[1] - 44.12) < 0.01; })());
+
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR', e && e.stack || e); process.exit(2); });
