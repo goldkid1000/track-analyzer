@@ -1841,6 +1841,62 @@ const W = sandbox;
       const r = W.TrackDual._test.summarizeDual('sprint', feats);
       return Math.abs(r.metrics[1] - 44.12) < 0.01; })());
 
+  /* ================= v3.18.0 ================= */
+  // The two-camera port still took one-frame maxes for its block hand
+  // separation and its arm-swing back drive (v3.16.0 fixed only the
+  // single-camera engine): one glitched wrist frame reported full hand
+  // separation in block mode and a full back drive in arm-swing mode,
+  // hiding a real fault in both. Both are sustained peaks now, same
+  // rule as the classic engine.
+  function dualFeat318(armSplit){
+    return { lean: 40, elbow: 90, thigh: 40, thighSep: 40, shinReach: 0.5,
+      armSplit: armSplit, kneeL: 149, kneeR: 149, wristLY: 0.3, wristRY: 0.3,
+      torso: 0.5, crossing: 0, hipLift: 1, shoulderY: 0.3 };
+  }
+  t('v3.18.0 dual block: one 0.95 arm-split glitch frame leaves hand separation at 0 and crowns the real fault',
+    (() => { const feats = [];
+      for(let i = 0; i < 9; i++) feats.push(dualFeat318(0.15));
+      feats.push(dualFeat318(0.95));
+      const r = W.TrackDual._test.summarizeDual('block', feats);
+      return Math.abs(r.metrics[1] - 0) < 0.01 && r.issue === 'armSplit'; })());
+  t('v3.18.0 dual block: hand separation held on two frames still scores 100',
+    (() => { const feats = [];
+      for(let i = 0; i < 8; i++) feats.push(dualFeat318(0.15));
+      feats.push(dualFeat318(0.9)); feats.push(dualFeat318(0.9));
+      const r = W.TrackDual._test.summarizeDual('block', feats);
+      return r.metrics[1] === 100; })());
+  t('v3.18.0 dual block: a real held hand-separation fault (0.15 on every frame) still scores 0',
+    (() => { const feats = [];
+      for(let i = 0; i < 10; i++) feats.push(dualFeat318(0.15));
+      const r = W.TrackDual._test.summarizeDual('block', feats);
+      return Math.abs(r.metrics[1] - 0) < 0.01 && r.issue === 'armSplit'; })());
+  // Arm-swing fixtures: wristRY swings low (0.3 <-> 0.55) so the clip
+  // reads as an arm swing without ever raising a hand; wristLY carries
+  // the hand height under test. Metrics order: [elbow, straightTrack,
+  // backDrive]. dFloor(0, 0.15, 0.6) = 75.
+  function dualArm318(wristLY, wristRY){
+    return { lean: 14, elbow: 90, thigh: 40, thighSep: 40, shinReach: 0.5,
+      armSplit: 0.3, kneeL: 150, kneeR: 150, wristLY: wristLY, wristRY: wristRY,
+      torso: 0.5, crossing: 0, hipLift: 1, shoulderY: 0.3 };
+  }
+  t('v3.18.0 dual arm-swing: one high-hand glitch frame leaves back drive at 75, not 100',
+    (() => { const feats = [];
+      for(let i = 0; i < 9; i++) feats.push(dualArm318(0.3, i % 2 ? 0.55 : 0.3));
+      feats.push(dualArm318(-0.2, 0.3));
+      const r = W.TrackDual._test.summarizeDual('sprint', feats);
+      return Math.abs(r.metrics[2] - 75) < 0.01 && r.issue === 'backDrive'; })());
+  t('v3.18.0 dual arm-swing: a back drive held on two frames still scores 100',
+    (() => { const feats = [];
+      for(let i = 0; i < 8; i++) feats.push(dualArm318(0.3, i % 2 ? 0.55 : 0.3));
+      feats.push(dualArm318(-0.2, 0.3)); feats.push(dualArm318(-0.2, 0.55));
+      const r = W.TrackDual._test.summarizeDual('sprint', feats);
+      return r.metrics[2] === 100; })());
+  t('v3.18.0 dual arm-swing: hands that never rise (low swing on every frame) still score 75 on back drive',
+    (() => { const feats = [];
+      for(let i = 0; i < 10; i++) feats.push(dualArm318(0.3, i % 2 ? 0.55 : 0.3));
+      const r = W.TrackDual._test.summarizeDual('sprint', feats);
+      return Math.abs(r.metrics[2] - 75) < 0.01 && r.issue === 'backDrive'; })());
+
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR', e && e.stack || e); process.exit(2); });

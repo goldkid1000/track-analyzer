@@ -1029,7 +1029,11 @@ function summarizeDual(mode, feats){
    * position and hide a real fault. */
   var thigh = dSustainedMin(feats.map(function(f){ return f.thigh; }));
   var shin = dMedian(feats.map(function(f){ return f.shinReach; }));
-  var armSplit = Math.max.apply(null, feats.map(function(f){ return f.armSplit; }));
+  /* v3.18.0: hand separation is a SUSTAINED peak, not a one-frame max —
+   * the classic engine fixed this in v3.16.0 but this two-camera port
+   * still took Math.max, so one glitched frame misreading a wrist
+   * reported full hand separation and hid a real fault. */
+  var armSplit = dSustainedPeak(feats.map(function(f){ return f.armSplit; }));
   /* v3.10.0: rear extension is a SUSTAINED peak, not a one-frame max —
    * the classic engine fixed this in v3.8.0 but this two-camera port
    * still took Math.max, so one glitched straight-leg frame inflated
@@ -1045,9 +1049,11 @@ function summarizeDual(mode, feats){
   var isArmSwing = armExc > 0.3 && thighRange < 30;
   var metrics, issues;
   if(isArmSwing){
-    /* maxHand = how high the higher hand gets, in torso units above
-     * the shoulder (chin ≈ +0.25, hip ≈ −1). Peak over the whole clip. */
-    var maxHand = Math.max.apply(null, feats.map(function(f){
+    /* v3.18.0: maxHand = how high the higher hand gets, in torso units
+     * above the shoulder (chin ≈ +0.25, hip ≈ −1). A SUSTAINED peak,
+     * not a one-frame max — one glitched wrist frame used to report a
+     * full back drive and hide hands cutting the stroke short. */
+    var maxHand = dSustainedPeak(feats.map(function(f){
       return Math.max((f.shoulderY - f.wristLY) / f.torso, (f.shoulderY - f.wristRY) / f.torso);
     }));
     metrics = [dBand(elbow, 60, 110, 40), dCeil(cross, 0.2, 0.4), dFloor(maxHand, 0.15, 0.6)];

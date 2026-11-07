@@ -5224,7 +5224,11 @@ function summarizeDual(mode, feats){
    * position and hide a real fault. */
   var thigh = dSustainedMin(feats.map(function(f){ return f.thigh; }));
   var shin = dMedian(feats.map(function(f){ return f.shinReach; }));
-  var armSplit = Math.max.apply(null, feats.map(function(f){ return f.armSplit; }));
+  /* v3.18.0: hand separation is a SUSTAINED peak, not a one-frame max —
+   * the classic engine fixed this in v3.16.0 but this two-camera port
+   * still took Math.max, so one glitched frame misreading a wrist
+   * reported full hand separation and hid a real fault. */
+  var armSplit = dSustainedPeak(feats.map(function(f){ return f.armSplit; }));
   /* v3.10.0: rear extension is a SUSTAINED peak, not a one-frame max —
    * the classic engine fixed this in v3.8.0 but this two-camera port
    * still took Math.max, so one glitched straight-leg frame inflated
@@ -5240,9 +5244,11 @@ function summarizeDual(mode, feats){
   var isArmSwing = armExc > 0.3 && thighRange < 30;
   var metrics, issues;
   if(isArmSwing){
-    /* maxHand = how high the higher hand gets, in torso units above
-     * the shoulder (chin ≈ +0.25, hip ≈ −1). Peak over the whole clip. */
-    var maxHand = Math.max.apply(null, feats.map(function(f){
+    /* v3.18.0: maxHand = how high the higher hand gets, in torso units
+     * above the shoulder (chin ≈ +0.25, hip ≈ −1). A SUSTAINED peak,
+     * not a one-frame max — one glitched wrist frame used to report a
+     * full back drive and hide hands cutting the stroke short. */
+    var maxHand = dSustainedPeak(feats.map(function(f){
       return Math.max((f.shoulderY - f.wristLY) / f.torso, (f.shoulderY - f.wristRY) / f.torso);
     }));
     metrics = [dBand(elbow, 60, 110, 40), dCeil(cross, 0.2, 0.4), dFloor(maxHand, 0.15, 0.6)];
@@ -5784,9 +5790,10 @@ window.TrackDual = {
  */
 (function(){
 'use strict';
-var VERSION = '3.17.0';
+var VERSION = '3.18.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "3.18.0", date: "2026-11-07", notes: ["Two-camera block starts and arm swings no longer move on a single glitched frame — the hand-separation number and the arm-swing back-drive number are now sustained peaks, confirmed by at least two frames, like the rest of the block-start numbers already are. One misread wrist used to report full hand separation in a block start and a full back drive in an arm swing, hiding hands that weren't separating or driving. A real separation or drive held across frames still scores the same."] },
   { version: "3.17.0", date: "2026-11-06", notes: ["Sprint thigh position no longer moves on a single glitched frame — the thigh number is now a sustained minimum, confirmed by at least two frames, like the block-start numbers already are. One frame misreading a knee too far forward used to score 100 on thigh position and hide a real fault; a real thigh drive held across frames still scores the same. The two-camera sprint summary got the same fix, and two values the dual engine computed but never read are gone."] },
   { version: "3.16.0", date: "2026-11-05", notes: ["Block-start scores no longer move on a single glitched frame — the projection (lean) and hand-separation numbers are now sustained peaks, confirmed by at least two frames, like the rear-leg extension and the best/worst frame callouts already are. One wobbly lean frame used to tank the projection score and point at 'folded hips' for a start that was fine; one misread wrist used to report full hand separation and hide weak arms. A real fault held across frames still scores the same."] },
   { version: "3.15.0", date: "2026-11-04", notes: ["Best frames now have to be held, not glitched — the mirror of yesterday's worst-frame fix. The report's top Best frame and the frame sent to AI Photo used to come from the single highest-scoring frame, so one pose misread could show you a 'perfect' rep you never actually held. A high frame only counts once the next frame is high too, and the clip and two-camera 'Looks good here' moments now pick the best held frame instead of a lone spike, so the rep you're told to copy is one you really held."] },

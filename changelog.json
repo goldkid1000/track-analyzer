@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.18.0",
+    "date": "2026-11-07",
+    "notify": true,
+    "notes": [
+      "Two-camera block starts and arm swings no longer move on a single glitched frame \u2014 the hand-separation number and the arm-swing back-drive number are now sustained peaks, confirmed by at least two frames, like the rest of the block-start numbers already are. One misread wrist used to report full hand separation in a block start and a full back drive in an arm swing, hiding hands that weren't separating or driving. A real separation or drive held across frames still scores the same."
+    ]
+  },
+  {
     "version": "3.17.0",
     "date": "2026-11-06",
     "notify": true,
