@@ -73,6 +73,18 @@ function sustainedPeak(values){ var a = values.slice().sort(function(x, y){ retu
  * rates, so the second-lowest reading is the minimum. With only one
  * reading the single value stands; with none, 0. */
 function sustainedMin(values){ var a = values.slice().sort(function(x, y){ return x - y; }); return a.length > 1 ? a[1] : (a.length ? a[0] : 0); }
+/* v3.19.0: a SUSTAINED range — the second-largest minus the
+ * second-smallest reading, i.e. a range confirmed by at least two
+ * frames on each side. The mirror of sustainedPeak/sustainedMin for
+ * ranges: arm excursion is a wrist-travel range, so one glitched
+ * frame reading a wrist far from the body used to inflate it past
+ * the arm-travel floor and score 100 on arm rhythm, hiding a real
+ * fault (and crowning a different fix instead of 'Let the arms set
+ * rhythm'). A real arm swing repeats every stride at phone frame
+ * rates, so the second extremes are the swing. With fewer than
+ * three readings the plain range stands (nothing else exists to
+ * confirm it); with none, 0. */
+function sustainedRange(values){ var a = values.slice().sort(function(x, y){ return x - y; }); if(a.length < 3) return a.length ? a[a.length - 1] - a[0] : 0; return a[a.length - 2] - a[1]; }
 
 
 var content={
@@ -186,7 +198,11 @@ function analyze(lm){
         }
         var torso=median(featureWindow.map(function(x){return x.torso}));
         var motion=Math.max(range(featureWindow.map(function(x){return x.centerX})),range(featureWindow.map(function(x){return x.kneeY})))/torso;
-        var armExcursion=Math.max(range(featureWindow.map(function(x){return x.wristLY})),range(featureWindow.map(function(x){return x.wristRY})))/torso;
+        /* v3.19.0: arm excursion is a SUSTAINED range, not a
+         * whole-window range — one glitched wrist frame used to
+         * inflate it past the arm-travel floor and score 100 on arm
+         * rhythm, hiding arms that never swung. */
+        var armExcursion=Math.max(sustainedRange(featureWindow.map(function(x){return x.wristLY})),sustainedRange(featureWindow.map(function(x){return x.wristRY})))/torso;
         if(Math.max(motion,armExcursion)<.18){analysisStub.textContent='Ready \u2014 move through one full rep';setProgress(72,'Locked on \u2014 do the rep','The camera can see you. Do the move so it has enough change to score.','working');return null;}
         var lean=median(featureWindow.map(function(x){return x.lean}));
         var elbow=median(featureWindow.map(function(x){return x.elbow}));
@@ -898,7 +914,7 @@ window.TrackClassic = {
   analyze: analyze,
   extractFeatures: extractFeatures,
   /* v3.9.0 test hooks (smoke tests only). */
-  _test: { sustainedPeak: sustainedPeak, sustainedMin: sustainedMin },
+  _test: { sustainedPeak: sustainedPeak, sustainedMin: sustainedMin, sustainedRange: sustainedRange },
   content: content,
   fixVideos: fixVideos,
   coachFix: coachFix,

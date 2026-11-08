@@ -965,6 +965,16 @@ function dSustainedPeak(vals){ var a = vals.slice().sort(function(x, y){ return 
  * thigh position and hide a real fault. With only one reading the
  * single value stands; empty reads 0. */
 function dSustainedMin(vals){ var a = vals.slice().sort(function(x, y){ return x - y; }); return a.length > 1 ? a[1] : (a.length ? a[0] : 0); }
+/* v3.19.0: a SUSTAINED range — the second-largest minus the
+ * second-smallest reading, mirroring dSustainedPeak/dSustainedMin
+ * and the classic engine's sustainedRange. Arm excursion is a
+ * wrist-travel range, so one glitched frame reading a wrist far
+ * from the body used to inflate it past the arm-travel floor and
+ * score 100 on arm rhythm in sprint mode — and past the 0.3 arm
+ * check, misreading a still clip as an arm swing. A real arm swing
+ * repeats every stride, so the second extremes are the swing. With
+ * fewer than three readings the plain range stands; with none, 0. */
+function dSustainedRange(vals){ var a = vals.slice().sort(function(x, y){ return x - y; }); if(a.length < 3) return a.length ? a[a.length - 1] - a[0] : 0; return a[a.length - 2] - a[1]; }
 /* v3.11.0: per-clip facing memory — reset by runLocalAnalysis before
  * each clip, so one clip's direction never leaks into the next. */
 function resetDualFacing(){ D.faceMem = 0; D.faceFirstX = null; D.faceLastX = null; }
@@ -1039,7 +1049,11 @@ function summarizeDual(mode, feats){
    * still took Math.max, so one glitched straight-leg frame inflated
    * the reported extension (and could flip the headline fix). */
   var rearExt = dSustainedPeak(feats.map(function(f){ return Math.max(f.kneeL, f.kneeR); }));
-  var armExc = Math.max(dRange(feats.map(function(f){ return f.wristLY; })), dRange(feats.map(function(f){ return f.wristRY; }))) / dMedian(feats.map(function(f){ return f.torso; }));
+  /* v3.19.0: arm excursion is a SUSTAINED range, not a whole-clip
+   * range — one glitched wrist frame used to inflate it past the
+   * arm-travel floor (sprint arm rhythm 100, hiding a real fault)
+   * and past the 0.3 arm check (a still clip read as an arm swing). */
+  var armExc = Math.max(dSustainedRange(feats.map(function(f){ return f.wristLY; })), dSustainedRange(feats.map(function(f){ return f.wristRY; }))) / dMedian(feats.map(function(f){ return f.torso; }));
   var cross = feats.reduce(function(s, f){ return s + f.crossing; }, 0) / feats.length;
   var hipLift = dMedian(feats.map(function(f){ return f.hipLift; }));
   /* v2.2.0: arm swings — big wrist excursion + legs near-still (thigh
@@ -1539,7 +1553,7 @@ window.TrackDual = {
   setCamera: setDualCamera, switchCamera: switchDualCamera,
   startSkeleton: startDualRig, stopSkeleton: stopDualRig,
   _test: { gestureTick: dualGestureTick, setRigStatus: setDualRigStatus, setGestureStatus: setDualGestureStatus, setRole: function(r){ D.role = r; },
-    summarizeDual: summarizeDual, extractDualFeatures: extractDualFeatures, resetDualFacing: resetDualFacing, dualSampleScore: dualSampleScore, dualMoments: dualMoments, dualScoreText: dualScoreText, dSustainedPeak: dSustainedPeak, dSustainedMin: dSustainedMin },
+    summarizeDual: summarizeDual, extractDualFeatures: extractDualFeatures, resetDualFacing: resetDualFacing, dualSampleScore: dualSampleScore, dualMoments: dualMoments, dualScoreText: dualScoreText, dSustainedPeak: dSustainedPeak, dSustainedMin: dSustainedMin, dSustainedRange: dSustainedRange },
   isCamOff: function(){ return D.camOff; }
 };
 })();

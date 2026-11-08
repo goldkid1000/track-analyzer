@@ -1897,6 +1897,108 @@ const W = sandbox;
       const r = W.TrackDual._test.summarizeDual('sprint', feats);
       return Math.abs(r.metrics[2] - 75) < 0.01 && r.issue === 'backDrive'; })());
 
+  /* ================= v3.19.0 ================= */
+  // Arm excursion was the last score-feeding whole-window range: the
+  // classic engine, the two-camera summary and the drill classifier
+  // all took max-min wrist travel, so one glitched wrist frame
+  // inflated it past the arm-travel floor (sprint arm rhythm 100,
+  // hiding arms that never swung) and past the 0.3 arm check (a
+  // still clip read as an arm swing). All three are sustained ranges
+  // now — second-largest minus second-smallest, a range confirmed by
+  // at least two frames on each side.
+  const SR319 = W.TrackClassic._test.sustainedRange;
+  t('v3.19.0 sustainedRange: one wild frame over still readings reports 0',
+    SR319([0.05, 0.5, 0.5, 0.5, 0.5]) === 0);
+  t('v3.19.0 sustainedRange: a swing held on two frames still reports its full range; single stands, empty reads 0',
+    SR319([0.25, 0.5, 0.25, 0.5]) === 0.25 && SR319([0.4]) === 0 && SR319([]) === 0 && SR319([0.25, 0.5]) === 0.25);
+  const DSR319 = W.TrackDual._test.dSustainedRange;
+  t('v3.19.0 dual dSustainedRange: one wild frame over still readings reports 0',
+    DSR319([0.05, 0.5, 0.5, 0.5, 0.5]) === 0);
+  t('v3.19.0 dual dSustainedRange: a swing held on two frames still reports its full range; single stands, empty reads 0',
+    DSR319([0.25, 0.5, 0.25, 0.5]) === 0.25 && DSR319([0.4]) === 0 && DSR319([]) === 0 && DSR319([0.25, 0.5]) === 0.25);
+  const ASR319 = W.TrackAI._test.sustainedRange;
+  t('v3.19.0 AI sustainedRange: one wild frame over still readings reports 0',
+    ASR319([0.05, 0.5, 0.5, 0.5, 0.5]) === 0);
+  t('v3.19.0 AI sustainedRange: a swing held on two frames still reports its full range; single stands, empty reads 0',
+    ASR319([0.25, 0.5, 0.25, 0.5]) === 0.25 && ASR319([0.4]) === 0 && ASR319([]) === 0 && ASR319([0.25, 0.5]) === 0.25);
+  // Classic fixture: same side-view sprint geometry as v3.17.0 (tall
+  // posture, lean 14°, centreX growing 0.004/frame so the motion gate
+  // passes), but with a good thigh drive (12° -> 100) so the
+  // arm-travel number is the worst metric and crowns the fix, and
+  // with wrists the test controls directly. 36 frames flush the
+  // feature window (cap 36) so no swinging-wrist frame from the
+  // v3.17.0 fixture survives into the measured window.
+  function classicSprint319(thighDeg, wristLY, wristRY, i){
+    const lm = [];
+    for(let k = 0; k < 33; k++) lm.push({ x: 0.5, y: 0.5, visibility: 0.95 });
+    const P = (idx, x, y) => { lm[idx] = { x: x, y: y, visibility: 0.95 }; };
+    const hipX = 0.40 + i * 0.004, hipY = 0.30;
+    const torsoLen = 0.14, leanR = 14 * Math.PI / 180;
+    const shX = hipX + torsoLen * Math.sin(leanR), shY = hipY - torsoLen * Math.cos(leanR);
+    const tR = thighDeg * Math.PI / 180, thighLen = 0.12;
+    const kneeFx = hipX + thighLen * Math.cos(tR), kneeFy = hipY + thighLen * Math.sin(tR);
+    P(0, shX + 0.10, shY - 0.05);
+    P(11, shX - 0.02, shY); P(12, shX + 0.02, shY);
+    P(13, shX - 0.02, shY + 0.07); P(14, shX + 0.02, shY + 0.07);
+    P(15, shX - 0.02, wristLY); P(16, shX + 0.02, wristRY);
+    P(23, hipX - 0.02, hipY); P(24, hipX + 0.02, hipY);
+    P(25, kneeFx - 0.02, kneeFy); P(26, hipX - 0.06, 0.44);
+    P(27, kneeFx - 0.02 + 0.03, kneeFy + 0.14); P(28, hipX - 0.06 + 0.03, 0.44 + 0.14);
+    return lm;
+  }
+  function runClassicSprint319(wristLFn, wristRFn){
+    W.TrackClassic.setBlockStarts(false);
+    let out = null;
+    for(let i = 0; i < 36; i++){
+      const r = W.TrackClassic.analyze(classicSprint319(12, wristLFn(i), wristRFn(i), i));
+      if(r) out = r;
+    }
+    return out;
+  }
+  t('v3.19.0 classic sprint: one wild wrist frame leaves arm travel at ~9 and crowns the real fault',
+    (() => { const r = runClassicSprint319(i => i === 12 ? 0.05 : 0.55, () => 0.55);
+      return !!r && Math.abs(r.metrics[2] - 9.09) < 0.01 && r.issue === 'armRhythm'; })());
+  t('v3.19.0 classic sprint: a real arm swing held across frames still scores 100 on arm travel',
+    (() => { const r = runClassicSprint319(i => 0.55 + 0.06 * Math.sin(i * Math.PI / 6), i => 0.55 - 0.06 * Math.sin(i * Math.PI / 6));
+      return !!r && r.metrics[2] === 100; })());
+  t('v3.19.0 classic sprint: still arms on every frame still score ~9 and crown arm rhythm',
+    (() => { const r = runClassicSprint319(() => 0.55, () => 0.55);
+      return !!r && Math.abs(r.metrics[2] - 9.09) < 0.01 && r.issue === 'armRhythm'; })());
+  // Dual sprint fixtures: wrists steady at 0.3, torso 0.5, good thigh
+  // (12° -> 100) so arm travel is the worst metric. Metrics order:
+  // [posture, thigh, arm travel]. dFloor(0, 0.5, 0.55) = 9.09.
+  function dualSprint319(wristLY, wristRY, thighSep){
+    return { lean: 14, elbow: 90, thigh: 12, thighSep: thighSep, shinReach: 0.5,
+      armSplit: 0.3, kneeL: 150, kneeR: 150, wristLY: wristLY, wristRY: wristRY,
+      torso: 0.5, crossing: 0, hipLift: 1, shoulderY: 0.3 };
+  }
+  t('v3.19.0 dual sprint: one wild wrist frame leaves arm travel at ~9 and crowns the real fault (not an arm swing)',
+    (() => { const feats = [];
+      for(let i = 0; i < 9; i++) feats.push(dualSprint319(0.3, 0.3, 40));
+      feats.push(dualSprint319(-0.2, 0.3, 40));
+      const r = W.TrackDual._test.summarizeDual('sprint', feats);
+      return Math.abs(r.metrics[2] - 9.09) < 0.01 && r.issue === 'armRhythm' && r.activity === 'sprint'; })());
+  t('v3.19.0 dual sprint: a real arm swing held across frames still scores 100 on arm travel',
+    (() => { const feats = [];
+      for(let i = 0; i < 10; i++) feats.push(dualSprint319(i % 2 ? 0.55 : 0.3, i % 2 ? 0.3 : 0.55, i % 2 ? 80 : 0));
+      const r = W.TrackDual._test.summarizeDual('sprint', feats);
+      return r.metrics[2] === 100 && r.activity === 'sprint'; })());
+  t('v3.19.0 dual sprint: still arms on every frame still score ~9 and crown arm rhythm',
+    (() => { const feats = [];
+      for(let i = 0; i < 10; i++) feats.push(dualSprint319(0.3, 0.3, 40));
+      const r = W.TrackDual._test.summarizeDual('sprint', feats);
+      return Math.abs(r.metrics[2] - 9.09) < 0.01 && r.issue === 'armRhythm'; })());
+  // AI classify: still hips + still wrists is rest; one wild wrist
+  // frame used to push armExc past 0.3 and read it as an arm swing.
+  t('v3.19.0 AI classify: one wild wrist frame over still hips still classifies as rest, not arm-swing',
+    (() => { const hist = [];
+      const base = { missing: [], hipX: 0.5, hipY: 0.6, kneeL: 170, kneeR: 170, lean: 10,
+        torso: 0.3, wristLY: 0.35, wristRY: 0.65 };
+      let act = 'rest';
+      for(let i = 0; i < 5; i++) act = W.TrackAI._test.classify(Object.assign({}, base), hist);
+      act = W.TrackAI._test.classify(Object.assign({}, base, { wristLY: -0.15 }), hist);
+      return act === 'rest'; })());
+
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR', e && e.stack || e); process.exit(2); });

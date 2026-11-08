@@ -47,9 +47,10 @@
  */
 (function(){
 'use strict';
-var VERSION = '3.18.0';
+var VERSION = '3.19.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "3.19.0", date: "2026-11-08", notes: ["Arm travel no longer moves on a single glitched frame — the arm-swing number is now a sustained range, confirmed by at least two frames, like the rest of the sprint numbers already are. One frame misreading a wrist used to report a big arm swing and score 100 on arm rhythm, hiding arms that never swung, and could even read a still clip as an arm-swing drill. A real swing held across frames still scores the same."] },
   { version: "3.18.0", date: "2026-11-07", notes: ["Two-camera block starts and arm swings no longer move on a single glitched frame — the hand-separation number and the arm-swing back-drive number are now sustained peaks, confirmed by at least two frames, like the rest of the block-start numbers already are. One misread wrist used to report full hand separation in a block start and a full back drive in an arm swing, hiding hands that weren't separating or driving. A real separation or drive held across frames still scores the same."] },
   { version: "3.17.0", date: "2026-11-06", notes: ["Sprint thigh position no longer moves on a single glitched frame — the thigh number is now a sustained minimum, confirmed by at least two frames, like the block-start numbers already are. One frame misreading a knee too far forward used to score 100 on thigh position and hide a real fault; a real thigh drive held across frames still scores the same. The two-camera sprint summary got the same fix, and two values the dual engine computed but never read are gone."] },
   { version: "3.16.0", date: "2026-11-05", notes: ["Block-start scores no longer move on a single glitched frame — the projection (lean) and hand-separation numbers are now sustained peaks, confirmed by at least two frames, like the rear-leg extension and the best/worst frame callouts already are. One wobbly lean frame used to tank the projection score and point at 'folded hips' for a start that was fine; one misread wrist used to report full hand separation and hide weak arms. A real fault held across frames still scores the same."] },

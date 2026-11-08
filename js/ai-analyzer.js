@@ -76,6 +76,16 @@ function sessionBaseMs(){
   return (AI.lastSession && AI.lastSession.startedAt) || (AI.session && AI.session.startedAt) || 0;
 }
 function median(vals){ var a = vals.slice().sort(function(x, y){ return x - y; }); return a[Math.floor(a.length / 2)]; }
+/* v3.19.0: a SUSTAINED range — the second-largest minus the
+ * second-smallest reading, i.e. a range confirmed by at least two
+ * frames on each side. Same rule as the classic engine's
+ * sustainedRange: arm excursion is a wrist-travel range, so one
+ * glitched frame reading a wrist far from the body used to inflate
+ * it past the 0.3 arm check and classify a still clip as an arm
+ * swing. A real arm swing repeats, so the second extremes are the
+ * swing. With fewer than three readings the plain range stands;
+ * with none, 0. (Same name/body as app.js's helper, like median.) */
+function sustainedRange(vals){ var a = vals.slice().sort(function(x, y){ return x - y; }); if(a.length < 3) return a.length ? a[a.length - 1] - a[0] : 0; return a[a.length - 2] - a[1]; }
 function band(v, min, max, fall){ if(typeof v !== 'number' || !isFinite(v)) return NaN; if(v >= min && v <= max) return 100; return clamp(100 - (v < min ? min - v : v - max) / fall * 100, 0, 100); }
 function floorS(v, min, fall){ if(typeof v !== 'number' || !isFinite(v)) return NaN; return v >= min ? 100 : clamp(100 - (min - v) / fall * 100, 0, 100); }
 function ceilS(v, max, fall){ if(typeof v !== 'number' || !isFinite(v)) return NaN; return v <= max ? 100 : clamp(100 - (v - max) / fall * 100, 0, 100); }
@@ -834,15 +844,18 @@ function classify(f, hist, nowMs){
    * Sprinting also swings the arms, but its hip motion is far above
    * the 0.05 line, so the arm check only fires on the still-hip paths
    * below — it can never steal a sprint. */
+  /* v3.19.0: arm excursion is a SUSTAINED range, not a whole-window
+   * min/max — one glitched wrist frame used to inflate it past the
+   * 0.3 arm check and classify a still clip as an arm swing. */
   var armExc = 0;
   if(last.torso){
-    var minL = Infinity, maxL = -Infinity, minR = Infinity, maxR = -Infinity;
+    var wL = [], wR = [];
     hist.forEach(function(h){
       if(!h.f) return;
-      if(typeof h.f.wristLY === 'number'){ if(h.f.wristLY < minL) minL = h.f.wristLY; if(h.f.wristLY > maxL) maxL = h.f.wristLY; }
-      if(typeof h.f.wristRY === 'number'){ if(h.f.wristRY < minR) minR = h.f.wristRY; if(h.f.wristRY > maxR) maxR = h.f.wristRY; }
+      if(typeof h.f.wristLY === 'number') wL.push(h.f.wristLY);
+      if(typeof h.f.wristRY === 'number') wR.push(h.f.wristRY);
     });
-    armExc = Math.max(maxL - minL, maxR - minR) / last.torso;
+    armExc = Math.max(sustainedRange(wL), sustainedRange(wR)) / last.torso;
   }
   if(motion < 0.05){ if(armExc > 0.3) return 'arm-swing'; return crouched ? 'set' : 'rest'; }
   /* v3.1.0: starts go BOTH ways — the owner's clip drives LEFT
@@ -3262,6 +3275,7 @@ window.TrackAI = { setBlockStarts: setBlockStarts, getBlockStarts: function(){ r
     renderClipMarkers: renderClipMarkers, getDeep: function(){ return AI.deep; },
     resetDeep: function(){ AI.deep = { frames1: [], frames2: [], worst: null, worstStreak: 0, worstStreakAct: null, bestStreak: 0, bestStreakAct: null }; },
     setStartLocked: function(v){ AI.startLocked = !!v; }, setState: function(v){ AI.state = v; },
+    /* v3.19.0 */ sustainedRange: sustainedRange,
     prefersReducedMotion: prefersReducedMotion } };
 window.TrackFrameMarks = { build: buildFrameMarks, draw: drawFrameMarks, at: frameMarkAt,
   figureHtml: frameMarksFigureHtml, drawAll: drawAllFrameMarks,

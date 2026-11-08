@@ -1,8 +1,8 @@
 {
   "notes": [
-    "Two-camera block starts and arm swings no longer move on a single glitched frame \u2014 the hand-separation number and the arm-swing back-drive number are now sustained peaks, confirmed by at least two frames, like the rest of the block-start numbers already are. One misread wrist used to report full hand separation in a block start and a full back drive in an arm swing, hiding hands that weren't separating or driving. A real separation or drive held across frames still scores the same."
+    "Arm travel no longer moves on a single glitched frame — the arm-swing number is now a sustained range, confirmed by at least two frames, like the rest of the sprint numbers already are. One frame misreading a wrist used to report a big arm swing and score 100 on arm rhythm, hiding arms that never swung, and could even read a still clip as an arm-swing drill. A real swing held across frames still scores the same."
   ],
   "notify": true,
-  "updated": "2026-11-07",
-  "version": "3.18.0"
+  "updated": "2026-11-08",
+  "version": "3.19.0"
 }
