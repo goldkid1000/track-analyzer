@@ -1,8 +1,8 @@
 {
   "notes": [
-    "Arm travel no longer moves on a single glitched frame — the arm-swing number is now a sustained range, confirmed by at least two frames, like the rest of the sprint numbers already are. One frame misreading a wrist used to report a big arm swing and score 100 on arm rhythm, hiding arms that never swung, and could even read a still clip as an arm-swing drill. A real swing held across frames still scores the same."
+    "The arm-swing leg test no longer moves on a single glitched frame \u2014 the thigh-separation number is now a sustained range, confirmed by at least two frames, like the rest of the two-camera numbers already are. One frame misreading a knee wide used to report a real arm-swing drill as a sprint with a 100 arm-travel score. A real sprint swings the thighs wide on every stride, so it still reads as a sprint."
   ],
   "notify": true,
-  "updated": "2026-11-08",
-  "version": "3.19.0"
+  "updated": "2026-11-09",
+  "version": "3.20.0"
 }

@@ -1999,6 +1999,39 @@ const W = sandbox;
       act = W.TrackAI._test.classify(Object.assign({}, base, { wristLY: -0.15 }), hist);
       return act === 'rest'; })());
 
+  /* ================= v3.20.0 ================= */
+  // The two-camera arm-swing leg test was the last whole-clip range
+  // in the classifier: thigh separation took max-min, so one
+  // glitched frame misreading a knee wide inflated it past 30° and
+  // a real arm-swing drill (legs still, arms swinging) was reported
+  // as a sprint with a 100 arm-travel score. It is a sustained
+  // range now — a real sprint swings the thighs wide on every
+  // stride, so the second extremes stay wide and it still reads
+  // as a sprint. Fixture: wrists swing 0.3 <-> 0.55 (armExc 0.5),
+  // good thigh 12°, lean 14°. Arm-swing metrics order: [elbow,
+  // straightTrack, backDrive] = [100, 100, 75] here.
+  function dualArm320(thighSep, wristLY, wristRY){
+    return { lean: 14, elbow: 90, thigh: 12, thighSep: thighSep, shinReach: 0.5,
+      armSplit: 0.3, kneeL: 150, kneeR: 150, wristLY: wristLY, wristRY: wristRY,
+      torso: 0.5, crossing: 0, hipLift: 1, shoulderY: 0.3 };
+  }
+  t('v3.20.0 dual arm-swing: one 90° thigh-separation glitch frame still reads as an arm swing, not a sprint',
+    (() => { const feats = [];
+      for(let i = 0; i < 9; i++) feats.push(dualArm320(40, i % 2 ? 0.55 : 0.3, i % 2 ? 0.3 : 0.55));
+      feats.push(dualArm320(90, 0.3, 0.55));
+      const r = W.TrackDual._test.summarizeDual('sprint', feats);
+      return r.activity === 'arm-swing' && r.issue === 'backDrive' && Math.abs(r.metrics[2] - 75) < 0.01; })());
+  t('v3.20.0 dual sprint: thighs swinging wide on every stride still read as a sprint',
+    (() => { const feats = [];
+      for(let i = 0; i < 10; i++) feats.push(dualArm320(i % 2 ? 80 : 0, i % 2 ? 0.55 : 0.3, i % 2 ? 0.3 : 0.55));
+      const r = W.TrackDual._test.summarizeDual('sprint', feats);
+      return r.activity === 'sprint' && r.metrics[2] === 100; })());
+  t('v3.20.0 dual arm-swing: still legs on every frame still read as an arm swing',
+    (() => { const feats = [];
+      for(let i = 0; i < 10; i++) feats.push(dualArm320(40, i % 2 ? 0.55 : 0.3, i % 2 ? 0.3 : 0.55));
+      const r = W.TrackDual._test.summarizeDual('sprint', feats);
+      return r.activity === 'arm-swing' && r.issue === 'backDrive'; })());
+
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR', e && e.stack || e); process.exit(2); });

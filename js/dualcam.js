@@ -1056,10 +1056,14 @@ function summarizeDual(mode, feats){
   var armExc = Math.max(dSustainedRange(feats.map(function(f){ return f.wristLY; })), dSustainedRange(feats.map(function(f){ return f.wristRY; }))) / dMedian(feats.map(function(f){ return f.torso; }));
   var cross = feats.reduce(function(s, f){ return s + f.crossing; }, 0) / feats.length;
   var hipLift = dMedian(feats.map(function(f){ return f.hipLift; }));
-  /* v2.2.0: arm swings — big wrist excursion + legs near-still (thigh
-   * separation barely changes). Sprinting also swings the arms, but
-   * its thigh separation swings wide, so the leg test separates them. */
-  var thighRange = dRange(feats.map(function(f){ return f.thighSep; }));
+  /* v3.20.0: the leg test is a SUSTAINED range, not a whole-clip
+   * range — one glitched frame misreading a knee wide used to
+   * inflate thigh separation past 30°, so a real arm-swing drill
+   * (legs still, arms swinging) failed the leg test and was
+   * reported as a sprint with a 100 arm-travel score. A real
+   * sprint swings the thighs wide on every stride, so the second
+   * extremes stay wide and it still reads as a sprint. */
+  var thighRange = dSustainedRange(feats.map(function(f){ return f.thighSep; }));
   var isArmSwing = armExc > 0.3 && thighRange < 30;
   var metrics, issues;
   if(isArmSwing){
