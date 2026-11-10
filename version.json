@@ -1,8 +1,8 @@
 {
   "notes": [
-    "The arm-swing leg test no longer moves on a single glitched frame \u2014 the thigh-separation number is now a sustained range, confirmed by at least two frames, like the rest of the two-camera numbers already are. One frame misreading a knee wide used to report a real arm-swing drill as a sprint with a 100 arm-travel score. A real sprint swings the thighs wide on every stride, so it still reads as a sprint."
+    "The squat/drill check no longer moves on a single glitched frame — the hip-height number is now a sustained range, confirmed by at least two frames, like the rest of the classifier numbers already are. One frame misreading the hip low used to report a still clip as a squat. A real squat or drill dips the hips on every rep, so it still reads as one."
   ],
   "notify": true,
-  "updated": "2026-11-09",
-  "version": "3.20.0"
+  "updated": "2026-11-10",
+  "version": "3.21.0"
 }

@@ -5824,9 +5824,10 @@ window.TrackDual = {
  */
 (function(){
 'use strict';
-var VERSION = '3.20.0';
+var VERSION = '3.21.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "3.21.0", date: "2026-11-10", notes: ["The squat/drill check no longer moves on a single glitched frame — the hip-height number is now a sustained range, confirmed by at least two frames, like the rest of the classifier numbers already are. One frame misreading the hip low used to report a still clip as a squat. A real squat or drill dips the hips on every rep, so it still reads as one."] },
   { version: "3.20.0", date: "2026-11-09", notes: ["The arm-swing leg test no longer moves on a single glitched frame — the thigh-separation number is now a sustained range, confirmed by at least two frames, like the rest of the two-camera numbers already are. One frame misreading a knee wide used to report a real arm-swing drill as a sprint with a 100 arm-travel score. A real sprint swings the thighs wide on every stride, so it still reads as a sprint."] },
   { version: "3.19.0", date: "2026-11-08", notes: ["Arm travel no longer moves on a single glitched frame — the arm-swing number is now a sustained range, confirmed by at least two frames, like the rest of the sprint numbers already are. One frame misreading a wrist used to report a big arm swing and score 100 on arm rhythm, hiding arms that never swung, and could even read a still clip as an arm-swing drill. A real swing held across frames still scores the same."] },
   { version: "3.18.0", date: "2026-11-07", notes: ["Two-camera block starts and arm swings no longer move on a single glitched frame — the hand-separation number and the arm-swing back-drive number are now sustained peaks, confirmed by at least two frames, like the rest of the block-start numbers already are. One misread wrist used to report full hand separation in a block start and a full back drive in an arm swing, hiding hands that weren't separating or driving. A real separation or drive held across frames still scores the same."] },
@@ -7571,7 +7572,12 @@ function classify(f, hist, nowMs){
   if(hist.length < 3) return 'rest';
   var first = hist[0].f, last = f;
   var hipYs = hist.map(function(h){ return h.f.hipY; });
-  var hipRangeY = Math.max.apply(null, hipYs) - Math.min.apply(null, hipYs);
+  /* v3.21.0: hip range is a SUSTAINED range, not a whole-window
+   * min/max — one glitched hipY frame used to inflate it past the
+   * 0.10 squat/drill check and classify a still clip as a squat.
+   * A real squat/drill dips the hips on every rep, so the second
+   * extremes stay wide and it still reads as one. */
+  var hipRangeY = sustainedRange(hipYs);
   /* v3.1.0: velocity over the most recent ~0.5s, not the whole 2s
    * history. Averaged over 2s, a block start's exit speed read ~0.1/s
    * and could never clear the 0.3 block-start threshold — the start

@@ -813,7 +813,12 @@ function classify(f, hist, nowMs){
   if(hist.length < 3) return 'rest';
   var first = hist[0].f, last = f;
   var hipYs = hist.map(function(h){ return h.f.hipY; });
-  var hipRangeY = Math.max.apply(null, hipYs) - Math.min.apply(null, hipYs);
+  /* v3.21.0: hip range is a SUSTAINED range, not a whole-window
+   * min/max — one glitched hipY frame used to inflate it past the
+   * 0.10 squat/drill check and classify a still clip as a squat.
+   * A real squat/drill dips the hips on every rep, so the second
+   * extremes stay wide and it still reads as one. */
+  var hipRangeY = sustainedRange(hipYs);
   /* v3.1.0: velocity over the most recent ~0.5s, not the whole 2s
    * history. Averaged over 2s, a block start's exit speed read ~0.1/s
    * and could never clear the 0.3 block-start threshold — the start

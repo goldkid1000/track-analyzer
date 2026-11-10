@@ -2032,6 +2032,38 @@ const W = sandbox;
       const r = W.TrackDual._test.summarizeDual('sprint', feats);
       return r.activity === 'arm-swing' && r.issue === 'backDrive'; })());
 
+  /* ================= v3.21.0 ================= */
+  // The AI classify hip range was the last whole-window range in
+  // the classifier: hipY took max-min, so one glitched frame
+  // misreading the hip low inflated it past 0.10 and a still clip
+  // was reported as a squat. It is a sustained range now — a real
+  // squat/drill dips the hips on every rep, so the second extremes
+  // stay wide and it still reads as one. Fixture: still hips at
+  // 0.6, still wrists, lean 10°, knees 170°. The glitch frame dips
+  // hipY to 0.45 as the LAST frame so hip velocity stays high and
+  // the squat/drill check is actually reached (a mid-clip glitch
+  // followed by steady frames returns to rest before the check).
+  function aiStill321(hipY){
+    return { missing: [], hipX: 0.5, hipY: hipY, kneeL: 170, kneeR: 170, lean: 10,
+      torso: 0.3, wristLY: 0.35, wristRY: 0.65 };
+  }
+  t('v3.21.0 AI classify: one glitched hipY frame over still hips no longer invents a squat',
+    (() => { const hist = [];
+      let act = 'rest';
+      for(let i = 0; i < 5; i++) act = W.TrackAI._test.classify(aiStill321(0.6), hist);
+      act = W.TrackAI._test.classify(aiStill321(0.45), hist);
+      return act === 'moving'; })());
+  t('v3.21.0 AI classify: real hip dips repeated on every rep still read as a drill',
+    (() => { const hist = [];
+      let act = 'rest';
+      for(let i = 0; i < 10; i++) act = W.TrackAI._test.classify(aiStill321(i % 2 ? 0.72 : 0.6), hist);
+      return act === 'drill'; })());
+  t('v3.21.0 AI classify: still hips on every frame still read as rest',
+    (() => { const hist = [];
+      let act = 'rest';
+      for(let i = 0; i < 6; i++) act = W.TrackAI._test.classify(aiStill321(0.6), hist);
+      return act === 'rest'; })());
+
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR', e && e.stack || e); process.exit(2); });
