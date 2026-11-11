@@ -2064,6 +2064,98 @@ const W = sandbox;
       for(let i = 0; i < 6; i++) act = W.TrackAI._test.classify(aiStill321(0.6), hist);
       return act === 'rest'; })());
 
+  /* ================= v3.22.0 ================= */
+  // The classic engine's motion gate and block-set stillness check
+  // were the last plain whole-window ranges: the gate took max-min
+  // centerX/kneeY, and the set check took max-min centerX over the
+  // first six frames. One glitched frame misreading a hip wide used
+  // to pass the gate on a still clip ("Locked on — do the rep" for a
+  // rep that never happened) and to reject a valid block start whose
+  // set was still (startRange past 0.09). Both are sustained ranges
+  // now — a real run moves the hips on every frame and a real set
+  // holds still on every frame, so the second extremes still read
+  // true. Fixture: same side-view sprint geometry as v3.17.0/v3.19.0
+  // (tall posture, lean 14°, good thigh 12°, wrists still at 0.55),
+  // but the hips stay put unless the test moves them. 36 frames flush
+  // the feature window (cap 36) so no earlier fixture survives.
+  function classicStill322(hipJumpFn, i){
+    const lm = [];
+    for(let k = 0; k < 33; k++) lm.push({ x: 0.5, y: 0.5, visibility: 0.95 });
+    const P = (idx, x, y) => { lm[idx] = { x: x, y: y, visibility: 0.95 }; };
+    const hipX = 0.40 + (hipJumpFn ? hipJumpFn(i) : 0), hipY = 0.30;
+    const torsoLen = 0.14, leanR = 14 * Math.PI / 180;
+    const shX = hipX + torsoLen * Math.sin(leanR), shY = hipY - torsoLen * Math.cos(leanR);
+    const tR = 12 * Math.PI / 180, thighLen = 0.12;
+    const kneeFx = hipX + thighLen * Math.cos(tR), kneeFy = hipY + thighLen * Math.sin(tR);
+    P(0, shX + 0.10, shY - 0.05);
+    P(11, shX - 0.02, shY); P(12, shX + 0.02, shY);
+    P(13, shX - 0.02, shY + 0.07); P(14, shX + 0.02, shY + 0.07);
+    P(15, shX - 0.02, 0.55); P(16, shX + 0.02, 0.55);
+    P(23, hipX - 0.02, hipY); P(24, hipX + 0.02, hipY);
+    P(25, kneeFx - 0.02, kneeFy); P(26, hipX - 0.06, 0.44);
+    P(27, kneeFx - 0.02 + 0.03, kneeFy + 0.14); P(28, hipX - 0.06 + 0.03, 0.44 + 0.14);
+    return lm;
+  }
+  function runClassicStill322(hipJumpFn){
+    W.TrackClassic.setBlockStarts(false);
+    let out = null;
+    for(let i = 0; i < 36; i++){
+      const r = W.TrackClassic.analyze(classicStill322(hipJumpFn, i));
+      if(r) out = r;
+    }
+    return out;
+  }
+  t('v3.22.0 classic motion gate: one wild centerX frame over still hips never unlocks the gate',
+    runClassicStill322(i => i === 12 ? 0.25 : 0) === null);
+  t('v3.22.0 classic motion gate: real drift across frames still unlocks it and scores the still arms',
+    (() => { const r = runClassicStill322(i => i * 0.004);
+      return !!r && Math.abs(r.metrics[2] - 9.09) < 0.01 && r.issue === 'armRhythm'; })());
+  t('v3.22.0 classic motion gate: still hips on every frame still never unlock the gate',
+    runClassicStill322(() => 0) === null);
+  // Block fixture: same set-and-drive geometry as v3.16.0 (still set
+  // for the first six, rear knee 130° then 149°, lean 40°, split 0.3),
+  // plus an optional hip shift per frame. Metrics on a clean start:
+  // [projection 100, hand separation 30, rear push 100 - 100/35].
+  function classicBlock322(o, i){
+    const lm = [];
+    for(let k = 0; k < 33; k++) lm.push({ x: 0.5, y: 0.5, visibility: 0.95 });
+    const P = (idx, x, y) => { lm[idx] = { x: x, y: y, visibility: 0.95 }; };
+    const dx = i < 6 ? 0 : (i - 5) * 0.008;
+    const leanR = 40 * Math.PI / 180;
+    const hipX = 0.50 + dx + (o.hipShift ? o.hipShift(i) : 0), hipY = 0.30, shY = 0.44;
+    const shX = hipX + (shY - hipY) * Math.tan(leanR);
+    const ankle = (kx, deg) => { const r = deg * Math.PI / 180; return [kx + 0.2 * Math.sin(r), 0.62 + 0.2 * (-Math.cos(r))]; };
+    const kneeL = i < 6 ? 130 : 149, kneeR = 90;
+    const torso = Math.hypot(shX - hipX, shY - hipY);
+    P(0, shX + 0.15, 0.30);
+    P(11, shX - 0.03, shY); P(12, shX + 0.03, shY);
+    P(13, shX - 0.03, 0.55); P(14, shX + 0.03, 0.55);
+    P(15, shX - 0.03, 0.60); P(16, shX + 0.03, 0.60 + 0.3 * torso);
+    P(23, hipX - 0.02, hipY); P(24, hipX + 0.02, hipY);
+    P(25, hipX - 0.02, 0.62); P(26, hipX + 0.02, 0.62);
+    const aL = ankle(hipX - 0.02, kneeL), aR = ankle(hipX + 0.02, kneeR);
+    P(27, aL[0], aL[1]); P(28, aR[0], aR[1]);
+    return lm;
+  }
+  function runClassicBlock322(opts){
+    W.TrackClassic.setBlockStarts(true);
+    let out = null;
+    for(let i = 0; i < 36; i++){
+      const o = {};
+      if(opts.hipShift) o.hipShift = opts.hipShift;
+      const r = W.TrackClassic.analyze(classicBlock322(o, i));
+      if(r) out = r;
+    }
+    W.TrackClassic.setBlockStarts(false);
+    return out;
+  }
+  t('v3.22.0 classic block: one wild centerX frame in the set still scores the full start',
+    (() => { const r = runClassicBlock322({ hipShift: i => i === 2 ? 0.25 : 0 });
+      return !!r && r.metrics[0] === 100 && Math.abs(r.metrics[1] - 30) < 0.01 &&
+        Math.abs(r.metrics[2] - (100 - 100 / 35)) < 0.01; })());
+  t('v3.22.0 classic block: a set that really drifts still gets rejected, not scored',
+    runClassicBlock322({ hipShift: i => i < 6 ? i * 0.02 : 0 }) === null);
+
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR', e && e.stack || e); process.exit(2); });

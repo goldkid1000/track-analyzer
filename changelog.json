@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.22.0",
+    "date": "2026-11-11",
+    "notify": true,
+    "notes": [
+      "The motion check and the block-start set check no longer move on a single glitched frame — both are now sustained ranges, confirmed by at least two frames, like the rest of the classic engine's numbers already are. One frame misreading a hip wide used to unlock the analyzer on a still clip and to throw out a valid block start whose set was still. A real run moves the hips on every frame and a real set holds still on every frame, so both still read true."
+    ]
+  },
+  {
     "version": "3.21.0",
     "date": "2026-11-10",
     "notify": true,

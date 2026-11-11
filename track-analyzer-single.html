@@ -3334,7 +3334,9 @@ function bandScore(v, min, max, falloff){
 function floorScore(v, min, falloff){ return v >= min ? 100 : clamp(100 - (min - v) / falloff * 100, 0, 100); }
 function ceilingScore(v, max, falloff){ return v <= max ? 100 : clamp(100 - (v - max) / falloff * 100, 0, 100); }
 function median(values){ var a = values.slice().sort(function(x, y){ return x - y; }); return a[Math.floor(a.length / 2)]; }
-function range(values){ return Math.max.apply(null, values) - Math.min.apply(null, values); }
+/* v3.22.0: the plain whole-window range helper is gone — its last
+ * two uses (the motion gate and the block-set stillness check) are
+ * sustained ranges now, so no one-frame glitch can move a gate. */
 /* v3.9.0: a SUSTAINED peak — the second-highest reading, i.e. a peak
  * confirmed by at least two frames. v3.8.0 proved a lone MediaPipe
  * frame can swing a knee angle by 16°+; any one-frame max lets exactly
@@ -3478,7 +3480,15 @@ function analyze(lm){
           return null;
         }
         var torso=median(featureWindow.map(function(x){return x.torso}));
-        var motion=Math.max(range(featureWindow.map(function(x){return x.centerX})),range(featureWindow.map(function(x){return x.kneeY})))/torso;
+        /* v3.22.0: motion is a SUSTAINED range, not a whole-window
+         * range — the last plain range in the classic engine (the
+         * v3.19.0 arm-excursion fix sits right below it). One glitched
+         * frame misreading a hip wide used to inflate motion past the
+         * 0.18 floor and unlock the gate on a still clip, so the
+         * analyzer said 'Locked on — do the rep' for a rep that never
+         * happened. A real run moves the hips on every frame, so the
+         * second extremes stay wide and it still unlocks. */
+        var motion=Math.max(sustainedRange(featureWindow.map(function(x){return x.centerX})),sustainedRange(featureWindow.map(function(x){return x.kneeY})))/torso;
         /* v3.19.0: arm excursion is a SUSTAINED range, not a
          * whole-window range — one glitched wrist frame used to
          * inflate it past the arm-travel floor and score 100 on arm
@@ -3537,7 +3547,15 @@ function analyze(lm){
            * one, the measured clearance direction (finish minus start)
            * is the facing — the athlete runs the way they face, and
            * hasClearancePhase already requires real displacement. */
-          var startRange=range(firstSix.map(function(x){return x.centerX}))/torso;
+          /* v3.22.0: the set stillness is a SUSTAINED range, not a
+           * whole-window range — the other last plain range in the
+           * classic engine. One glitched frame misreading a hip wide
+           * in the first six set frames used to push startRange past
+           * 0.09 and reject a valid block start whose set was still.
+           * A real set holds still on every frame, so the second
+           * extremes stay tight and it still counts as still; a set
+           * that really drifts still fails the check. */
+          var startRange=sustainedRange(firstSix.map(function(x){return x.centerX}))/torso;
           var startCenter=firstSix.reduce(function(sum,x){return sum+x.centerX},0)/firstSix.length;
           var finishCenter=lastSix.reduce(function(sum,x){return sum+x.centerX},0)/lastSix.length;
           var noseVotes=0;
@@ -5824,9 +5842,10 @@ window.TrackDual = {
  */
 (function(){
 'use strict';
-var VERSION = '3.21.0';
+var VERSION = '3.22.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "3.22.0", date: "2026-11-11", notes: ["The motion check and the block-start set check no longer move on a single glitched frame — both are now sustained ranges, confirmed by at least two frames, like the rest of the classic engine's numbers already are. One frame misreading a hip wide used to unlock the analyzer on a still clip and to throw out a valid block start whose set was still. A real run moves the hips on every frame and a real set holds still on every frame, so both still read true."] },
   { version: "3.21.0", date: "2026-11-10", notes: ["The squat/drill check no longer moves on a single glitched frame — the hip-height number is now a sustained range, confirmed by at least two frames, like the rest of the classifier numbers already are. One frame misreading the hip low used to report a still clip as a squat. A real squat or drill dips the hips on every rep, so it still reads as one."] },
   { version: "3.20.0", date: "2026-11-09", notes: ["The arm-swing leg test no longer moves on a single glitched frame — the thigh-separation number is now a sustained range, confirmed by at least two frames, like the rest of the two-camera numbers already are. One frame misreading a knee wide used to report a real arm-swing drill as a sprint with a 100 arm-travel score. A real sprint swings the thighs wide on every stride, so it still reads as a sprint."] },
   { version: "3.19.0", date: "2026-11-08", notes: ["Arm travel no longer moves on a single glitched frame — the arm-swing number is now a sustained range, confirmed by at least two frames, like the rest of the sprint numbers already are. One frame misreading a wrist used to report a big arm swing and score 100 on arm rhythm, hiding arms that never swung, and could even read a still clip as an arm-swing drill. A real swing held across frames still scores the same."] },

@@ -53,7 +53,9 @@ function bandScore(v, min, max, falloff){
 function floorScore(v, min, falloff){ return v >= min ? 100 : clamp(100 - (min - v) / falloff * 100, 0, 100); }
 function ceilingScore(v, max, falloff){ return v <= max ? 100 : clamp(100 - (v - max) / falloff * 100, 0, 100); }
 function median(values){ var a = values.slice().sort(function(x, y){ return x - y; }); return a[Math.floor(a.length / 2)]; }
-function range(values){ return Math.max.apply(null, values) - Math.min.apply(null, values); }
+/* v3.22.0: the plain whole-window range helper is gone — its last
+ * two uses (the motion gate and the block-set stillness check) are
+ * sustained ranges now, so no one-frame glitch can move a gate. */
 /* v3.9.0: a SUSTAINED peak — the second-highest reading, i.e. a peak
  * confirmed by at least two frames. v3.8.0 proved a lone MediaPipe
  * frame can swing a knee angle by 16°+; any one-frame max lets exactly
@@ -197,7 +199,15 @@ function analyze(lm){
           return null;
         }
         var torso=median(featureWindow.map(function(x){return x.torso}));
-        var motion=Math.max(range(featureWindow.map(function(x){return x.centerX})),range(featureWindow.map(function(x){return x.kneeY})))/torso;
+        /* v3.22.0: motion is a SUSTAINED range, not a whole-window
+         * range — the last plain range in the classic engine (the
+         * v3.19.0 arm-excursion fix sits right below it). One glitched
+         * frame misreading a hip wide used to inflate motion past the
+         * 0.18 floor and unlock the gate on a still clip, so the
+         * analyzer said 'Locked on — do the rep' for a rep that never
+         * happened. A real run moves the hips on every frame, so the
+         * second extremes stay wide and it still unlocks. */
+        var motion=Math.max(sustainedRange(featureWindow.map(function(x){return x.centerX})),sustainedRange(featureWindow.map(function(x){return x.kneeY})))/torso;
         /* v3.19.0: arm excursion is a SUSTAINED range, not a
          * whole-window range — one glitched wrist frame used to
          * inflate it past the arm-travel floor and score 100 on arm
@@ -256,7 +266,15 @@ function analyze(lm){
            * one, the measured clearance direction (finish minus start)
            * is the facing — the athlete runs the way they face, and
            * hasClearancePhase already requires real displacement. */
-          var startRange=range(firstSix.map(function(x){return x.centerX}))/torso;
+          /* v3.22.0: the set stillness is a SUSTAINED range, not a
+           * whole-window range — the other last plain range in the
+           * classic engine. One glitched frame misreading a hip wide
+           * in the first six set frames used to push startRange past
+           * 0.09 and reject a valid block start whose set was still.
+           * A real set holds still on every frame, so the second
+           * extremes stay tight and it still counts as still; a set
+           * that really drifts still fails the check. */
+          var startRange=sustainedRange(firstSix.map(function(x){return x.centerX}))/torso;
           var startCenter=firstSix.reduce(function(sum,x){return sum+x.centerX},0)/firstSix.length;
           var finishCenter=lastSix.reduce(function(sum,x){return sum+x.centerX},0)/lastSix.length;
           var noseVotes=0;
