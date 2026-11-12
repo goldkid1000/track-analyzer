@@ -2040,7 +2040,12 @@ function absorbFrame(state, fr){
   if(fr.score > cur.best) cur.best = fr.score;
   if(fr.score < cur.worst) cur.worst = fr.score;
   if(fr.tripped) cur.tripCounts[fr.tripped] = (cur.tripCounts[fr.tripped] || 0) + 1;
-  if(fr.f) cur.samples.push(fr.f);
+  /* v3.23.0: samples carry their own time (fr.t is clip time for
+   * uploads, wall time live) so the deep report can count stride
+   * rate from them. A copy, not the frame's own f — segmenting must
+   * never mutate the stored frames. Samples without a time (older
+   * hand-built reps) simply yield no rate, never a crash. */
+  if(fr.f){ var s = {}; for(var k in fr.f){ if(Object.prototype.hasOwnProperty.call(fr.f, k)) s[k] = fr.f[k]; } s.t = fr.t; cur.samples.push(s); }
 }
 function segmentReps(frames){
   var state = { reps: [], cur: null };
@@ -2163,6 +2168,72 @@ function faultDeviation(check, reps){
   else dev = spec.below ? Math.max(0, spec.edge - med) : Math.max(0, med - spec.edge);
   return Math.min(2, dev / spec.scale);
 }
+/* v3.23.0: stride rate — steps per second, COUNTED from the sprint's
+ * own samples over their own times, never estimated from a model.
+ * Two signals, in order:
+ *   1. Thigh separation: one peak per foot strike (the thighs open
+ *      widest at each strike and pass each other between strikes).
+ *   2. Near-knee angle: one peak per stride cycle (the near leg
+ *      extends once per cycle = two steps), used when the far leg
+ *      is hidden on a side view and thigh separation is mostly NaN
+ *      — the near leg is visible on nearly every frame.
+ * A peak counts only when it rises 10° above the rep's median, sits
+ * at least 120ms (steps) / 200ms (cycles) after the previous peak,
+ * and is HELD — a usable neighbour within 150ms is also elevated —
+ * so one glitched frame can never invent a step. And the samples
+ * must be dense enough to count honestly: median interval ≤ 100ms
+ * (≥ 10 samples/s, so a 5 steps/s cadence still has 2 samples per
+ * step). Live camera runs at ~6.7 poses/s, so live sessions simply
+ * get no rate; uploaded clips slowed to 0.25x for pose give ~27
+ * samples per clip-second and do. Too short, too flat, too sparse,
+ * or too few peaks → null, and no rate is ever claimed. */
+function strideRate(samples){
+  function series(key){
+    var pts = [];
+    (samples || []).forEach(function(s){
+      if(s && typeof s[key] === 'number' && isFinite(s[key]) && typeof s.t === 'number' && isFinite(s.t)) pts.push({ t: s.t, v: s[key] });
+    });
+    pts.sort(function(a, b){ return a.t - b.t; });
+    return pts;
+  }
+  function medianInterval(pts){
+    if(pts.length < 2) return Infinity;
+    var gaps = [];
+    for(var i = 1; i < pts.length; i++) gaps.push(pts[i].t - pts[i - 1].t);
+    return median(gaps);
+  }
+  function countPeaks(pts, minGapMs, thresh, holdAbove){
+    var peaks = [];
+    for(var i = 1; i < pts.length - 1; i++){
+      var p = pts[i];
+      if(p.v < thresh) continue;
+      if(!(p.v > pts[i - 1].v && p.v >= pts[i + 1].v)) continue;
+      var held = false;
+      if(p.t - pts[i - 1].t <= 150 && pts[i - 1].v >= holdAbove) held = true;
+      if(pts[i + 1].t - p.t <= 150 && pts[i + 1].v >= holdAbove) held = true;
+      if(!held) continue;
+      var last = peaks[peaks.length - 1];
+      if(last && p.t - last.t < minGapMs){ if(p.v > last.v) peaks[peaks.length - 1] = p; continue; }
+      peaks.push(p);
+    }
+    return peaks;
+  }
+  function rateFrom(pts, minGapMs, perPeak){
+    if(pts.length < 3) return null;
+    if(medianInterval(pts) > 100) return null; // too sparse to count steps honestly
+    var med = median(pts.map(function(p){ return p.v; }));
+    var peaks = countPeaks(pts, minGapMs, med + 10, med + 5);
+    if(peaks.length < 3) return null;
+    if(peaks[peaks.length - 1].t - peaks[0].t < 1000) return null; // peaks must span a full second
+    var secs = (peaks[peaks.length - 1].t - peaks[0].t) / 1000;
+    var rate = (peaks.length - 1) / secs * perPeak;
+    if(!isFinite(rate) || rate < 2 || rate > 8) return null;
+    return Math.round(rate * 10) / 10;
+  }
+  var byThigh = rateFrom(series('thighSep'), 120, 1);
+  if(byThigh !== null) return byThigh;
+  return rateFrom(series('kneeL'), 200, 2);
+}
 function buildDeepReport(reps, frames2count, opts){
   opts = opts || {};
   var faultCounts = {}, activities = [];
@@ -2194,6 +2265,14 @@ function buildDeepReport(reps, frames2count, opts){
       ' · worst ~' + (r.worst > 100 ? '—' : pct(r.worst) + '%');
     if(lean !== null) line += ' · trunk lean ~' + deg(lean) + '° (estimated)';
     if(knee !== null) line += ' · front knee ~' + deg(knee) + '° (estimated)';
+    /* v3.23.0: stride rate, counted from this rep's own samples —
+     * shown only when the samples were dense enough to count
+     * honestly (uploads slowed for pose); live sessions and short
+     * or flat reps simply show no rate rather than a guessed one. */
+    if(r.activity === 'sprint'){
+      var rate = strideRate(r.samples);
+      if(rate !== null) line += ' · stride rate ~' + rate.toFixed(1) + ' steps/s (measured)';
+    }
     return line;
   });
   var span = reps.length ? Math.max(0, Math.round((reps[reps.length - 1].endT - reps[0].startT) / 1000)) : 0;
@@ -3294,7 +3373,8 @@ window.TrackAIQuality = { extractAI: extractAI, gatePose: gatePose, poseHipTorso
   resetAIFacing: resetAIFacing,
   getQuality: function(){ return AI.quality; }, getSubject: function(){ return AI.subject; },
   getGoneAt: function(){ return AI.subjectGoneAt; }, classify: classify };
-window.TrackAIDeep = { segmentReps: segmentReps, buildDeepReport: buildDeepReport, pickVideos: pickVideos, absorbFrame: absorbFrame };
+window.TrackAIDeep = { segmentReps: segmentReps, buildDeepReport: buildDeepReport, pickVideos: pickVideos, absorbFrame: absorbFrame,
+  /* v3.23.0 */ strideRate: strideRate };
 window.TrackAISkeleton = { drawSkeleton: drawSkeleton, skelFaultJoints: skelFaultJoints, drawLiveSkeleton: drawLiveSkeleton, drawLiveSkeleton2: drawLiveSkeleton2 };
 /* v3.0.0: self-check + auto slow-mo (test hooks + honest logic, shared). */
 window.TrackAISelfCheck = { verify: verifySelfCheck, compare: compareSelfCheck,

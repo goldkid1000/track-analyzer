@@ -2156,6 +2156,57 @@ const W = sandbox;
   t('v3.22.0 classic block: a set that really drifts still gets rejected, not scored',
     runClassicBlock322({ hipShift: i => i < 6 ? i * 0.02 : 0 }) === null);
 
+  /* ================= v3.23.0 ================= */
+  // Stride rate: steps per second COUNTED from a sprint rep's own
+  // samples. Synthetic sprint at 25 samples/s (dense, like an
+  // auto-slowed clip): thigh separation oscillates once per step,
+  // the near knee once per stride cycle (two steps). Live camera
+  // runs at ~6.7 poses/s — too sparse to count honestly, so it
+  // must claim no rate at all.
+  function cadenceFrames(o){
+    var fps = o.fps || 25, secs = o.secs || 2, rate = o.rate || 4, out = [];
+    var n = Math.round(secs * fps);
+    for(var i = 0; i < n; i++){
+      var t = 1000 + i * (1000 / fps);
+      var ph = 2 * Math.PI * rate * (i / fps);
+      var ts = (o.thighSep === undefined) ? 80 + 35 * Math.sin(ph) : o.thighSep;
+      var kn = (o.kneeL === undefined) ? 130 + 25 * Math.sin(ph / 2) : o.kneeL;
+      if(o.glitchAt === i) ts = 170;
+      out.push({ t: t, activity: o.activity || 'sprint', score: 80, tripped: null,
+        f: { lean: 15, kneeL: kn, kneeR: 105, elbow: 95, thighSep: ts, shinReach: 0.30 } });
+    }
+    return out;
+  }
+  function cadenceRate(frames){
+    var reps = W.TrackAIDeep.segmentReps(frames);
+    return reps.length ? W.TrackAIDeep.strideRate(reps[0].samples) : null;
+  }
+  t('v3.23.0 stride rate: clean 4 Hz sprint counts ~4.0 steps/s from thigh separation',
+    (() => { const r = cadenceRate(cadenceFrames({})); return r !== null && Math.abs(r - 4) < 0.2; })());
+  t('v3.23.0 stride rate: clean 5 Hz sprint counts ~5.0 steps/s',
+    (() => { const r = cadenceRate(cadenceFrames({ rate: 5 })); return r !== null && Math.abs(r - 5) < 0.2; })());
+  t('v3.23.0 stride rate: one glitched thigh-separation frame invents no step',
+    (() => { const clean = cadenceRate(cadenceFrames({})); const glitched = cadenceRate(cadenceFrames({ glitchAt: 24 }));
+      return clean !== null && glitched === clean; })());
+  t('v3.23.0 stride rate: flat thigh separation and flat knee claim no rate',
+    (() => { const r = cadenceRate(cadenceFrames({ thighSep: 90, kneeL: 130 })); return r === null; })());
+  t('v3.23.0 stride rate: sparse live-rate sampling (~6.7/s) claims no rate',
+    (() => { const r = cadenceRate(cadenceFrames({ fps: 6.67 })); return r === null; })());
+  t('v3.23.0 stride rate: a half-second rep claims no rate',
+    (() => { const r = cadenceRate(cadenceFrames({ secs: 0.5 })); return r === null; })());
+  t('v3.23.0 stride rate: far leg hidden — near-knee cycles still count the rate (x2)',
+    (() => { const r = cadenceRate(cadenceFrames({ thighSep: NaN })); return r !== null && Math.abs(r - 4) < 0.25; })());
+  t('v3.23.0 stride rate: samples without times (legacy shape) yield no rate, no crash',
+    (() => { try{ return W.TrackAIDeep.strideRate([{ thighSep: 90 }, { thighSep: 120 }, { thighSep: 90 }, { thighSep: 120 }]) === null; }catch(e){ return false; } })());
+  t('v3.23.0 deep report: sprint rep shows the measured stride rate, block rep does not',
+    (() => { try{
+      const sprint = W.TrackAIDeep.buildDeepReport(W.TrackAIDeep.segmentReps(cadenceFrames({})), 0, {});
+      const block = W.TrackAIDeep.buildDeepReport(W.TrackAIDeep.segmentReps(cadenceFrames({ activity: 'block-start' })), 0, {});
+      return sprint.measurements[0].indexOf('stride rate ~4.') >= 0 &&
+        sprint.measurements[0].indexOf('steps/s (measured)') >= 0 &&
+        block.measurements[0].indexOf('stride rate') === -1;
+    }catch(e){ return false; } })());
+
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR', e && e.stack || e); process.exit(2); });

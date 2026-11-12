@@ -47,9 +47,10 @@
  */
 (function(){
 'use strict';
-var VERSION = '3.22.0';
+var VERSION = '3.23.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "3.23.0", date: "2026-11-12", notes: ["The deep check after a sprint now counts your stride rate — steps per second, counted from the thigh and knee angles in your own clip and labeled 'measured'. It only shows when the clip had enough pose samples to count honestly (uploads slowed down for measuring); the live camera runs too slow to count steps, so it stays silent there instead of guessing. One glitched frame can't invent a step, and when the far leg is hidden on a side view the near leg's stride cycle carries the count instead."] },
   { version: "3.22.0", date: "2026-11-11", notes: ["The motion check and the block-start set check no longer move on a single glitched frame — both are now sustained ranges, confirmed by at least two frames, like the rest of the classic engine's numbers already are. One frame misreading a hip wide used to unlock the analyzer on a still clip and to throw out a valid block start whose set was still. A real run moves the hips on every frame and a real set holds still on every frame, so both still read true."] },
   { version: "3.21.0", date: "2026-11-10", notes: ["The squat/drill check no longer moves on a single glitched frame — the hip-height number is now a sustained range, confirmed by at least two frames, like the rest of the classifier numbers already are. One frame misreading the hip low used to report a still clip as a squat. A real squat or drill dips the hips on every rep, so it still reads as one."] },
   { version: "3.20.0", date: "2026-11-09", notes: ["The arm-swing leg test no longer moves on a single glitched frame — the thigh-separation number is now a sustained range, confirmed by at least two frames, like the rest of the two-camera numbers already are. One frame misreading a knee wide used to report a real arm-swing drill as a sprint with a 100 arm-travel score. A real sprint swings the thighs wide on every stride, so it still reads as a sprint."] },

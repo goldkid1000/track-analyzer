@@ -1,1 +1,8 @@
-{"notes":["The motion check and the block-start set check no longer move on a single glitched frame — both are now sustained ranges, confirmed by at least two frames, like the rest of the classic engine's numbers already are. One frame misreading a hip wide used to unlock the analyzer on a still clip and to throw out a valid block start whose set was still. A real run moves the hips on every frame and a real set holds still on every frame, so both still read true."],"notify":true,"updated":"2026-11-11","version":"3.22.0"}
+{
+ "notes": [
+  "The deep check after a sprint now counts your stride rate \u2014 steps per second, counted from the thigh and knee angles in your own clip and labeled 'measured'. It only shows when the clip had enough pose samples to count honestly (uploads slowed down for measuring); the live camera runs too slow to count steps, so it stays silent there instead of guessing. One glitched frame can't invent a step, and when the far leg is hidden on a side view the near leg's stride cycle carries the count instead."
+ ],
+ "notify": true,
+ "updated": "2026-11-12",
+ "version": "3.23.0"
+}
