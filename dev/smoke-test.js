@@ -2207,6 +2207,58 @@ const W = sandbox;
         block.measurements[0].indexOf('stride rate') === -1;
     }catch(e){ return false; } })());
 
+  /* ================= v3.24.0 ================= */
+  // Worst frame names its fault. The frame already knew which check
+  // tripped on it (scoreFrame returns it, the clip markers already
+  // show it) — but the deep report and AI Photo captions only said
+  // the activity and score, so the worst frame never said what was
+  // wrong in it. The label resolves the same way the fault list
+  // does; a low frame with no tripped fault gets no label, never a
+  // guessed one.
+  t('v3.24.0 worst capture: the tripped fault is stored on the worst frame',
+    (() => { aiTest.resetDeep();
+      aiTest.maybeCaptureWorst(30, 'sprint', null, 'overstride');
+      aiTest.maybeCaptureWorst(28, 'sprint', null, 'armCross');
+      const w = aiTest.getDeep().worst;
+      return !!w && w.score === 28 && w.tripped === 'armCross'; })());
+  t('v3.24.0 worst capture: no tripped fault stores null, not a guess',
+    (() => { aiTest.resetDeep();
+      aiTest.maybeCaptureWorst(30, 'sprint', null);
+      aiTest.maybeCaptureWorst(28, 'sprint', null);
+      const w = aiTest.getDeep().worst;
+      return !!w && w.tripped === null; })());
+  t('v3.24.0 worst label: a known check resolves to the fault-list wording',
+    aiTest.worstFaultLabel({ tripped: 'overstride' }) === 'Overstriding / reaching at touchdown');
+  t('v3.24.0 worst label: a local-only check resolves to its local wording',
+    aiTest.worstFaultLabel({ tripped: 'armHeight' }) === 'Hands staying low');
+  t('v3.24.0 worst label: no tripped fault yields no label; an unknown check falls back to its own id',
+    aiTest.worstFaultLabel({ tripped: null }) === null &&
+    aiTest.worstFaultLabel({}) === null &&
+    aiTest.worstFaultLabel(null) === null &&
+    aiTest.worstFaultLabel({ tripped: 'mysteryCheck' }) === 'mysteryCheck');
+  t('v3.24.0 worst caption: activity + score + fault when known',
+    aiTest.worstCaption({ activity: 'sprint', score: 38, tripped: 'overstride' }) ===
+      'Sprint rep · ~38% · Overstriding / reaching at touchdown');
+  t('v3.24.0 worst caption: no fault part when nothing tripped',
+    aiTest.worstCaption({ activity: 'sprint', score: 38, tripped: null }) === 'Sprint rep · ~38%');
+  t('v3.24.0 deep report: the Worst frame caption names the fault; without one it stays plain',
+    (() => { try{
+      const withFault = W.TrackAIDeep.buildDeepReport(
+        W.TrackAIDeep.segmentReps(cadenceFrames({})), 0,
+        { worst: { score: 38, activity: 'sprint', url: 'data:x', lm: null, tripped: 'overstride' } });
+      W.TrackAI._test.renderDeepReport(withFault);
+      const htmlFault = W.document.getElementById('aiDeepReport').innerHTML;
+      const plain = W.TrackAIDeep.buildDeepReport(
+        W.TrackAIDeep.segmentReps(cadenceFrames({})), 0,
+        { worst: { score: 38, activity: 'sprint', url: 'data:x', lm: null, tripped: null } });
+      W.TrackAI._test.renderDeepReport(plain);
+      const htmlPlain = W.document.getElementById('aiDeepReport').innerHTML;
+      return htmlFault.indexOf('Overstriding / reaching at touchdown') >= 0 &&
+        htmlFault.indexOf('Sprint rep · ~38%') >= 0 &&
+        htmlPlain.indexOf('Sprint rep · ~38%') >= 0 &&
+        htmlPlain.indexOf('Overstriding') === -1;
+    }catch(e){ return false; } })());
+
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR', e && e.stack || e); process.exit(2); });

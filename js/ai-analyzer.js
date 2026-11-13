@@ -481,7 +481,7 @@ function renderLatestAiPhoto(){
   if(AI.deep.worst){
     var wf = AI.deep.worst;
     framesHtml += '<h4>Worst frame</h4>' + frameMarksFigureHtml('worst', wf,
-      (ACTIVITY_LABEL[wf.activity] || wf.activity) + ' · ~' + pct(wf.score) + '%', rep, false);
+      worstCaption(wf), rep, false);
   }
   body.innerHTML = repsHtml + faultsHtml + framesHtml;
   card.hidden = false;
@@ -1151,7 +1151,7 @@ function onFrame(f, angle, nowMs){
     maybeCaptureBest(scored.score, activity, AI.lastLandmarks1);
   }
   if(activity === 'sprint' || activity === 'block-start' || activity === 'squat' || activity === 'drill' || activity === 'hinge' || activity === 'bench' || activity === 'arm-swing'){
-    maybeCaptureWorst(scored.score, activity, AI.lastLandmarks1);
+    maybeCaptureWorst(scored.score, activity, AI.lastLandmarks1, scored.tripped);
   }
 }
 function snapshotVideo(){
@@ -1201,7 +1201,7 @@ function maybeCaptureBest(score, activity, lm){
  * held fault, and a lone dip is discarded when the next frame
  * recovers. Later frames of an already-held run can still beat the
  * stored worst, since each is itself confirmed by its predecessor. */
-function maybeCaptureWorst(score, activity, lm){
+function maybeCaptureWorst(score, activity, lm, tripped){
   if(!AI.deep) return;
   if(activity !== AI.deep.worstStreakAct){ AI.deep.worstStreak = 0; AI.deep.worstStreakAct = activity; }
   if(score > 55){ AI.deep.worstStreak = 0; return; }
@@ -1210,7 +1210,31 @@ function maybeCaptureWorst(score, activity, lm){
   if(AI.deep.worst && score >= AI.deep.worst.score) return;
   var url = snapshotVideo();
   if(!url) return;
-  AI.deep.worst = { score: score, activity: activity, url: url, lm: lm || null };
+  /* v3.24.0: keep the fault that tripped on this frame — the caption
+   * names it, so the worst frame says what was wrong in it. */
+  AI.deep.worst = { score: score, activity: activity, url: url, lm: lm || null, tripped: tripped || null };
+}
+/* v3.24.0: the Worst frame names its fault. The frame already knew
+ * which check tripped on it (scoreFrame returns it, and the clip
+ * markers already show it) — but the deep report and AI Photo
+ * captions only said the activity and score, so Giel saw a bad frame
+ * without knowing what was wrong in it. The label resolves the same
+ * way the fault list does; when no fault tripped on that frame there
+ * is no label — a low score with no named fault is never dressed up
+ * as one. */
+function worstFaultLabel(worst){
+  var check = worst && worst.tripped;
+  if(!check) return null;
+  var kb = findFault(check) || LOCAL_FAULT[check] || null;
+  if(kb) return kb.fault;
+  return CHECK_LABEL[check] || check;
+}
+function worstCaption(worst){
+  if(!worst) return '';
+  var cap = (ACTIVITY_LABEL[worst.activity] || worst.activity) + ' · ~' + pct(worst.score) + '%';
+  var fault = worstFaultLabel(worst);
+  if(fault) cap += ' · ' + fault;
+  return cap;
 }
 /* v3.14.0: held-worst pick for the clip markers (same rule, applied
  * after the fact to stored frames). A frame only counts if a
@@ -2420,7 +2444,7 @@ function renderDeepReport(report){
   }
   if(report.worst){
     html += '<h5>Worst frame</h5><div class="ai-frame-skel"><figure><img src="' + report.worst.url + '" alt="Worst frame"><figcaption>' +
-      escHtml(ACTIVITY_LABEL[report.worst.activity] || report.worst.activity) + ' · ~' + pct(report.worst.score) + '%</figcaption></figure>' +
+      escHtml(worstCaption(report.worst)) + '</figcaption></figure>' +
       '<canvas id="deepSkelWorst" width="320" height="240"></canvas></div>';
   }
   if(report.faultList.length){
@@ -3352,6 +3376,8 @@ window.TrackAI = { setBlockStarts: setBlockStarts, getBlockStarts: function(){ r
     segmentReps: segmentReps, pct: pct, deg: deg, sessionBaseMs: sessionBaseMs,
     /* v3.3.0 */ renderClassicMetrics: renderClassicMetrics,
     /* v3.14.0 */ maybeCaptureWorst: maybeCaptureWorst, heldWorstFrame: heldWorstFrame,
+    /* v3.24.0 */ worstFaultLabel: worstFaultLabel, worstCaption: worstCaption,
+    renderDeepReport: renderDeepReport,
     /* v3.15.0 */ maybeCaptureBest: maybeCaptureBest, heldBestFrame: heldBestFrame,
     getBestFrames: function(){ return AI.session ? AI.session.bestFrames : []; },
     resetBest: function(){ AI.session = { startedAt: Date.now(), reps: {}, faultCounts: {}, fixes: [], bestFrames: [] };

@@ -1,8 +1,1 @@
-{
- "notes": [
-  "The deep check after a sprint now counts your stride rate \u2014 steps per second, counted from the thigh and knee angles in your own clip and labeled 'measured'. It only shows when the clip had enough pose samples to count honestly (uploads slowed down for measuring); the live camera runs too slow to count steps, so it stays silent there instead of guessing. One glitched frame can't invent a step, and when the far leg is hidden on a side view the near leg's stride cycle carries the count instead."
- ],
- "notify": true,
- "updated": "2026-11-12",
- "version": "3.23.0"
-}
+{"notes":["The Worst frame in the deep check and in AI Photo now names the fault that made it the worst — for example “Sprint rep · ~38% · Overstriding / reaching at touchdown” — instead of only showing the activity and score. The fault is the one that frame itself tripped, worded the same as the Fixes list. When a low frame tripped no named fault, it still shows no fault rather than guessing one."],"notify":true,"updated":"2026-11-13","version":"3.24.0"}

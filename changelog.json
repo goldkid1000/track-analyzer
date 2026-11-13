@@ -1,5 +1,13 @@
 [
  {
+  "version": "3.24.0",
+  "date": "2026-11-13",
+  "notes": [
+   "The Worst frame in the deep check and in AI Photo now names the fault that made it the worst — for example “Sprint rep · ~38% · Overstriding / reaching at touchdown” — instead of only showing the activity and score. The fault is the one that frame itself tripped, worded the same as the Fixes list. When a low frame tripped no named fault, it still shows no fault rather than guessing one."
+  ],
+  "notify": true
+ },
+ {
   "version": "3.23.0",
   "date": "2026-11-12",
   "notes": [
