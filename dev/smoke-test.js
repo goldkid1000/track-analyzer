@@ -2259,6 +2259,68 @@ const W = sandbox;
         htmlPlain.indexOf('Overstriding') === -1;
     }catch(e){ return false; } })());
 
+  /* ================= v3.25.0 ================= */
+  // The live squat counter measured the dip against the oldest frame
+  // in the 2s history window, so the baseline slid down with the
+  // athlete: a slow descent never showed a 0.08 dip inside any 2s
+  // window (the rep was never counted) and a long bottom hold slid
+  // the baseline to the bottom (the rep was counted mid-hold and the
+  // Depth metric zeroed while still deep). The baseline is now the
+  // held standing hip height. Fixtures drive squatRepTick directly
+  // at 10 fps (100 ms steps), waypoints [seconds, hipY].
+  function sqSeq325(pts){
+    const out = []; let t = 0; const end = pts[pts.length - 1][0];
+    while(t <= end + 1e-9){
+      let k = 0; while(k < pts.length - 2 && pts[k + 1][0] < t) k++;
+      const a = pts[k], b = pts[k + 1], f = Math.max(0, Math.min(1, (t - a[0]) / (b[0] - a[0])));
+      out.push({ t: t, hipY: a[1] + (b[1] - a[1]) * f });
+      t += 0.1;
+    }
+    return out;
+  }
+  function sqDrive325(pts){
+    const st = { phase: 'up', dip: 0, base: null, samples: [] };
+    let reps = 0; const at = [];
+    sqSeq325(pts).forEach(function(fr){
+      if(W.TrackAI._test.squatRepTick(st, fr.hipY)){ reps++; at.push(fr.t); }
+    });
+    return { reps: reps, at: at, st: st };
+  }
+  t('v3.25.0 squat: a slow 4s descent to 0.62 still counts exactly 1 rep, on the way back up',
+    (() => { const r = sqDrive325([[0, 0.50], [1, 0.50], [5, 0.62], [7, 0.50], [8, 0.50]]);
+      return r.reps === 1 && r.at[0] > 5; })());
+  t('v3.25.0 squat: a 3s bottom hold counts only once the hips return, not mid-hold',
+    (() => { const r = sqDrive325([[0, 0.50], [1, 0.50], [2, 0.64], [5, 0.64], [6, 0.50], [7, 0.50]]);
+      return r.reps === 1 && r.at[0] >= 5; })());
+  t('v3.25.0 squat: the Depth dip stays at full depth through the hold (no mid-hold zeroing)',
+    (() => { const st = { phase: 'up', dip: 0, base: null, samples: [] };
+      let dipAtHold = 0;
+      sqSeq325([[0, 0.50], [1, 0.50], [2, 0.64], [5, 0.64], [6, 0.50], [7, 0.50]]).forEach(function(fr){
+        W.TrackAI._test.squatRepTick(st, fr.hipY);
+        if(fr.t > 4.4 && fr.t < 4.6) dipAtHold = st.dip;
+      });
+      return dipAtHold > 0.13; })());
+  t('v3.25.0 squat: a normal 1s squat still counts exactly 1 rep',
+    (() => { const r = sqDrive325([[0, 0.50], [1, 0.50], [2, 0.64], [2.5, 0.64], [3.5, 0.50], [4.5, 0.50]]);
+      return r.reps === 1; })());
+  t('v3.25.0 squat: one glitched low hip frame while standing neither drags the baseline nor invents a rep',
+    (() => { const st = { phase: 'up', dip: 0, base: null, samples: [] };
+      const tick = W.TrackAI._test.squatRepTick;
+      for(let i = 0; i < 5; i++) tick(st, 0.50);
+      tick(st, 0.40); // one glitched frame: hips misread high
+      for(let i = 0; i < 3; i++) tick(st, 0.50);
+      if(st.base !== 0.50) return false;
+      for(let i = 0; i < 3; i++) tick(st, 0.56); // shallow dip: not a squat
+      if(st.phase !== 'up') return false;
+      let reps = 0;
+      [0.60, 0.62, 0.62, 0.58, 0.52, 0.50, 0.50].forEach(function(y){ if(tick(st, y)) reps++; });
+      return reps === 1; })());
+  t('v3.25.0 squat: a non-number hip reading neither crashes nor counts',
+    (() => { const st = { phase: 'up', dip: 0, base: null, samples: [] };
+      try{ return W.TrackAI._test.squatRepTick(st, NaN) === false &&
+        W.TrackAI._test.squatRepTick(st, undefined) === false && st.phase === 'up'; }
+      catch(e){ return false; } })());
+
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR', e && e.stack || e); process.exit(2); });

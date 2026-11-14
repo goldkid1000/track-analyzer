@@ -111,7 +111,7 @@ var AI = {
   state: 'none', stateSince: 0, lastCallout: 0,
   session: null, // {startedAt, reps:{}, faultCounts:{}, fixes:[], bestFrames:[]}
   lastFixKey: '', lastSpeak: 0, cueIdx: 0,
-  squatPhase: 'up', squatDip: 0,
+  squat: { phase: 'up', dip: 0, base: null, samples: [] }, // v3.25.0: held standing baseline (was a sliding 2s-window base)
   movingSince: 0, setSince: 0,
   mode: 'idle', // idle | watching | coaching
   lastFrontal: false, lastLandmarks1: null, lastRawLm: null,
@@ -898,7 +898,7 @@ function scoreFrame(activity, f){
      * tracking is now MEASURED — knees vs ankles — but only from a
      * front-ish view; from the side it is null and excluded from the
      * score, exactly like the photo analyzer's "Side view needed". */
-    metrics = [floorS(AI.squatDip, 0.08, 0.08), ceilS(f.lean, 30, 25),
+    metrics = [floorS(AI.squat.dip, 0.08, 0.08), ceilS(f.lean, 30, 25),
       f.sideRatio > 0.58 ? ceilS(Math.abs(f.kneeX - f.ankleX) / (f.torso || 1), 0.08, 0.30) : null];
     labels = ['Depth', 'Back angle', 'Knee tracking'];
   } else if(activity === 'hinge'){
@@ -942,7 +942,7 @@ function scoreFrame(activity, f){
   else if(activity === 'sprint' && f.lean > 30) tripped = 'tallPosture';
   else if(Math.min(f.kneeL, f.kneeR) > 105) tripped = 'footRecovery';
   else if(f.thighSep < 60) tripped = 'thighSep';
-  else if(activity === 'squat' && AI.squatDip < 0.08) tripped = 'squatDepth';
+  else if(activity === 'squat' && AI.squat.dip < 0.08) tripped = 'squatDepth';
   else if(activity === 'hinge' && f.lean > 55) tripped = 'hingeBack';
   else if(f.sideRatio > 0.58 && Math.abs(f.kneeX - f.ankleX) > 0.08 * f.torso) tripped = 'squatKnee';
   /* v2.9.0: average only the metrics that were actually measured — a
@@ -1033,6 +1033,51 @@ function updateGuideVideo(cr){
   list.innerHTML = '<a class="video" href="' + v[2] + '" target="_blank" rel="noopener"><div class="thumb"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></div><div><strong>Watch: how to fix this</strong><span>' + v[0] + ' · ' + v[1] + '</span></div></a>';
   list.hidden = false;
 }
+/* v3.25.0: the squat rep counter measures the dip against a HELD
+ * standing baseline, not the oldest frame in the 2s history window.
+ * The old code used AI.hist[0].f.hipY as the standing height, so the
+ * baseline slid down with the athlete: a slow (3–4s) descent never
+ * showed a 0.08 dip inside any 2s window and the rep was never
+ * counted at all, and a long hold at the bottom slid the baseline to
+ * the bottom, counting the rep mid-hold and zeroing the Depth metric
+ * while the athlete was still deep. Now the baseline is the standing
+ * hip height, re-based ONLY while the hips are demonstrably still —
+ * the recent samples' sustained range under 0.015, so even a slow
+ * descent (which moves the hips more than that over the window)
+ * cannot drag it, and the second-lowest sample sets it, so one
+ * glitched hip frame can't drag it either. Once a descent starts
+ * the baseline freezes for the whole rep, and a rep counts only when
+ * the hips come back to within 0.02 of that held standing height.
+ * The stillness check also re-adapts the baseline if the athlete
+ * steps to a new standing height between reps. Returns true when a
+ * rep completes; st.dip is the deepest dip of the current rep (what
+ * the Depth metric reads). Limit, stated not hidden: a descent
+ * slower than ~0.007 hipY/s (over ~15s down) still reads as
+ * standing, so it never starts a rep — no real squat descends that
+ * slowly. */
+function squatRepTick(st, hipY){
+  if(typeof hipY !== 'number' || !isFinite(hipY)) return false;
+  if(st.phase !== 'down'){
+    st.samples.push(hipY);
+    if(st.samples.length > 20) st.samples.shift();
+    /* Standing still: the recent hip heights barely move. A descent —
+     * even a slow one — moves them more than this over the window,
+     * so the baseline stays frozen mid-rep. */
+    if(st.samples.length >= 5 && sustainedRange(st.samples) < 0.015){
+      var s = st.samples.slice().sort(function(a, b){ return a - b; });
+      st.base = s.length >= 3 ? s[1] : s[0];
+    }
+  }
+  var base = (st.base == null) ? hipY : st.base;
+  var dip = hipY - base;
+  if(dip > st.dip) st.dip = dip;
+  if(st.phase === 'up' && dip > 0.08){ st.phase = 'down'; }
+  else if(st.phase === 'down' && dip < 0.02){
+    st.phase = 'up'; st.dip = 0; st.samples = [];
+    return true;
+  }
+  return false;
+}
 function onFrame(f, angle, nowMs){
   if(angle !== 1) return; // state machine + reps run off angle 1 only
   /* v3.0.0 auto slow-mo: how far the fastest joint jumped since the
@@ -1048,12 +1093,10 @@ function onFrame(f, angle, nowMs){
   var activity = stabilizeLabel(classify(f, AI.hist, nowMs),
     (typeof nowMs === 'number' && isFinite(nowMs)) ? nowMs : Date.now());
   var now = (typeof nowMs === 'number' && isFinite(nowMs)) ? nowMs : Date.now();
-  // Squat cycle tracking (hip dips then returns).
+  // Squat cycle tracking (hip dips then returns) — v3.25.0: the dip
+  // is measured against a held standing baseline, not the 2s window.
   if(activity === 'squat' && f && !f.missing){
-    var base = AI.hist.length ? AI.hist[0].f.hipY : f.hipY;
-    AI.squatDip = Math.max(AI.squatDip, f.hipY - base);
-    if(AI.squatPhase === 'up' && f.hipY - base > 0.08) AI.squatPhase = 'down';
-    else if(AI.squatPhase === 'down' && f.hipY - base < 0.02){ AI.squatPhase = 'up'; AI.squatDip = 0; countRep('squat'); }
+    if(squatRepTick(AI.squat, f.hipY)) countRep('squat');
   }
   if(activity === 'set') AI.lastSetT = now;
   if(activity !== prev){
@@ -2943,7 +2986,7 @@ function startAI(reuseStream, opts){
   /* v3.12.0: fresh facing memory per session/clip. */
   resetAIFacing();
   AI.quality = { sampled: 0, detected: 0, accepted: 0, rejected: 0, scored: 0 };
-  AI.squatPhase = 'up'; AI.squatDip = 0;
+  AI.squat = { phase: 'up', dip: 0, base: null, samples: [] };
   AI.mode = 'coaching';
   setText('aiRepCount', '0');
   setText('aiGood', '—'); setText('aiFix', '—');
@@ -3385,6 +3428,7 @@ window.TrackAI = { setBlockStarts: setBlockStarts, getBlockStarts: function(){ r
     renderClipMarkers: renderClipMarkers, getDeep: function(){ return AI.deep; },
     resetDeep: function(){ AI.deep = { frames1: [], frames2: [], worst: null, worstStreak: 0, worstStreakAct: null, bestStreak: 0, bestStreakAct: null }; },
     setStartLocked: function(v){ AI.startLocked = !!v; }, setState: function(v){ AI.state = v; },
+    /* v3.25.0 */ squatRepTick: squatRepTick,
     /* v3.19.0 */ sustainedRange: sustainedRange,
     prefersReducedMotion: prefersReducedMotion } };
 window.TrackFrameMarks = { build: buildFrameMarks, draw: drawFrameMarks, at: frameMarkAt,
