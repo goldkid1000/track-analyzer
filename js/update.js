@@ -47,9 +47,10 @@
  */
 (function(){
 'use strict';
-var VERSION = '3.25.0';
+var VERSION = '3.26.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "3.26.0", date: "2026-11-15", notes: ["The replay used to slow down at the single lowest-scoring frame of your clip — so one pose misread, a lone bad frame between good ones, became ‘the moment that scored lowest’ and the clip slowed to quarter speed there, even though the report and the clip markers showed no fault at all. The replay now slows at the same held worst moment the markers flag: a low score has to last at least two frames to count, and a clip with no real worst moment doesn’t slow down at an ordinary frame."] },
   { version: "3.25.0", date: "2026-11-14", notes: ["Slow squats now count: the live squat counter used to measure your dip against the oldest frame in a 2-second window, so the baseline slid down with you — a slow 3–4 second descent never counted as a rep at all, and a long hold at the bottom counted the rep while you were still down there and zeroed the Depth score. The counter now measures against your held standing height, tracked only while you are standing, so a slow descent counts on the way back up and a hold at the bottom counts only when you stand. One glitched frame still can't move the baseline."] },
   { version: "3.24.0", date: "2026-11-13", notes: ["The Worst frame in the deep check and in AI Photo now names the fault that made it the worst — for example “Sprint rep · ~38% · Overstriding / reaching at touchdown” — instead of only showing the activity and score. The fault is the one that frame itself tripped, worded the same as the Fixes list. When a low frame tripped no named fault, it still shows no fault rather than guessing one."] },
   { version: "3.23.0", date: "2026-11-12", notes: ["The deep check after a sprint now counts your stride rate — steps per second, counted from the thigh and knee angles in your own clip and labeled 'measured'. It only shows when the clip had enough pose samples to count honestly (uploads slowed down for measuring); the live camera runs too slow to count steps, so it stays silent there instead of guessing. One glitched frame can't invent a step, and when the far leg is hidden on a side view the near leg's stride cycle carries the count instead."] },

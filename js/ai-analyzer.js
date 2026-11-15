@@ -1325,6 +1325,28 @@ function heldBestFrame(frames){
   }
   return best;
 }
+/* v3.26.0: the replay auto-slow's worst moment — the same held worst
+ * the clip markers flag, not the raw minimum score. The old code took
+ * the single lowest-scoring frame, so one pose misread (a lone ~20%
+ * frame between ~75% frames) became "the moment that scored lowest"
+ * and the clip slowed to 0.25x there — while the report and the
+ * markers, both held-guarded since v3.14.0, showed no fault at all.
+ * Now the moment comes from heldWorstFrame, and only when it is
+ * actually worse than the held best (the markers' rule): a clip whose
+ * lowest held frame ties its best has no demonstrated worst moment,
+ * so replay doesn't slow at an ordinary frame and claim it is one.
+ * Returns { sec, score } in clip seconds, or null. */
+function worstReplayMoment(frames, startT){
+  var worst = heldWorstFrame(frames);
+  if(!worst) return null;
+  var best = heldBestFrame(frames);
+  if(!best){
+    var usable = (frames || []).filter(function(fr){ return fr && fr.f && fr.score > 0; });
+    usable.forEach(function(fr){ if(!best || fr.score > best.score) best = fr; });
+  }
+  if(best && worst.score >= best.score) return null;
+  return { sec: Math.max(0, (worst.t - startT) / 1000), score: worst.score };
+}
 
 /* Full pose dict: all 33 landmarks the camera can see (not just the
  * 17 the coaching math uses) — the live rig draws every body part. */
@@ -2835,10 +2857,12 @@ function setupReplayAutoSlow(){
   var start = sessionBaseMs();
   var segs = findFastSegments(frames, start);
   AI.fastSegments = segs;
-  var worstT = null, worstScore = Infinity;
-  frames.forEach(function(fr){
-    if(fr && fr.f && fr.score > 0 && fr.score < worstScore){ worstScore = fr.score; worstT = (fr.t - start) / 1000; }
-  });
+  /* v3.26.0: the worst moment is the HELD worst (worstReplayMoment),
+   * the same frame the clip markers flag — never the raw minimum,
+   * which a one-frame pose glitch could claim. Null when no held
+   * fault exists, so replay never slows at an ordinary frame. */
+  var worstMoment = worstReplayMoment(frames, start);
+  var worstT = worstMoment ? worstMoment.sec : null;
   v.ontimeupdate = function(){
     if(AI.running || !AI.clipMode) return;
     var t = v.currentTime || 0;
@@ -3422,6 +3446,7 @@ window.TrackAI = { setBlockStarts: setBlockStarts, getBlockStarts: function(){ r
     /* v3.24.0 */ worstFaultLabel: worstFaultLabel, worstCaption: worstCaption,
     renderDeepReport: renderDeepReport,
     /* v3.15.0 */ maybeCaptureBest: maybeCaptureBest, heldBestFrame: heldBestFrame,
+    /* v3.26.0 */ worstReplayMoment: worstReplayMoment,
     getBestFrames: function(){ return AI.session ? AI.session.bestFrames : []; },
     resetBest: function(){ AI.session = { startedAt: Date.now(), reps: {}, faultCounts: {}, fixes: [], bestFrames: [] };
       AI.deep.bestStreak = 0; AI.deep.bestStreakAct = null; },

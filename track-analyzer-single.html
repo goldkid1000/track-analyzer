@@ -5842,9 +5842,10 @@ window.TrackDual = {
  */
 (function(){
 'use strict';
-var VERSION = '3.25.0';
+var VERSION = '3.26.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "3.26.0", date: "2026-11-15", notes: ["The replay used to slow down at the single lowest-scoring frame of your clip — so one pose misread, a lone bad frame between good ones, became ‘the moment that scored lowest’ and the clip slowed to quarter speed there, even though the report and the clip markers showed no fault at all. The replay now slows at the same held worst moment the markers flag: a low score has to last at least two frames to count, and a clip with no real worst moment doesn’t slow down at an ordinary frame."] },
   { version: "3.25.0", date: "2026-11-14", notes: ["Slow squats now count: the live squat counter used to measure your dip against the oldest frame in a 2-second window, so the baseline slid down with you — a slow 3–4 second descent never counted as a rep at all, and a long hold at the bottom counted the rep while you were still down there and zeroed the Depth score. The counter now measures against your held standing height, tracked only while you are standing, so a slow descent counts on the way back up and a hold at the bottom counts only when you stand. One glitched frame still can't move the baseline."] },
   { version: "3.24.0", date: "2026-11-13", notes: ["The Worst frame in the deep check and in AI Photo now names the fault that made it the worst — for example “Sprint rep · ~38% · Overstriding / reaching at touchdown” — instead of only showing the activity and score. The fault is the one that frame itself tripped, worded the same as the Fixes list. When a low frame tripped no named fault, it still shows no fault rather than guessing one."] },
   { version: "3.23.0", date: "2026-11-12", notes: ["The deep check after a sprint now counts your stride rate — steps per second, counted from the thigh and knee angles in your own clip and labeled 'measured'. It only shows when the clip had enough pose samples to count honestly (uploads slowed down for measuring); the live camera runs too slow to count steps, so it stays silent there instead of guessing. One glitched frame can't invent a step, and when the far leg is hidden on a side view the near leg's stride cycle carries the count instead."] },
@@ -8106,6 +8107,28 @@ function heldBestFrame(frames){
   }
   return best;
 }
+/* v3.26.0: the replay auto-slow's worst moment — the same held worst
+ * the clip markers flag, not the raw minimum score. The old code took
+ * the single lowest-scoring frame, so one pose misread (a lone ~20%
+ * frame between ~75% frames) became "the moment that scored lowest"
+ * and the clip slowed to 0.25x there — while the report and the
+ * markers, both held-guarded since v3.14.0, showed no fault at all.
+ * Now the moment comes from heldWorstFrame, and only when it is
+ * actually worse than the held best (the markers' rule): a clip whose
+ * lowest held frame ties its best has no demonstrated worst moment,
+ * so replay doesn't slow at an ordinary frame and claim it is one.
+ * Returns { sec, score } in clip seconds, or null. */
+function worstReplayMoment(frames, startT){
+  var worst = heldWorstFrame(frames);
+  if(!worst) return null;
+  var best = heldBestFrame(frames);
+  if(!best){
+    var usable = (frames || []).filter(function(fr){ return fr && fr.f && fr.score > 0; });
+    usable.forEach(function(fr){ if(!best || fr.score > best.score) best = fr; });
+  }
+  if(best && worst.score >= best.score) return null;
+  return { sec: Math.max(0, (worst.t - startT) / 1000), score: worst.score };
+}
 
 /* Full pose dict: all 33 landmarks the camera can see (not just the
  * 17 the coaching math uses) — the live rig draws every body part. */
@@ -9616,10 +9639,12 @@ function setupReplayAutoSlow(){
   var start = sessionBaseMs();
   var segs = findFastSegments(frames, start);
   AI.fastSegments = segs;
-  var worstT = null, worstScore = Infinity;
-  frames.forEach(function(fr){
-    if(fr && fr.f && fr.score > 0 && fr.score < worstScore){ worstScore = fr.score; worstT = (fr.t - start) / 1000; }
-  });
+  /* v3.26.0: the worst moment is the HELD worst (worstReplayMoment),
+   * the same frame the clip markers flag — never the raw minimum,
+   * which a one-frame pose glitch could claim. Null when no held
+   * fault exists, so replay never slows at an ordinary frame. */
+  var worstMoment = worstReplayMoment(frames, start);
+  var worstT = worstMoment ? worstMoment.sec : null;
   v.ontimeupdate = function(){
     if(AI.running || !AI.clipMode) return;
     var t = v.currentTime || 0;
@@ -10203,6 +10228,7 @@ window.TrackAI = { setBlockStarts: setBlockStarts, getBlockStarts: function(){ r
     /* v3.24.0 */ worstFaultLabel: worstFaultLabel, worstCaption: worstCaption,
     renderDeepReport: renderDeepReport,
     /* v3.15.0 */ maybeCaptureBest: maybeCaptureBest, heldBestFrame: heldBestFrame,
+    /* v3.26.0 */ worstReplayMoment: worstReplayMoment,
     getBestFrames: function(){ return AI.session ? AI.session.bestFrames : []; },
     resetBest: function(){ AI.session = { startedAt: Date.now(), reps: {}, faultCounts: {}, fixes: [], bestFrames: [] };
       AI.deep.bestStreak = 0; AI.deep.bestStreakAct = null; },

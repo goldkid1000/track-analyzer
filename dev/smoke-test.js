@@ -2321,6 +2321,45 @@ const W = sandbox;
         W.TrackAI._test.squatRepTick(st, undefined) === false && st.phase === 'up'; }
       catch(e){ return false; } })());
 
+  /* ================= v3.26.0 ================= */
+  // Replay auto-slow picked its worst moment from the raw minimum
+  // score, so one pose misread (a lone ~20% frame between ~75%
+  // frames) became "the moment that scored lowest" and the clip
+  // slowed to 0.25x there — while the report and the clip markers,
+  // both held-guarded since v3.14.0, showed no fault at all. The
+  // moment now comes from the same held worst the markers flag, and
+  // only when it is actually worse than the held best.
+  function fr326(t, score){
+    return { t: t, activity: 'sprint', score: score, tripped: null,
+      f: { lean: 15, kneeL: 90, kneeR: 90, elbow: 90, thighSep: 90, shinReach: 0.05 } };
+  }
+  const worstMoment326 = W.TrackAI._test.worstReplayMoment;
+  t('v3.26.0 replay worst: a lone glitched low frame yields no worst moment, not a slow-down at the glitch',
+    (() => { const frames = [0,1,2,3,4,5,6,7,8,9].map(i => fr326(i * 150, i === 5 ? 20 : 75));
+      return worstMoment326(frames, 0) === null; })());
+  t('v3.26.0 replay worst: a real held fault yields its own time, matching the markers',
+    (() => { const frames = [75,75,40,38,42,75,75].map((s, i) => fr326(i * 150, s));
+      const m = worstMoment326(frames, 0);
+      const held = W.TrackAI._test.heldWorstFrame(frames);
+      return m !== null && Math.abs(m.sec - 0.45) < 0.01 && m.score === 38 &&
+        held && held.t === 450 && held.score === 38; })());
+  t('v3.26.0 replay worst: a low frame with a neighbour within 15 points still counts',
+    (() => { const frames = [75,75,40,42,75,75].map((s, i) => fr326(i * 150, s));
+      const m = worstMoment326(frames, 0);
+      return m !== null && Math.abs(m.sec - 0.30) < 0.01 && m.score === 40; })());
+  t('v3.26.0 replay worst: a clip where every frame ties has no worst moment to slow at',
+    (() => { const frames = [0,1,2,3,4].map(i => fr326(i * 150, 75));
+      return worstMoment326(frames, 0) === null; })());
+  t('v3.26.0 replay worst: empty and unusable frames yield null, no crash',
+    (() => { try{
+        return worstMoment326([], 0) === null && worstMoment326(null, 0) === null &&
+          worstMoment326([{ t: 0, activity: 'sprint', score: 20, tripped: null, f: null }], 0) === null; }
+      catch(e){ return false; } })());
+  t('v3.26.0 replay worst: times are clip-relative (session base subtracted)',
+    (() => { const frames = [75,75,40,38,42,75,75].map((s, i) => fr326(2000 + i * 150, s));
+      const m = worstMoment326(frames, 2000);
+      return m !== null && Math.abs(m.sec - 0.45) < 0.01; })());
+
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR', e && e.stack || e); process.exit(2); });
