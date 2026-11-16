@@ -2360,6 +2360,72 @@ const W = sandbox;
       const m = worstMoment326(frames, 2000);
       return m !== null && Math.abs(m.sec - 0.45) < 0.01; })());
 
+  /* ================= v3.27.0 ================= */
+  // The drill/squat turn count was the last raw-step count in the
+  // classifier: one glitched hipY frame invented TWO turns — one into
+  // the glitch, one back out — so a squat whose 2s window already
+  // held two real turns (down-up-down) crossed the >= 4 line and
+  // read as a drill, and the squat counter never ran. Turns are
+  // counted on a despiked (3-point median) hip series now — a real
+  // bounce spans several samples, or alternates every sample at live
+  // rate, so it survives the median; a lone spike is replaced by the
+  // middle of its neighbours. Fixture: same still-hips frame shape
+  // as v3.21.0 (lean 10°, knees 170°), fed with explicit timestamps
+  // so the 2s window behaves like a real clip.
+  function aiTurn327(hipY){
+    return { missing: [], hipX: 0.5, hipY: hipY, kneeL: 170, kneeR: 170, lean: 10,
+      torso: 0.3, wristLY: 0.35, wristRY: 0.65 };
+  }
+  function runTurn327(hipYs, stepMs){
+    const hist = [];
+    let act = 'rest';
+    for(let i = 0; i < hipYs.length; i++) act = W.TrackAI._test.classify(aiTurn327(hipYs[i]), hist, i * stepMs);
+    return act;
+  }
+  function squatTrace327(n, glitchAt){
+    const ys = [];
+    for(let i = 0; i < n; i++){
+      let y;
+      if(i < 20) y = 0.60 + i * 0.009;
+      else if(i < 40) y = 0.78 - (i - 20) * 0.009;
+      else y = 0.60 + (i - 40) * 0.009;
+      if(i === glitchAt) y = 0.45;
+      ys.push(y);
+    }
+    return ys;
+  }
+  function sparseSquat327(glitchAt){
+    const ys = [];
+    for(let i = 0; i < 13; i++){
+      let y;
+      if(i < 5) y = 0.60 + i * 0.045;
+      else if(i < 9) y = 0.78 - (i - 4) * 0.045;
+      else y = 0.60 + (i - 8) * 0.045;
+      if(i === glitchAt) y = 0.45;
+      ys.push(y);
+    }
+    return ys;
+  }
+  t('v3.27.0 classify: one glitched hipY frame no longer turns a dense squat into a drill',
+    runTurn327(squatTrace327(60, 50), 33) === 'squat');
+  t('v3.27.0 classify: a dense squat with no glitch still reads as a squat',
+    runTurn327(squatTrace327(60, -1), 33) === 'squat');
+  t('v3.27.0 classify: a dense drill (hips bouncing every frame) still reads as a drill',
+    (() => { const ys = [];
+      for(let i = 0; i < 60; i++) ys.push(i % 2 ? 0.72 : 0.60);
+      return runTurn327(ys, 33) === 'drill'; })());
+  t('v3.27.0 classify: a live-rate drill (A-skip bounce at ~6.7 poses/s) still reads as a drill',
+    (() => { const ys = [];
+      for(let i = 0; i < 13; i++) ys.push(i % 2 ? 0.72 : 0.60);
+      return runTurn327(ys, 150) === 'drill'; })());
+  t('v3.27.0 classify: one glitched hipY frame no longer turns a live-rate squat into a drill',
+    runTurn327(sparseSquat327(11), 150) === 'squat');
+  t('v3.27.0 despike3: a lone spike is replaced by the middle of its neighbours; a smooth move is untouched',
+    (() => { const d = W.TrackAI._test.despike3;
+      return JSON.stringify(d([0.6, 0.6, 0.45, 0.6, 0.6])) === JSON.stringify([0.6, 0.6, 0.6, 0.6, 0.6]) &&
+        JSON.stringify(d([0.6, 0.63, 0.66, 0.69])) === JSON.stringify([0.6, 0.63, 0.66, 0.69]) &&
+        JSON.stringify(d([])) === JSON.stringify([]) && JSON.stringify(d([0.5])) === JSON.stringify([0.5]); })());
+
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR', e && e.stack || e); process.exit(2); });

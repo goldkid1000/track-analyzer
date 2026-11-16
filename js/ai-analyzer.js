@@ -86,6 +86,17 @@ function median(vals){ var a = vals.slice().sort(function(x, y){ return x - y; }
  * swing. With fewer than three readings the plain range stands;
  * with none, 0. (Same name/body as app.js's helper, like median.) */
 function sustainedRange(vals){ var a = vals.slice().sort(function(x, y){ return x - y; }); if(a.length < 3) return a.length ? a[a.length - 1] - a[0] : 0; return a[a.length - 2] - a[1]; }
+/* v3.27.0: 3-point running median. A lone glitched sample is replaced
+ * by the middle of its neighbours; a real move spans several samples
+ * (or alternates every sample at live rate) and survives. Endpoints
+ * stay raw — one frame cannot be despiked until its neighbour arrives. */
+function despike3(vals){
+  if(!vals || vals.length < 3) return vals ? vals.slice() : [];
+  var out = [vals[0]];
+  for(var i = 1; i < vals.length - 1; i++) out.push(median([vals[i - 1], vals[i], vals[i + 1]]));
+  out.push(vals[vals.length - 1]);
+  return out;
+}
 function band(v, min, max, fall){ if(typeof v !== 'number' || !isFinite(v)) return NaN; if(v >= min && v <= max) return 100; return clamp(100 - (v < min ? min - v : v - max) / fall * 100, 0, 100); }
 function floorS(v, min, fall){ if(typeof v !== 'number' || !isFinite(v)) return NaN; return v >= min ? 100 : clamp(100 - (min - v) / fall * 100, 0, 100); }
 function ceilS(v, max, fall){ if(typeof v !== 'number' || !isFinite(v)) return NaN; return v <= max ? 100 : clamp(100 - (v - max) / fall * 100, 0, 100); }
@@ -830,11 +841,21 @@ function classify(f, hist, nowMs){
   var velX = (last.hipX - velFirst.hipX) / vdt;
   var velY = (last.hipY - velFirst.hipY) / vdt;
   var motion = Math.abs(velX) + Math.abs(velY);
-  // Count vertical direction changes (drill bounce vs one squat cycle).
+  /* v3.27.0: direction changes are counted on a DESPIKED hip-height
+   * series (3-point running median), not the raw samples. The old loop
+   * read the raw steps, so one glitched hipY frame invented TWO turns
+   * — one into the glitch, one back out of it — and a squat whose
+   * window already held two real turns (down-up-down) crossed the
+   * >= 4 line and read as a drill, so the squat counter never ran and
+   * the rep was lost (and the deep report split the rep in two). A
+   * real bounce spans several samples, or alternates every sample at
+   * live rate, so the median leaves it alone; a lone spike is replaced
+   * by the middle of its neighbours. */
   var turns = 0;
-  for(var i = 2; i < hist.length; i++){
-    var d1 = hist[i - 1].f.hipY - hist[i - 2].f.hipY;
-    var d2 = hist[i].f.hipY - hist[i - 1].f.hipY;
+  var hipYd = despike3(hipYs);
+  for(var i = 2; i < hipYd.length; i++){
+    var d1 = hipYd[i - 1] - hipYd[i - 2];
+    var d2 = hipYd[i] - hipYd[i - 1];
     if((d1 > 0.004 && d2 < -0.004) || (d1 < -0.004 && d2 > 0.004)) turns++;
   }
   /* v3.1.0: 'set' must not depend on absolute hip height — a
@@ -3447,6 +3468,7 @@ window.TrackAI = { setBlockStarts: setBlockStarts, getBlockStarts: function(){ r
     renderDeepReport: renderDeepReport,
     /* v3.15.0 */ maybeCaptureBest: maybeCaptureBest, heldBestFrame: heldBestFrame,
     /* v3.26.0 */ worstReplayMoment: worstReplayMoment,
+    /* v3.27.0 */ despike3: despike3,
     getBestFrames: function(){ return AI.session ? AI.session.bestFrames : []; },
     resetBest: function(){ AI.session = { startedAt: Date.now(), reps: {}, faultCounts: {}, fixes: [], bestFrames: [] };
       AI.deep.bestStreak = 0; AI.deep.bestStreakAct = null; },
