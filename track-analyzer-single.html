@@ -5842,9 +5842,10 @@ window.TrackDual = {
  */
 (function(){
 'use strict';
-var VERSION = '3.27.0';
+var VERSION = '3.28.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "3.28.0", date: "2026-11-17", notes: ["Bench-press scores used to show an ‘Elbow symmetry’ measurement that was never actually measured: the video analyzer only kept one averaged elbow angle, so symmetry was always blank and a bench score came from two measurements instead of three. Each elbow is now measured on its own when both arms are visible, so a lopsided press scores lower on symmetry and an even press scores full marks. When an arm can’t be seen clearly, symmetry stays blank rather than guessed."] },
   { version: "3.27.0", date: "2026-11-16", notes: ["A squat could be misread as a drill: the classifier counted every up-and-down change in your hip height, so one pose misread invented two of them — one into the glitch, one back out — and a squat that already had two real direction changes crossed the line into ‘drill’, so the squat counter never ran and the rep was lost. Direction changes are now counted on a smoothed hip-height line (a 3-point median), so a lone bad frame can’t invent one. A real A-skip bounce still reads as a drill, on uploads and on the live camera."] },
   { version: "3.26.0", date: "2026-11-15", notes: ["The replay used to slow down at the single lowest-scoring frame of your clip — so one pose misread, a lone bad frame between good ones, became ‘the moment that scored lowest’ and the clip slowed to quarter speed there, even though the report and the clip markers showed no fault at all. The replay now slows at the same held worst moment the markers flag: a low score has to last at least two frames to count, and a clip with no real worst moment doesn’t slow down at an ordinary frame."] },
   { version: "3.25.0", date: "2026-11-14", notes: ["Slow squats now count: the live squat counter used to measure your dip against the oldest frame in a 2-second window, so the baseline slid down with you — a slow 3–4 second descent never counted as a rep at all, and a long hold at the bottom counted the rep while you were still down there and zeroed the Depth score. The counter now measures against your held standing height, tracked only while you are standing, so a slow descent counts on the way back up and a hold at the bottom counts only when you stand. One glitched frame still can't move the baseline."] },
@@ -7569,9 +7570,19 @@ function extractAI(lm){
   var kneeFront = kneeFar === null ? kneeNear : Math.min(kneeNear, kneeFar);
   var kneeRear = kneeFar === null ? kneeNear : Math.max(kneeNear, kneeFar);
   function armChainVis(s2, e2, w2){ return Math.min(visOf(lm[s2]), visOf(lm[e2]), visOf(lm[w2])); }
+  /* v3.28.0: per-side elbow angles. scoreFrame's bench branch has
+   * read f.elbowL / f.elbowR since v2.9.0, but extractAI only ever
+   * returned the AVERAGED elbow — so 'Elbow symmetry' was always
+   * null in the video/live path and bench scores averaged 2 metrics
+   * instead of 3 (the photo path sets elbowL/elbowR; the video path
+   * did not). Each side is a number only when that arm chain is
+   * genuinely visible, else null — never guessed. The averaged elbow
+   * is unchanged: the mean of the visible sides. */
+  var elbowL = armChainVis(11, 13, 15) > 0.58 ? ang(lm[11], lm[13], lm[15]) : null;
+  var elbowR = armChainVis(12, 14, 16) > 0.58 ? ang(lm[12], lm[14], lm[16]) : null;
   var elbows = [];
-  if(armChainVis(11, 13, 15) > 0.58) elbows.push(ang(lm[11], lm[13], lm[15]));
-  if(armChainVis(12, 14, 16) > 0.58) elbows.push(ang(lm[12], lm[14], lm[16]));
+  if(elbowL !== null) elbows.push(elbowL);
+  if(elbowR !== null) elbows.push(elbowR);
   var elbow = elbows.length ? elbows.reduce(function(a, b){ return a + b; }, 0) / elbows.length : NaN;
   var bothWrists = visOf(lm[15]) > 0.58 && visOf(lm[16]) > 0.58;
   var thighSep = kneeFar === null ? NaN
@@ -7584,6 +7595,7 @@ function extractAI(lm){
     kneeNear: kneeNear, kneeFront: kneeFront, kneeRear: kneeRear,
     kneeL: kneeNear, kneeR: kneeFar === null ? kneeNear : kneeFar,
     elbow: elbow,
+    elbowL: elbowL, elbowR: elbowR,
     hipX: hip.x, hipY: hip.y,
     torso: torso,
     hipLift: (1 - hip.y),

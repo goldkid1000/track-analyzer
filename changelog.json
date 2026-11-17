@@ -1,5 +1,13 @@
 [
  {
+  "version": "3.28.0",
+  "date": "2026-11-17",
+  "notes": [
+   "Bench-press scores used to show an ‘Elbow symmetry’ measurement that was never actually measured: the video analyzer only kept one averaged elbow angle, so symmetry was always blank and a bench score came from two measurements instead of three. Each elbow is now measured on its own when both arms are visible, so a lopsided press scores lower on symmetry and an even press scores full marks. When an arm can’t be seen clearly, symmetry stays blank rather than guessed."
+  ],
+  "notify": true
+ },
+ {
   "version": "3.27.0",
   "date": "2026-11-16",
   "notes": [

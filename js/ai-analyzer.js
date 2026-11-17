@@ -786,9 +786,19 @@ function extractAI(lm){
   var kneeFront = kneeFar === null ? kneeNear : Math.min(kneeNear, kneeFar);
   var kneeRear = kneeFar === null ? kneeNear : Math.max(kneeNear, kneeFar);
   function armChainVis(s2, e2, w2){ return Math.min(visOf(lm[s2]), visOf(lm[e2]), visOf(lm[w2])); }
+  /* v3.28.0: per-side elbow angles. scoreFrame's bench branch has
+   * read f.elbowL / f.elbowR since v2.9.0, but extractAI only ever
+   * returned the AVERAGED elbow — so 'Elbow symmetry' was always
+   * null in the video/live path and bench scores averaged 2 metrics
+   * instead of 3 (the photo path sets elbowL/elbowR; the video path
+   * did not). Each side is a number only when that arm chain is
+   * genuinely visible, else null — never guessed. The averaged elbow
+   * is unchanged: the mean of the visible sides. */
+  var elbowL = armChainVis(11, 13, 15) > 0.58 ? ang(lm[11], lm[13], lm[15]) : null;
+  var elbowR = armChainVis(12, 14, 16) > 0.58 ? ang(lm[12], lm[14], lm[16]) : null;
   var elbows = [];
-  if(armChainVis(11, 13, 15) > 0.58) elbows.push(ang(lm[11], lm[13], lm[15]));
-  if(armChainVis(12, 14, 16) > 0.58) elbows.push(ang(lm[12], lm[14], lm[16]));
+  if(elbowL !== null) elbows.push(elbowL);
+  if(elbowR !== null) elbows.push(elbowR);
   var elbow = elbows.length ? elbows.reduce(function(a, b){ return a + b; }, 0) / elbows.length : NaN;
   var bothWrists = visOf(lm[15]) > 0.58 && visOf(lm[16]) > 0.58;
   var thighSep = kneeFar === null ? NaN
@@ -801,6 +811,7 @@ function extractAI(lm){
     kneeNear: kneeNear, kneeFront: kneeFront, kneeRear: kneeRear,
     kneeL: kneeNear, kneeR: kneeFar === null ? kneeNear : kneeFar,
     elbow: elbow,
+    elbowL: elbowL, elbowR: elbowR,
     hipX: hip.x, hipY: hip.y,
     torso: torso,
     hipLift: (1 - hip.y),

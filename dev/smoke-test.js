@@ -2426,6 +2426,60 @@ const W = sandbox;
         JSON.stringify(d([0.6, 0.63, 0.66, 0.69])) === JSON.stringify([0.6, 0.63, 0.66, 0.69]) &&
         JSON.stringify(d([])) === JSON.stringify([]) && JSON.stringify(d([0.5])) === JSON.stringify([0.5]); })());
 
+  /* ================= v3.28.0 ================= */
+  // Bench 'Elbow symmetry' never measured in the video/live path:
+  // scoreFrame's bench branch reads f.elbowL / f.elbowR, but
+  // extractAI only ever returned the AVERAGED elbow — so the third
+  // bench metric was always null and bench scores averaged 2 metrics
+  // instead of 3 (the photo path sets elbowL/elbowR; the video path
+  // did not). extractAI now returns per-side elbowL / elbowR
+  // (null when that arm chain is not visible) alongside the unchanged
+  // averaged elbow, so a bench rep scores symmetry for real.
+  // Fixture: sprintPose base, arms re-posed — left elbow 90deg
+  // (shoulder above elbow, wrist out level), right elbow ~130deg.
+  function benchPose(rightWrist, hideRight){
+    const lm = sprintPose(0);
+    const P2 = (x, y, v) => ({ x, y, visibility: v === undefined ? 0.95 : v });
+    lm[11] = P2(0.40, 0.30); lm[13] = P2(0.40, 0.50); lm[15] = P2(0.60, 0.50);
+    lm[12] = P2(0.60, 0.30); lm[14] = P2(0.60, 0.50);
+    lm[16] = hideRight ? P2(0.753, 0.629, 0.3) : P2(rightWrist[0], rightWrist[1]);
+    return lm;
+  }
+  t('v3.28.0 extract: per-side elbow angles are returned (left ~90, right ~130)',
+    (() => { try{
+      const f = W.TrackAIQuality.extractAI(benchPose([0.753, 0.629]));
+      return !f.missing.length && Math.abs(f.elbowL - 90) < 1 && Math.abs(f.elbowR - 130) < 1 &&
+        Math.abs(f.elbow - 110) < 1;
+    }catch(e){ return false; } })());
+  t('v3.28.0 extract: one arm hidden -> that side is null, the averaged elbow is the visible arm only',
+    (() => { try{
+      const f = W.TrackAIQuality.extractAI(benchPose([0.753, 0.629], true));
+      return !f.missing.length && Math.abs(f.elbowL - 90) < 1 && f.elbowR === null &&
+        Math.abs(f.elbow - 90) < 1;
+    }catch(e){ return false; } })());
+  t('v3.28.0 extract: both arms hidden -> both sides null, averaged elbow unmeasured (NaN, not invented)',
+    (() => { try{
+      const lm = benchPose([0.753, 0.629]);
+      // Hide elbows + wrists only: shoulders stay visible, so the frame
+      // is still usable and the arms read as unmeasured, not missing.
+      [13, 15, 14, 16].forEach(i => { lm[i] = Object.assign({}, lm[i], { visibility: 0.3 }); });
+      const f = W.TrackAIQuality.extractAI(lm);
+      return !f.missing.length && f.elbowL === null && f.elbowR === null && !isFinite(f.elbow);
+    }catch(e){ return false; } })());
+  t('v3.28.0 bench score: asymmetric elbows (90 vs 130) now measure symmetry below 100, symmetric elbows score 100',
+    (() => { try{
+      const asym = W.TrackAI._test.scoreFrame('bench', W.TrackAIQuality.extractAI(benchPose([0.753, 0.629])));
+      const symLm = benchPose([0.80, 0.50]); // right wrist level with its elbow too -> right elbow 90
+      const sym = W.TrackAI._test.scoreFrame('bench', W.TrackAIQuality.extractAI(symLm));
+      return typeof asym.metrics[2] === 'number' && asym.metrics[2] < 100 &&
+        typeof sym.metrics[2] === 'number' && sym.metrics[2] === 100;
+    }catch(e){ return false; } })());
+  t('v3.28.0 bench score: one arm hidden -> symmetry stays null (excluded, never guessed)',
+    (() => { try{
+      const sc = W.TrackAI._test.scoreFrame('bench', W.TrackAIQuality.extractAI(benchPose([0.753, 0.629], true)));
+      return sc.metrics[2] === null && sc.labels[2] === 'Elbow symmetry';
+    }catch(e){ return false; } })());
+
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR', e && e.stack || e); process.exit(2); });
