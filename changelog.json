@@ -1,5 +1,13 @@
 [
  {
+  "version": "3.29.0",
+  "date": "2026-11-18",
+  "notes": [
+   "Your sprint stride rate could read almost twice as fast as you were actually running — or vanish entirely — on a front-view clip: when thigh separation could not be counted, the fallback counted steps from the front knee, but the front knee is whichever knee is more bent at the moment, so it peaks once per step instead of once per stride cycle. A 4 steps-per-second sprint read ~7.9, and a 4.5 steps-per-second sprint read nothing at all. Each frame now also keeps the near leg's own knee angle, and the fallback counts stride cycles from that one leg, so a 4 steps/s sprint reads ~4.0 and a 4.5 steps/s sprint reads ~4.5. The thigh-separation count and the front-knee number in the report are unchanged."
+  ],
+  "notify": true
+ },
+ {
   "version": "3.28.0",
   "date": "2026-11-17",
   "notes": [

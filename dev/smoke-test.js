@@ -2480,6 +2480,43 @@ const W = sandbox;
       return sc.metrics[2] === null && sc.labels[2] === 'Elbow symmetry';
     }catch(e){ return false; } })());
 
+
+  /* ================= v3.29.0 ================= */
+  // Stride-rate fallback read the WRONG knee: deep frames store
+  // kneeL = kneeFront = min(near, far), but the fallback assumed
+  // kneeL was the near knee (one peak per stride cycle, x2). The
+  // min of two antiphase knees peaks once per STEP, so a front-view
+  // sprint (flat thigh separation) at 4 steps/s read ~7.9, and a
+  // 4.5 steps/s sprint read nothing at all (doubled 9.0 > the 8 cap).
+  // Frames now also carry kneeNear, and the fallback counts from it.
+  function twoLegFrames(o){
+    var fps = 25, rate = o.rate || 4, secs = o.secs || 2, n = Math.round(secs * fps), out = [];
+    for(var i = 0; i < n; i++){
+      var t = 1000 + i * (1000 / fps);
+      var ph = 2 * Math.PI * (rate / 2) * (i / fps); // one cycle = two steps
+      var kn = 130 + 25 * Math.sin(ph), kf = 130 + 25 * Math.sin(ph + Math.PI);
+      out.push({ t: t, activity: 'sprint', score: 80, tripped: null,
+        f: { lean: 15, kneeL: Math.min(kn, kf), kneeNear: kn, kneeR: Math.max(kn, kf),
+             elbow: 95, thighSep: 90, shinReach: 0.30 } });
+    }
+    return out;
+  }
+  function twoLegRate(frames){
+    var reps = W.TrackAIDeep.segmentReps(frames);
+    return reps.length ? W.TrackAIDeep.strideRate(reps[0].samples) : null;
+  }
+  t('v3.29.0 stride rate: front-view sprint at 4 steps/s (flat thigh separation) counts ~4.0 from the near knee, not ~7.9',
+    (() => { const r = twoLegRate(twoLegFrames({ rate: 4 })); return r !== null && Math.abs(r - 4) < 0.25; })());
+  t('v3.29.0 stride rate: front-view sprint at 4.5 steps/s counts ~4.5 instead of vanishing (old code doubled it past the 8 cap)',
+    (() => { const r = twoLegRate(twoLegFrames({ rate: 4.5 })); return r !== null && Math.abs(r - 4.5) < 0.25; })());
+  t('v3.29.0 stride rate: front-view sprint at 3.5 steps/s counts ~3.5 (old code read ~7.0)',
+    (() => { const r = twoLegRate(twoLegFrames({ rate: 3.5 })); return r !== null && Math.abs(r - 3.5) < 0.25; })());
+  t('v3.29.0 stride rate: far leg hidden (kneeNear == kneeL) still counts ~4.0',
+    (() => { const fs = twoLegFrames({ rate: 4 }).map(function(fr){ fr.f.kneeL = fr.f.kneeNear; return fr; });
+      const r = twoLegRate(fs); return r !== null && Math.abs(r - 4) < 0.25; })());
+  t('v3.29.0 deep frames: the stored frame carries the near-knee angle (kneeNear) alongside the front knee',
+    aiSrc.indexOf('kneeNear: f.kneeNear') >= 0);
+
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR', e && e.stack || e); process.exit(2); });

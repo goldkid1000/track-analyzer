@@ -1182,7 +1182,13 @@ function onFrame(f, angle, nowMs){
     }catch(e){}
   }
   AI.deep.frames1.push({ t: now, activity: activity, score: scored.score, tripped: scored.tripped || null, disp: disp,
-    f: { lean: f.lean, kneeL: f.kneeFront, kneeR: f.kneeRear, elbow: f.elbow, thighSep: f.thighSep, shinReach: f.shinReach } });
+    /* v3.29.0: kneeNear rides along too — the stride-rate fallback
+     * counts stride cycles from ONE leg, and kneeL (the front knee =
+     * min of both) peaks once per step, not once per cycle, so it
+     * doubled the rate. kneeL stays as stored (the deep report's
+     * 'front knee' median reads it); kneeNear is the single-leg
+     * signal the fallback needs. */
+    f: { lean: f.lean, kneeL: f.kneeFront, kneeNear: f.kneeNear, kneeR: f.kneeRear, elbow: f.elbow, thighSep: f.thighSep, shinReach: f.shinReach } });
   if(AI.deep.frames1.length > 900) AI.deep.frames1.shift();
   // Live callout every ~5s while moving: praise + one fix.
   if((activity === 'sprint' || activity === 'block-start' || activity === 'squat' || activity === 'hinge' || activity === 'drill' || activity === 'bench' || activity === 'arm-swing') && now - AI.lastCallout > 5000){
@@ -2297,7 +2303,13 @@ function faultDeviation(check, reps){
  *   2. Near-knee angle: one peak per stride cycle (the near leg
  *      extends once per cycle = two steps), used when the far leg
  *      is hidden on a side view and thigh separation is mostly NaN
- *      — the near leg is visible on nearly every frame.
+ *      — the near leg is visible on nearly every frame. It reads the
+ *      stored kneeNear (one leg's own angle, written by onFrame);
+ *      kneeL is only a legacy fallback for samples built before
+ *      kneeNear was stored — kneeL is the FRONT knee (min of both
+ *      legs), which peaks once per STEP, so counting cycles from it
+ *      doubles the rate (v3.29.0: a 4 steps/s front-view sprint read
+ *      ~7.9, a 4.5 steps/s one read nothing at all).
  * A peak counts only when it rises 10° above the rep's median, sits
  * at least 120ms (steps) / 200ms (cycles) after the previous peak,
  * and is HELD — a usable neighbour within 150ms is also elevated —
@@ -2353,7 +2365,9 @@ function strideRate(samples){
   }
   var byThigh = rateFrom(series('thighSep'), 120, 1);
   if(byThigh !== null) return byThigh;
-  return rateFrom(series('kneeL'), 200, 2);
+  var byNearKnee = rateFrom(series('kneeNear'), 200, 2);
+  if(byNearKnee !== null) return byNearKnee;
+  return rateFrom(series('kneeL'), 200, 2); // legacy samples only (kneeL was the near knee there)
 }
 function buildDeepReport(reps, frames2count, opts){
   opts = opts || {};
