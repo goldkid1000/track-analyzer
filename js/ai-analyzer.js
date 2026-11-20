@@ -999,7 +999,14 @@ function scoreFrame(activity, f){
   else if(running && f.thighSep < 60) tripped = 'thighSep';
   else if(activity === 'squat' && AI.squat.dip < 0.08) tripped = 'squatDepth';
   else if(activity === 'hinge' && f.lean > 55) tripped = 'hingeBack';
-  else if(f.sideRatio > 0.58 && Math.abs(f.kneeX - f.ankleX) > 0.08 * f.torso) tripped = 'squatKnee';
+  /* v3.32.0: knee tracking is a SQUAT fault — the trip above used to
+   * fire on every activity, so a clean front-view sprint frame (100
+   * on every measured metric) read as 'Knee tracking' whenever the
+   * knee sat a normal foot-plant offset lateral from the ankle, and
+   * the deep report sent a squat drill for a sprinter. Gated to
+   * squat, like squatDepth and hingeBack already are; the squat
+   * metric itself is unchanged and still measures the offset. */
+  else if(activity === 'squat' && f.sideRatio > 0.58 && Math.abs(f.kneeX - f.ankleX) > 0.08 * f.torso) tripped = 'squatKnee';
   /* v2.9.0: average only the metrics that were actually measured — a
    * null metric (can't be judged from this angle) never counts. */
   var avail = metrics.filter(function(v){ return typeof v === 'number' && isFinite(v); });
@@ -3717,6 +3724,7 @@ window.TrackAI = { setBlockStarts: setBlockStarts, getBlockStarts: function(){ r
     /* v3.25.0 */ squatRepTick: squatRepTick,
     /* v3.19.0 */ sustainedRange: sustainedRange,
     /* v3.31.0 */ firstMovementMs: firstMovementMs, MOVE_DISP: MOVE_DISP, runDeepAnalysis: runDeepAnalysis,
+    /* v3.32.0 */ setSquatDip: function(v){ AI.squat.dip = v; },
     getRecorder: function(){ return AI.recorder; }, isReplayClip: function(){ return AI.replayClip; },
     getRecordedUrl: function(){ return AI.recordedUrl; }, isReplayRigBound: function(){ return AI.replayRigBound; },
     prefersReducedMotion: prefersReducedMotion } };

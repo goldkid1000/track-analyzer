@@ -1,5 +1,13 @@
 [
  {
+  "version": "3.32.0",
+  "date": "2026-11-20",
+  "notes": [
+   "A clean sprint frame could come back with a squat fault it never had: the knee-tracking trip fired on every activity, so a front-view sprint with your knee a normal step ahead of your ankle was called ‘Knee tracking’ and the report sent you a squat drill for a run that scored 100. Knee tracking is now only called on squats, like squat depth and hinge back already are — a real squat with knees caving still gets called out. Real sprint faults still trip exactly as before."
+  ],
+  "notify": true
+ },
+ {
   "version": "3.31.0",
   "date": "2026-11-20",
   "notes": [

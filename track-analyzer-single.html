@@ -5842,9 +5842,10 @@ window.TrackDual = {
  */
 (function(){
 'use strict';
-var VERSION = '3.31.0';
+var VERSION = '3.32.0';
 window.TRACK_ANALYZER_VERSION = VERSION;
 var FALLBACK_HISTORY = [
+  { version: "3.32.0", date: "2026-11-20", notes: ["A clean sprint frame could come back with a squat fault it never had: the knee-tracking trip fired on every activity, so a front-view sprint with your knee a normal step ahead of your ankle was called ‘Knee tracking’ and the report sent you a squat drill for a run that scored 100. Knee tracking is now only called on squats, like squat depth and hinge back already are — a real squat with knees caving still gets called out. Real sprint faults still trip exactly as before."] },
   { version: "3.31.0", date: "2026-11-20", notes: ["Reviewing a block start or a run used to show a black video with only the skeleton rig: the deep check drew the skeleton but never the frame of you underneath it, the camera never saved a clip to watch back, and a kept clip replayed with no rig on it. The deep check now draws the frame of you under the skeleton, the camera records while it analyzes so your block start is there to rewatch after Stop, and the rig rides on you again while a kept clip plays. Block starts also get a first-movement time — how long after set you first moved, measured from the clip and only shown when the clip actually has a still set to measure from. A lone pose glitch can never invent a start, and it is movement onset, not a gun reaction."] },
   { version: "3.30.0", date: "2026-11-19", notes: ["Your bench, squat and hinge reps could come back with sprint faults they never had: the fault picker ran the running checks on every activity, so a bench press with your feet planted ahead of your knees was called ‘Overstriding’, and the top of a squat or hinge — knees straight, thighs parallel, the correct shape — was called ‘Foot recovery’ or ‘Thigh separation’, and the report sent you sprint drills for a lift that was fine. Overstriding, foot recovery and thigh separation are now only called on running — sprints, drills and block starts — so a lift rep names its own fault (squat depth, hinge back, knee tracking) or no fault at all. Real sprint faults still trip exactly as before."] },
   { version: "3.29.0", date: "2026-11-18", notes: ["Your sprint stride rate could read almost twice as fast as you were actually running — or vanish entirely — on a front-view clip: when thigh separation could not be counted, the fallback counted steps from the front knee, but the front knee is whichever knee is more bent at the moment, so it peaks once per step instead of once per stride cycle. A 4 steps-per-second sprint read ~7.9, and a 4.5 steps-per-second sprint read nothing at all. Each frame now also keeps the near leg's own knee angle, and the fallback counts stride cycles from that one leg, so a 4 steps/s sprint reads ~4.0 and a 4.5 steps/s sprint reads ~4.5. The thigh-separation count and the front-knee number in the report are unchanged."] },
@@ -7786,7 +7787,14 @@ function scoreFrame(activity, f){
   else if(running && f.thighSep < 60) tripped = 'thighSep';
   else if(activity === 'squat' && AI.squat.dip < 0.08) tripped = 'squatDepth';
   else if(activity === 'hinge' && f.lean > 55) tripped = 'hingeBack';
-  else if(f.sideRatio > 0.58 && Math.abs(f.kneeX - f.ankleX) > 0.08 * f.torso) tripped = 'squatKnee';
+  /* v3.32.0: knee tracking is a SQUAT fault — the trip above used to
+   * fire on every activity, so a clean front-view sprint frame (100
+   * on every measured metric) read as 'Knee tracking' whenever the
+   * knee sat a normal foot-plant offset lateral from the ankle, and
+   * the deep report sent a squat drill for a sprinter. Gated to
+   * squat, like squatDepth and hingeBack already are; the squat
+   * metric itself is unchanged and still measures the offset. */
+  else if(activity === 'squat' && f.sideRatio > 0.58 && Math.abs(f.kneeX - f.ankleX) > 0.08 * f.torso) tripped = 'squatKnee';
   /* v2.9.0: average only the metrics that were actually measured — a
    * null metric (can't be judged from this angle) never counts. */
   var avail = metrics.filter(function(v){ return typeof v === 'number' && isFinite(v); });
@@ -10504,6 +10512,7 @@ window.TrackAI = { setBlockStarts: setBlockStarts, getBlockStarts: function(){ r
     /* v3.25.0 */ squatRepTick: squatRepTick,
     /* v3.19.0 */ sustainedRange: sustainedRange,
     /* v3.31.0 */ firstMovementMs: firstMovementMs, MOVE_DISP: MOVE_DISP, runDeepAnalysis: runDeepAnalysis,
+    /* v3.32.0 */ setSquatDip: function(v){ AI.squat.dip = v; },
     getRecorder: function(){ return AI.recorder; }, isReplayClip: function(){ return AI.replayClip; },
     getRecordedUrl: function(){ return AI.recordedUrl; }, isReplayRigBound: function(){ return AI.replayRigBound; },
     prefersReducedMotion: prefersReducedMotion } };

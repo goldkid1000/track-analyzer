@@ -2701,6 +2701,37 @@ const W = sandbox;
   t('v3.31.0 slow review: a recorded clip cycles to half speed instead of demanding an upload',
     $('aiVideo').playbackRate === 0.5 && ($('aiSeeing').textContent || '').indexOf('half') >= 0);
 
+  /* ================= v3.32.0 ================= */
+  // Knee tracking is a SQUAT fault: scoreFrame's trip chain left it
+  // ungated, so a clean front-view sprint frame — 100 on every
+  // measured metric — tripped 'squatKnee' ("Knee tracking") whenever
+  // the knee sat a normal 0.03 of frame width lateral from the ankle
+  // (the trip edge is 0.08 * torso = 0.024). A sprinter's foot plant
+  // is not a squat knee collapse, and the deep report sent a squat
+  // drill for it. The trip now fires only for squat, like squatDepth
+  // and hingeBack already do.
+  const F332 = { lean: 15, shinReach: 0, thighSep: 90, armSplit: 0.5, kneeL: 100, kneeR: 100,
+    thigh: 90, crossing: 0, hipLift: 1, hipY: 0.5, wristLY: 0.4, wristRY: 0.4, torso: 0.3,
+    kneeX: 0.53, ankleX: 0.50, sideRatio: 0.9, elbow: 90, elbowL: 90, elbowR: 90 };
+  const sf332 = W.TrackAI._test.scoreFrame;
+  t('v3.32.0 trips: clean front-view sprint frame (score 100) trips no squat fault (was squatKnee)',
+    sf332('sprint', Object.assign({}, F332)).tripped === null &&
+    sf332('sprint', Object.assign({}, F332)).score === 100);
+  t('v3.32.0 trips: front-view moving frame with the same knee offset trips no squat fault',
+    sf332('moving', Object.assign({}, F332)).tripped === null);
+  t('v3.32.0 trips: front-view drill frame with the same knee offset trips no squat fault',
+    sf332('drill', Object.assign({}, F332)).tripped === null);
+  t('v3.32.0 trips: front-view block-start frame with the same knee offset trips no squat fault',
+    sf332('block-start', Object.assign({}, F332, { lean: 40 })).tripped === null);
+  // Control: a real squat with knees caving still trips knee tracking
+  // once the rep is deep enough (dip >= 0.08 clears the squatDepth trip).
+  W.TrackAI._test.setSquatDip(0.12);
+  t('v3.32.0 trips: a deep squat with knees caving still trips squatKnee',
+    sf332('squat', Object.assign({}, F332, { lean: 20 })).tripped === 'squatKnee');
+  W.TrackAI._test.setSquatDip(0);
+  t('v3.32.0 trips: a shallow squat with knees caving still trips squatDepth first (priority unchanged)',
+    sf332('squat', Object.assign({}, F332, { lean: 20 })).tripped === 'squatDepth');
+
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR', e && e.stack || e); process.exit(2); });
