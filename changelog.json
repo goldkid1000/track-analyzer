@@ -1,5 +1,13 @@
 [
  {
+  "version": "3.31.0",
+  "date": "2026-11-20",
+  "notes": [
+   "Reviewing a block start or a run used to show a black video with only the skeleton rig: the deep check drew the skeleton but never the frame of you underneath it, the camera never saved a clip to watch back, and a kept clip replayed with no rig on it. The deep check now draws the frame of you under the skeleton, the camera records while it analyzes so your block start is there to rewatch after Stop, and the rig rides on you again while a kept clip plays. Block starts also get a first-movement time — how long after set you first moved, measured from the clip and only shown when the clip actually has a still set to measure from. A lone pose glitch can never invent a start, and it is movement onset, not a gun reaction."
+  ],
+  "notify": true
+ },
+ {
   "version": "3.30.0",
   "date": "2026-11-19",
   "notes": [

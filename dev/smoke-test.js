@@ -80,6 +80,15 @@ const mediaDevices = {
 const poseInstances = [];
 let stubFit = 'contain';
 class PoseStub { constructor(){ this._cb = null; poseInstances.push(this); } onResults(cb){ this._cb = cb; } setOptions(){} send(){ return Promise.resolve(); } close(){ return Promise.resolve(); } }
+/* v3.31.0: MediaRecorder stub — the solo camera records the live
+ * stream so a block start can be replayed after analysis (only the
+ * two-camera flow had a recorder before). */
+class MediaRecorderStub {
+  constructor(stream, opts){ this.stream = stream; this.mimeType = (opts && opts.mimeType) || 'video/webm'; this.state = 'inactive'; this.ondataavailable = null; this.onstop = null; }
+  static isTypeSupported(){ return true; }
+  start(){ this.state = 'recording'; if(this.ondataavailable) this.ondataavailable({ data: { size: 1 } }); }
+  stop(){ this.state = 'inactive'; if(this.onstop) this.onstop(); }
+}
 class PeerStub { constructor(id){ this.id = id; this._h = {}; } on(ev, cb){ this._h[ev] = cb; }
   connect(){ return { open: true, on(){}, send(){} }; } call(){ return { on(){}, answer(){} }; } }
 const sandbox = { console, setTimeout, clearTimeout, setInterval: () => 999, clearInterval(){},
@@ -87,7 +96,13 @@ const sandbox = { console, setTimeout, clearTimeout, setInterval: () => 999, cle
   navigator: { mediaDevices, userAgent: 'node-harness', onLine: true },
   location: { protocol: 'https:', hostname: 'goldkid1000.github.io', href: 'https://goldkid1000.github.io/track-analyzer/' },
   document: documentStub, URL: { createObjectURL: () => 'blob:x', revokeObjectURL(){} },
-  Blob: function(){}, FileReader: class { readAsDataURL(){} }, Image: class { constructor(){ this.complete = false; } },
+  Blob: function(){}, FileReader: class { readAsDataURL(){} },
+  /* v3.31.0: Image fires onload when src is set (async, like a real
+   * image load), so drawSkelOnFrame's composite path is testable. */
+  Image: class { constructor(){ this.complete = false; this.naturalWidth = 320; this.naturalHeight = 240; this._src = ''; }
+    set src(v){ this._src = v; var self = this; setTimeout(function(){ self.complete = true; if(self.onload) self.onload(); }, 0); }
+    get src(){ return this._src; } },
+  MediaRecorder: MediaRecorderStub,
   SpeechSynthesisUtterance: class { constructor(x){ this.text = x; } },
   speechSynthesis: { speak(){}, cancel(){}, getVoices: () => [] },
   Pose: PoseStub, POSE_CONNECTIONS: [], POSE_LANDMARKS: {}, Peer: PeerStub,
@@ -2547,6 +2562,144 @@ const W = sandbox;
     sf330('sprint', Object.assign({}, F330, { lean: 15, shinReach: 0, thighSep: 90, kneeL: 120, kneeR: 118 })).tripped === 'footRecovery');
   t('v3.30.0 trips: a real drill overstride still trips overstride',
     sf330('drill', Object.assign({}, F330, { lean: 15, shinReach: 0.25, thighSep: 90 })).tripped === 'overstride');
+
+  /* ================= v3.31.0 ================= */
+  // THE COMPLAINT: reviewing a block start or a run showed a BLACK
+  // video with only the skeleton rig. Three separate causes: the
+  // deep-report skeleton canvases never drew the captured frame under
+  // the bones (the function was even named drawSkelOnFrame), the solo
+  // camera never recorded a clip at all (only the two-camera flow had
+  // a MediaRecorder), and a kept clip replayed with no rig on it.
+  // v3.31.0 composites the frame under the skeleton everywhere,
+  // records the solo camera, and re-runs pose during replay so the
+  // rig rides on the person in the video — plus first-movement
+  // timing for block starts.
+  const skel = W.TrackAISkeleton;
+  const lmDict = { 11: { x: 0.5, y: 0.25, v: 0.9 }, 12: { x: 0.58, y: 0.25, v: 0.9 },
+    23: { x: 0.48, y: 0.55, v: 0.9 }, 24: { x: 0.54, y: 0.55, v: 0.9 },
+    25: { x: 0.4, y: 0.72, v: 0.9 }, 26: { x: 0.6, y: 0.72, v: 0.9 } };
+  function spyCtx(canvas){
+    const ctx = canvas.getContext('2d');
+    const calls = [];
+    const od = ctx.drawImage.bind(ctx), os = ctx.stroke.bind(ctx);
+    ctx.drawImage = function(){ calls.push('image'); return od.apply(ctx, arguments); };
+    ctx.stroke = function(){ calls.push('stroke'); return os.apply(ctx, arguments); };
+    return calls;
+  }
+  t('v3.31.0 composite: drawSkeleton with a frame image draws the image BEFORE the bones (frame under the rig, not black behind it)',
+    (() => { const c = W.document.createElement('canvas'); c.width = 320; c.height = 240;
+      const calls = spyCtx(c);
+      skel.drawSkeleton(c, lmDict, [], { naturalWidth: 320, naturalHeight: 240 });
+      return calls[0] === 'image' && calls.indexOf('stroke') > 0; })());
+  t('v3.31.0 composite: drawSkeleton without a frame image never draws an image (live fallback unchanged)',
+    (() => { const c = W.document.createElement('canvas'); c.width = 320; c.height = 240;
+      const calls = spyCtx(c);
+      skel.drawSkeleton(c, lmDict, []);
+      return calls.indexOf('image') === -1 && calls.indexOf('stroke') > -1; })());
+  const comp3 = await (async () => { const c = W.document.createElement('canvas'); c.width = 320; c.height = 240;
+    const calls = spyCtx(c);
+    skel.drawSkelOnFrame(c, 'data:image/jpeg;base64,x', lmDict, [], null);
+    await sleep(50);
+    return calls[0] === 'image' && calls.indexOf('stroke') > 0; })();
+  t('v3.31.0 composite: drawSkelOnFrame with a frame URL composites the frame under the skeleton once it loads', comp3);
+  t('v3.31.0 composite: drawSkelOnFrame with no frame URL still draws the skeleton (honest fallback, no crash)',
+    (() => { const c = W.document.createElement('canvas'); c.width = 320; c.height = 240;
+      const calls = spyCtx(c);
+      skel.drawSkelOnFrame(c, null, lmDict, [], null);
+      return calls.indexOf('image') === -1 && calls.indexOf('stroke') > -1; })());
+
+  /* First movement: time from the last still set frame to the first
+   * sustained movement — measured from stored frame times and
+   * displacements, never guessed. A lone disp spike is a pose
+   * glitch, not a start. */
+  const fm = W.TrackAI._test.firstMovementMs;
+  const fmF = { lean: 40, kneeL: 100, kneeR: 120, elbow: 90, thighSep: 40, shinReach: 0.05 };
+  function fmSetFrames(){
+    const out = [];
+    for(let t = 0; t <= 900; t += 150) out.push({ t: t, activity: 'set', score: 80, tripped: null, disp: 0.01, f: Object.assign({}, fmF) });
+    return out;
+  }
+  function fmMove(fr, t, disp){ fr.push({ t: t, activity: 'block-start', score: 75, tripped: null, disp: disp, f: Object.assign({}, fmF) }); }
+  t('v3.31.0 first movement: set then sustained exit measures the gap from the last set frame',
+    (() => { const fr = fmSetFrames();
+      fmMove(fr, 1050, 0.02); fmMove(fr, 1200, 0.3); fmMove(fr, 1350, 0.35); fmMove(fr, 1500, 0.3);
+      const r = fm(fr, { startT: 1050, endT: 1500 });
+      return r !== null && Math.abs(r - 0.3) < 0.01; })());
+  t('v3.31.0 first movement: no set frames before the start returns null (never guessed)',
+    (() => { const fr = [];
+      fmMove(fr, 1050, 0.3); fmMove(fr, 1200, 0.35); fmMove(fr, 1350, 0.3);
+      return fm(fr, { startT: 1050, endT: 1350 }) === null; })());
+  t('v3.31.0 first movement: a lone disp spike is ignored — no sustained pair, no number',
+    (() => { const fr = fmSetFrames();
+      fmMove(fr, 1050, 0.4); fmMove(fr, 1200, 0.02); fmMove(fr, 1350, 0.01);
+      return fm(fr, { startT: 1050, endT: 1350 }) === null; })());
+  t('v3.31.0 first movement: spike then real exit measures from the sustained pair, not the glitch',
+    (() => { const fr = fmSetFrames();
+      fmMove(fr, 1050, 0.4); fmMove(fr, 1200, 0.02); fmMove(fr, 1350, 0.3); fmMove(fr, 1500, 0.32);
+      const r = fm(fr, { startT: 1050, endT: 1500 });
+      return r !== null && Math.abs(r - 0.45) < 0.01; })());
+  t('v3.31.0 first movement: buildDeepReport names it on a block-start rep',
+    (() => { const reps = [{ activity: 'block-start', startT: 1050, endT: 2500, frames: 8, best: 82, worst: 60, tripCounts: {},
+        samples: [{ t: 1200, lean: 40, kneeL: 100 }, { t: 1350, lean: 42, kneeL: 102 }], firstMoveSecs: 0.42 }];
+      const rep = W.TrackAIDeep.buildDeepReport(reps, 0, {});
+      return rep.measurements.length === 1 && rep.measurements[0].indexOf('first movement') >= 0 && rep.measurements[0].indexOf('0.42s') >= 0; })());
+  // Wiring: runDeepAnalysis computes first movement from the stored
+  // frames and the deep report carries it (the rep comes from
+  // absorbFrame over the seeded frames — no session seeding needed).
+  W.TrackAI._test.resetDeep();
+  (function(){
+    const d = W.TrackAI._test.getDeep();
+    for(let t = 0; t <= 900; t += 150) d.frames1.push({ t: t, activity: 'set', score: 80, tripped: null, disp: 0.01, f: Object.assign({}, fmF) });
+    [1050, 1200, 1350, 1500, 1650].forEach(function(t, i){ d.frames1.push({ t: t, activity: 'block-start', score: 75, tripped: null, disp: i === 0 ? 0.02 : 0.3, f: Object.assign({}, fmF) }); });
+  })();
+  await W.TrackAI._test.runDeepAnalysis();
+  t('v3.31.0 wiring: runDeepAnalysis puts first movement in the deep report for a block start',
+    ($('aiDeepReport') && $('aiDeepReport').innerHTML.indexOf('first movement') >= 0));
+
+  /* Solo recording: the camera records while it analyzes, so a block
+   * start can be replayed after Stop instead of vanishing. */
+  gumMode = 'normal';
+  await W.TrackAI.setCamera(true);
+  await sleep(50);
+  $('aiStartBtn').click();
+  await sleep(50);
+  t('v3.31.0 record: starting a solo recording wires a MediaRecorder to the live stream',
+    (() => { const rec = W.TrackAI._test.getRecorder(); return !!rec && rec.state === 'recording' && !!rec.stream; })());
+  $('aiStopBtn').click();
+  await sleep(200);
+  t('v3.31.0 record: Stop attaches the recorded clip to the video for replay (src + controls, replay mode on)',
+    (() => { const v = $('aiVideo');
+      return v.src === 'blob:x' && v.controls === true && W.TrackAI._test.isReplayClip() === true; })());
+
+  /* Replay rig: playing the kept clip re-runs pose and draws the rig
+   * on the person; pausing clears it (no frozen rig on a still frame). */
+  const rigSetCalls = [];
+  const origSetTarget = W.TrackRig.setTarget;
+  W.TrackRig.setTarget = function(canvas, pose, hands, faults){ rigSetCalls.push(canvas && canvas.id); return origSetTarget.apply(W.TrackRig, arguments); };
+  const rigClearCalls = [];
+  const origClearTarget = W.TrackRig.clearTarget;
+  W.TrackRig.clearTarget = function(canvas){ rigClearCalls.push(canvas && canvas.id); return origClearTarget.apply(W.TrackRig, arguments); };
+  t('v3.31.0 replay rig: setup wires play/pause/ended on the kept clip',
+    (() => { const l = $('aiVideo')._listeners || {}; return !!(l.play && l.play.length) && !!(l.pause && l.pause.length) && !!(l.ended && l.ended.length); })());
+  $('aiVideo').fire('play', {});
+  await sleep(20);
+  const replayPose = poseInstances[poseInstances.length - 1];
+  if(replayPose && replayPose._cb) replayPose._cb({ poseLandmarks: sprintPose(0) });
+  await sleep(20);
+  t('v3.31.0 replay rig: a pose during replay draws the rig on the preview overlay',
+    rigSetCalls.indexOf('aiSkelOverlay') >= 0);
+  $('aiVideo').fire('pause', {});
+  await sleep(20);
+  t('v3.31.0 replay rig: pausing the replay clears the rig (no frozen skeleton on a still frame)',
+    rigClearCalls.indexOf('aiSkelOverlay') >= 0);
+  W.TrackRig.setTarget = origSetTarget;
+  W.TrackRig.clearTarget = origClearTarget;
+
+  /* Slow review works on a recorded clip, not just uploads. */
+  $('aiVideo').playbackRate = 1;
+  $('aiSlowReview').click();
+  t('v3.31.0 slow review: a recorded clip cycles to half speed instead of demanding an upload',
+    $('aiVideo').playbackRate === 0.5 && ($('aiSeeing').textContent || '').indexOf('half') >= 0);
 
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);

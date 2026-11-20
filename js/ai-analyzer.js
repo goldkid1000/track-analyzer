@@ -128,6 +128,16 @@ var AI = {
   lastFrontal: false, lastLandmarks1: null, lastRawLm: null,
   facing: 'environment', camOff: true, camDeviceId: null,
   clipMode: false, clipUrl: null,
+  /* v3.31.0: solo-camera recording + replay. The solo camera never
+   * recorded a clip (only the two-camera flow had a MediaRecorder),
+   * so after Stop a block start simply vanished — nothing to watch
+   * back. The live stream is now recorded while it is analyzed;
+   * replayClip means the preview currently holds that recorded clip
+   * for replay (clipMode stays false: frame times are wall-clock,
+   * and sessionBaseMs must keep returning the session start). */
+  recorder: null, recChunks: [], recSession: null,
+  recordedUrl: null, recordedAttached: false, replayClip: false,
+  replayRigTimer: null, replayRigBound: false,
   lastClassic: null, lastTripped: null, lastGuideIssue: '',
   announcingUntil: 0,
   deep: { frames1: [], frames2: [], worst: null, worstStreak: 0, worstStreakAct: null, bestStreak: 0, bestStreakAct: null },
@@ -2382,6 +2392,41 @@ function strideRate(samples){
   if(byNearKnee !== null) return byNearKnee;
   return rateFrom(series('kneeL'), 200, 2); // legacy samples only (kneeL was the near knee there)
 }
+/* v3.31.0: first movement for a block start — time from the last
+ * still set frame to the first sustained movement. Measured from the
+ * stored frame times and per-frame displacements (disp), never
+ * guessed: the set baseline must be in the clip (frames classified
+ * 'set' before the start), and the movement must clear MOVE_DISP on
+ * TWO consecutive frames, so one pose glitch can never invent a
+ * start. Returns seconds, or null when it cannot be measured. This
+ * is movement onset — NOT a gun reaction: there is no starting gun
+ * in the video, and the report says so. */
+var MOVE_DISP = 0.10; // torso units per sample — above pose jitter, below a real exit
+function firstMovementMs(frames, rep){
+  if(!frames || !rep || typeof rep.startT !== 'number') return null;
+  var setT = null;
+  for(var i = 0; i < frames.length; i++){
+    var fr = frames[i];
+    if(!fr) continue;
+    if(fr.t > rep.startT) break;
+    if(fr.activity === 'set') setT = fr.t;
+  }
+  if(setT === null) return null;
+  var above = 0, firstT = null;
+  for(var j = 0; j < frames.length; j++){
+    var f2 = frames[j];
+    if(!f2 || f2.t <= setT) continue;
+    if(typeof rep.endT === 'number' && f2.t > rep.endT) break;
+    if(typeof f2.disp === 'number' && f2.disp > MOVE_DISP){
+      if(above === 0) firstT = f2.t;
+      above++;
+      if(above >= 2) return Math.round((firstT - setT) / 10) / 100;
+    } else {
+      above = 0; firstT = null;
+    }
+  }
+  return null;
+}
 function buildDeepReport(reps, frames2count, opts){
   opts = opts || {};
   var faultCounts = {}, activities = [];
@@ -2421,6 +2466,11 @@ function buildDeepReport(reps, frames2count, opts){
       var rate = strideRate(r.samples);
       if(rate !== null) line += ' · stride rate ~' + rate.toFixed(1) + ' steps/s (measured)';
     }
+    /* v3.31.0: first movement for a block start — measured from the
+     * stored frames (see firstMovementMs); shown only when it could
+     * actually be measured. Movement onset, never a gun reaction. */
+    if(r.activity === 'block-start' && typeof r.firstMoveSecs === 'number')
+      line += ' · first movement ~' + r.firstMoveSecs.toFixed(2) + 's after set (measured — movement onset, not a gun reaction)';
     return line;
   });
   var span = reps.length ? Math.max(0, Math.round((reps[reps.length - 1].endT - reps[0].startT) / 1000)) : 0;
@@ -2472,18 +2522,24 @@ var SKEL_BONES = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [1
   [23, 25], [25, 27], [24, 26], [26, 28], [0, 11], [0, 12]];
 var SKEL_BONE_W = { '11,12': 5, '23,24': 5, '11,23': 5, '12,24': 5, '23,25': 5, '24,26': 5,
   '25,27': 4, '26,28': 4, '11,13': 4, '12,14': 4, '13,15': 3, '14,16': 3, '0,11': 3, '0,12': 3 };
-function drawSkeleton(canvas, lm, faultJoints){
+function drawSkeleton(canvas, lm, faultJoints, bgImg){
   // Skeleton lines drawn ON the video/photo of the person — never a
   // separate stick-figure drawing, never 3D.
-  // v3.0.0: same rendering rules as the live rig — tapered bone widths
-  // (torso/thigh thickest), and joints the model barely sees FADE with
-  // their visibility instead of drawing at full strength in a guessed
-  // place (the old gate drew anything above v=0.3 at full opacity).
+  // v3.31.0: the frame image finally goes UNDER the bones. Before
+  // this the function cleared the canvas and drew only the skeleton,
+  // so every deep-report skeleton canvas was a black box with a rig
+  // floating in it — the owner's headline complaint ("black video
+  // with the skeleton rig"). Callers that have a frame pass it as
+  // bgImg; callers without one (live fallback) pass nothing and the
+  // drawing is exactly as before.
   if(!canvas || !lm) return [];
   var ctx = canvas.getContext('2d');
   if(!ctx) return [];
   var w = canvas.width, h = canvas.height;
   ctx.clearRect(0, 0, w, h);
+  if(bgImg && bgImg.naturalWidth > 0 && bgImg.naturalHeight > 0){
+    try{ ctx.drawImage(bgImg, 0, 0, w, h); }catch(e){}
+  }
   var sf = Math.max(0.75, Math.min(2, Math.min(w, h) / 320));
   var pts = {};
   Object.keys(lm).forEach(function(k){
@@ -2539,6 +2595,37 @@ function bindSkelClick(canvas, faultInfo){
     }
   });
 }
+/* v3.0.0: the skeleton canvases used to be a fixed 320x240 whatever
+ * the frame's real shape — a 16:9 or portrait frame got a vertically
+ * stretched skeleton whose joints sat in the wrong places next to
+ * the photo. Each canvas now takes its frame's own aspect (capped
+ * at 640px wide) before the skeleton is drawn.
+ * v3.31.0: module-level (was a closure inside renderDeepReport) so
+ * the composite path is testable. */
+function drawSkelOnFrame(canvas, url, lm, joints, faultInfo){
+  if(!canvas) return;
+  bindSkelClick(canvas, faultInfo);
+  if(!lm) return;
+  if(!url || typeof Image === 'undefined'){ drawSkeleton(canvas, lm, joints); return; }
+  try{
+    var im = new Image();
+    im.onload = function(){
+      if(im.naturalWidth > 0){
+        var s = Math.min(1, 640 / im.naturalWidth);
+        canvas.width = Math.max(1, Math.round(im.naturalWidth * s));
+        canvas.height = Math.max(1, Math.round(im.naturalHeight * s));
+      }
+      /* v3.31.0: the frame goes UNDER the skeleton. This function
+       * is named drawSkelOnFrame and it sized the canvas from the
+       * image — then never drew the image, so the canvas showed
+       * only the rig on black. The image is the person; the bones
+       * ride on top of it. */
+      drawSkeleton(canvas, lm, joints, im);
+    };
+    im.onerror = function(){ drawSkeleton(canvas, lm, joints); };
+    im.src = url;
+  }catch(e){ drawSkeleton(canvas, lm, joints); }
+}
 function renderDeepReport(report){
   var box = $('aiDeepReport');
   if(!box) return;
@@ -2592,30 +2679,6 @@ function renderDeepReport(report){
   var topJoints = topFault ? skelFaultJoints(topFault.check) : [];
   var bestLm = report.best.length ? report.best[0].lm : null;
   var worstLm = report.worst ? report.worst.lm : null;
-  /* v3.0.0: the skeleton canvases used to be a fixed 320x240 whatever
-   * the frame's real shape — a 16:9 or portrait frame got a vertically
-   * stretched skeleton whose joints sat in the wrong places next to
-   * the photo. Each canvas now takes its frame's own aspect (capped
-   * at 640px wide) before the skeleton is drawn. */
-  function drawSkelOnFrame(canvas, url, lm, joints, faultInfo){
-    if(!canvas) return;
-    bindSkelClick(canvas, faultInfo);
-    if(!lm) return;
-    if(!url || typeof Image === 'undefined'){ drawSkeleton(canvas, lm, joints); return; }
-    try{
-      var im = new Image();
-      im.onload = function(){
-        if(im.naturalWidth > 0){
-          var s = Math.min(1, 640 / im.naturalWidth);
-          canvas.width = Math.max(1, Math.round(im.naturalWidth * s));
-          canvas.height = Math.max(1, Math.round(im.naturalHeight * s));
-        }
-        drawSkeleton(canvas, lm, joints);
-      };
-      im.onerror = function(){ drawSkeleton(canvas, lm, joints); };
-      im.src = url;
-    }catch(e){ drawSkeleton(canvas, lm, joints); }
-  }
   var bestUrl = report.best.length ? report.best[0].url : null;
   var worstUrl = report.worst ? report.worst.url : null;
   drawSkelOnFrame($('deepSkelBest'), bestUrl, bestLm, topJoints, topFault);
@@ -2649,6 +2712,15 @@ function runDeepAnalysis(){
        * same list — summary included (via syncSessionReps). */
       state.reps = validateSegments(state.reps);
       syncSessionReps(state.reps);
+      /* v3.31.0: first movement for each block start, measured from
+       * the stored frames (see firstMovementMs). Silent when it
+       * cannot be measured — never guessed. */
+      state.reps.forEach(function(rep){
+        if(rep.activity === 'block-start'){
+          var fm = firstMovementMs(frames1, rep);
+          if(fm !== null) rep.firstMoveSecs = fm;
+        }
+      });
       var vidEl = $('aiVideo');
       /* v3.2.0: for a clip, the summary's "Time" is the CLIP's length,
        * not the wall-clock time the phone spent processing it. */
@@ -2679,8 +2751,9 @@ function stopAndAnalyze(){
   announce(AI.clipMode ? 'Clip analysis finished.' : 'Recording has ended.');
   AI.lastSession = AI.session;
   /* v2.2.0: keep an uploaded clip playable after analysis (replay +
-   * AI moments). Live recordings have no saved clip to keep. */
-  AI.keepClip = AI.clipMode;
+   * AI moments). v3.31.0: a live recording is kept the same way —
+   * the solo recorder (startSoloRecording) has a clip to keep now. */
+  AI.keepClip = AI.clipMode || !!AI.recorder;
   stopAI();
   runDeepAnalysis().then(function(){
     renderSessionSummary(AI.lastSession);
@@ -2691,11 +2764,16 @@ function stopAndAnalyze(){
      * a stricter second pass must agree before a fix reads as settled. */
     AI.selfCheck = verifySelfCheck(AI.deep.frames1, AI.deepReport);
     renderSelfCheck(AI.selfCheck);
-    if(AI.clipMode) setupReplayAutoSlow();
+    /* v3.31.0: replay helpers run for a recorded clip too, not just
+     * uploads — the recorded clip is replayed the same way. clipMode
+     * stays false for recordings (frame times are wall-clock), so
+     * these gates use the separate replayClip flag. */
+    if(AI.clipMode || AI.replayClip) setupReplayAutoSlow();
     notifyAnalysisDone();
     saveLastSession();
     renderLastSession(true);
-    if(AI.clipMode) renderClipMarkers();
+    if(AI.clipMode || AI.replayClip) renderClipMarkers();
+    if(AI.clipMode || AI.replayClip) setupReplayRig();
     var s = $('aiSummary');
     if(s){
       s.classList.remove('reveal-pop'); void s.offsetWidth; s.classList.add('reveal-pop');
@@ -2923,7 +3001,9 @@ function setupReplayAutoSlow(){
   var worstMoment = worstReplayMoment(frames, start);
   var worstT = worstMoment ? worstMoment.sec : null;
   v.ontimeupdate = function(){
-    if(AI.running || !AI.clipMode) return;
+    /* v3.31.0: recorded clips auto-slow too (replayClip, not
+     * clipMode — see stopAndAnalyze). */
+    if(AI.running || !(AI.clipMode || AI.replayClip)) return;
     var t = v.currentTime || 0;
     var inFast = segs.some(function(s){ return t >= s.startSec - 0.15 && t <= s.endSec + 0.35; });
     var atWorst = worstT !== null && t >= worstT - 0.4 && t <= worstT + 0.8;
@@ -3043,6 +3123,105 @@ function renderLastSession(skipLatest){
   body.innerHTML = html;
 }
 
+/* v3.31.0: solo-camera recording. Only the two-camera flow had a
+ * MediaRecorder, so after Stop on a solo recording there was no clip
+ * to replay — the preview went to the "Camera off" overlay on a black
+ * card and the block start was gone. The live stream is now recorded
+ * while it is analyzed, and the clip is attached for replay when
+ * Stop lands. Same mime candidates as dualcam.js pickMime. */
+function pickSoloMime(){
+  if(typeof MediaRecorder === 'undefined') return '';
+  var cands = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'];
+  for(var i = 0; i < cands.length; i++){
+    try{ if(MediaRecorder.isTypeSupported(cands[i])) return cands[i]; }catch(e){}
+  }
+  return '';
+}
+function startSoloRecording(stream){
+  if(!stream || AI.recorder) return;
+  if(typeof MediaRecorder === 'undefined') return;
+  try{
+    var mime = pickSoloMime();
+    var rec = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
+    rec.ondataavailable = function(e){ if(e && e.data) AI.recChunks.push(e.data); };
+    rec.onstop = function(){ attachRecordedClip(rec.mimeType); };
+    AI.recChunks = [];
+    AI.recSession = AI.session;
+    rec.start(250);
+    AI.recorder = rec;
+  }catch(e){ AI.recorder = null; }
+}
+function stopSoloRecording(){
+  var rec = AI.recorder;
+  AI.recorder = null;
+  if(!rec) return;
+  try{ if(rec.state === 'recording' || rec.state === 'paused') rec.stop(); }catch(e){}
+}
+function attachRecordedClip(mime){
+  if(AI.recordedAttached) return;
+  if(!AI.recChunks.length) return;
+  if(AI.lastSession && AI.lastSession !== AI.recSession) return;
+  var blob = null;
+  try{ blob = new Blob(AI.recChunks, { type: mime || 'video/webm' }); }catch(e){ return; }
+  var url = null;
+  try{ url = URL.createObjectURL(blob); }catch(e){ return; }
+  if(!url) return;
+  AI.recordedUrl = url;
+  AI.recordedAttached = true;
+  AI.lastSession = AI.recSession;
+  var v = $('aiVideo');
+  if(!v) return;
+  v.src = url;
+  v.controls = true;
+  v.muted = true;
+  v.setAttribute('playsinline', '');
+  showEl($('aiCamOff'), false);
+  setGestureStatus('clipDone');
+  AI.clipUrl = url;
+  AI.replayClip = true;
+  AI.keepClip = true;
+  v.onloadedmetadata = function(){
+    /* v3.2.0 shape rule, same as an uploaded clip: the preview card
+     * takes the clip's own aspect, no letterboxed black bars. */
+    var card = v.closest ? v.closest('.ai-preview-card') : null;
+    if(card && v.videoWidth > 0 && v.videoHeight > 0)
+      card.style.aspectRatio = v.videoWidth + ' / ' + v.videoHeight;
+  };
+  setupReplayAutoSlow();
+  renderClipMarkers();
+  setupReplayRig();
+}
+/* v3.31.0: replay rig. A kept clip used to replay with NO rig — the
+ * pose interval stopped at Stop and clearLiveSkeleton() ran, so the
+ * video played bare. While a kept clip (uploaded or recorded) plays
+ * back, pose runs again on the video frames and the rig is drawn on
+ * the person; pausing or ending clears it, so a frozen rig never
+ * sits on a still frame. Pose's own callback already draws via
+ * drawLiveSkeleton and gates scoring on AI.running, so replay never
+ * scores — it only shows. */
+function setupReplayRig(){
+  var v = $('aiVideo');
+  if(!v || AI.replayRigBound) return;
+  AI.replayRigBound = true;
+  v.addEventListener('play', function(){
+    if(AI.running) return;
+    if(!(AI.clipMode || AI.replayClip)) return;
+    AI.subject = null; AI.subjectGoneAt = null; AI.prevDispLm = null;
+    if(AI.replayRigTimer) clearInterval(AI.replayRigTimer);
+    AI.replayRigTimer = setInterval(function(){
+      if(!AI.poseA || v.paused || v.ended) return;
+      try{ AI.poseA.send({ image: v }).catch(function(){}); }catch(e){}
+    }, 150);
+  });
+  v.addEventListener('pause', function(){
+    if(AI.replayRigTimer){ clearInterval(AI.replayRigTimer); AI.replayRigTimer = null; }
+    clearLiveSkeleton();
+  });
+  v.addEventListener('ended', function(){
+    if(AI.replayRigTimer){ clearInterval(AI.replayRigTimer); AI.replayRigTimer = null; }
+    clearLiveSkeleton();
+  });
+}
 function startAI(reuseStream, opts){
   if(AI.running) return;
   opts = opts || {};
@@ -3059,6 +3238,13 @@ function startAI(reuseStream, opts){
   AI.session = { startedAt: Date.now(), reps: {}, faultCounts: {}, fixes: [], bestFrames: [] };
   AI.deep = { frames1: [], frames2: [], worst: null, worstStreak: 0, worstStreakAct: null, bestStreak: 0, bestStreakAct: null };
   AI.deepReport = null;
+  /* v3.31.0: a new session starts with no recorder and no replay.
+   * The previous recorded clip's URL was released by the clipUrl
+   * revoke above, so the video element cannot keep showing it. */
+  AI.recorder = null; AI.recChunks = []; AI.recSession = null;
+  AI.recordedUrl = null; AI.recordedAttached = false; AI.replayClip = false;
+  if(AI.replayRigTimer){ clearInterval(AI.replayRigTimer); AI.replayRigTimer = null; }
+  AI.replayRigBound = false;
   AI.prevDispLm = null; AI.lastDisp = null; AI.autoSlowed = false; AI.replayAutoSlowed = false; AI.fastSegments = [];
   hideAutoSlowNote();
   var dr = $('aiDeepReport'); if(dr) dr.innerHTML = '';
@@ -3197,6 +3383,9 @@ function startAI(reuseStream, opts){
     } else {
       showEl($('aiPreview2Wrap'), false);
       setText('aiAngleTag', 'Camera');
+      /* v3.31.0: record the live stream while it is analyzed, so the
+       * block start can be replayed after Stop instead of vanishing. */
+      startSoloRecording(AI.ownStream);
     }
     var v1 = $('aiVideo'), v2 = $('aiVideo2');
     AI.timer = setInterval(function(){
@@ -3242,19 +3431,28 @@ function stopAI(){
   clearInterval(AI.gesture.timer); AI.gesture.timer = null;
   AI.gesture.holdKind = ''; AI.gesture.holdCount = 0; setHoldBar(0);
   clearLiveSkeleton();
+  /* v3.31.0: stop the solo recording — its onstop attaches the
+   * recorded clip for replay. Runs before the video element is
+   * touched below, so the attach can set the clip up first. */
+  stopSoloRecording();
+  if(AI.replayRigTimer){ clearInterval(AI.replayRigTimer); AI.replayRigTimer = null; }
   if(AI.ownStream){ AI.ownStream.getTracks().forEach(function(t){ t.stop(); }); AI.ownStream = null; }
   var v1 = $('aiVideo'); if(v1){ v1.srcObject = null; v1.onended = null;
     /* v2.2.0: an uploaded clip stays playable after analysis (with
      * controls + AI moments below it) instead of vanishing. The live
-     * camera path still clears. */
-    if(AI.clipMode && AI.keepClip){
+     * camera path still clears. v3.31.0: a recorded clip is kept the
+     * same way — the old rule only kept uploads. */
+    if((AI.clipMode || AI.replayClip) && AI.keepClip){
       v1.controls = true;
     } else {
       if(AI.clipMode) v1.removeAttribute('src');
     }
   }
   var v2 = $('aiVideo2'); if(v2) v2.srcObject = null;
-  if(AI.clipUrl && !(AI.clipMode && AI.keepClip)){ try{ URL.revokeObjectURL(AI.clipUrl); }catch(e){} AI.clipUrl = null; }
+  /* v3.31.0: revoke the clip URL only when nothing is kept. The old
+   * rule revoked whenever clipMode was false — which would have
+   * killed a recorded clip the moment it was attached. */
+  if(AI.clipUrl && !AI.keepClip){ try{ URL.revokeObjectURL(AI.clipUrl); }catch(e){} AI.clipUrl = null; }
   if(!(AI.clipMode && AI.keepClip)) AI.clipMode = false;
   AI.keepClip = false;
   var slowBtn = $('aiSlowReview'); if(slowBtn) slowBtn.setAttribute('aria-pressed', 'false');
@@ -3264,8 +3462,9 @@ function stopAI(){
   showEl($('aiStopBtn'), false);
   showEl($('aiEndSessionBtn'), false);
   /* v3.2.0: a kept clip stays on screen for replay — no "camera off"
-   * overlay or status over the video the user is about to rewatch. */
-  var keptClip = !!(AI.clipMode && AI.lastSession);
+   * overlay or status over the video the user is about to rewatch.
+   * v3.31.0: a recorded clip counts as a kept clip too. */
+  var keptClip = !!((AI.clipMode || AI.replayClip) && AI.lastSession);
   setGestureStatus(keptClip ? 'clipDone' : 'off');
   /* v2.1.8: stopping ends the camera too — sync the toggle so it
    * tells the truth (one tap turns it back on). */
@@ -3402,7 +3601,9 @@ function initAI(){
   var slowBtn = $('aiSlowReview');
   if(slowBtn) slowBtn.addEventListener('click', function(){
     var v = $('aiVideo');
-    if(!v || !AI.clipMode){ setText('aiSeeing', 'Upload a clip to use slow review.'); return; }
+    /* v3.31.0: slow review works on a recorded clip too, not just
+     * uploads. */
+    if(!v || !(AI.clipMode || AI.replayClip)){ setText('aiSeeing', 'Upload a clip or record one to use slow review.'); return; }
     /* v2.2.0: cycle 1× → 0.5× → 0.25× → 1×. The old toggle only did
      * 0.35×, which was too fast to see the exact moment a fault lands.
      * v2.9.0: 0.1× added (the two-camera replay already had it) for
@@ -3515,6 +3716,9 @@ window.TrackAI = { setBlockStarts: setBlockStarts, getBlockStarts: function(){ r
     setStartLocked: function(v){ AI.startLocked = !!v; }, setState: function(v){ AI.state = v; },
     /* v3.25.0 */ squatRepTick: squatRepTick,
     /* v3.19.0 */ sustainedRange: sustainedRange,
+    /* v3.31.0 */ firstMovementMs: firstMovementMs, MOVE_DISP: MOVE_DISP, runDeepAnalysis: runDeepAnalysis,
+    getRecorder: function(){ return AI.recorder; }, isReplayClip: function(){ return AI.replayClip; },
+    getRecordedUrl: function(){ return AI.recordedUrl; }, isReplayRigBound: function(){ return AI.replayRigBound; },
     prefersReducedMotion: prefersReducedMotion } };
 window.TrackFrameMarks = { build: buildFrameMarks, draw: drawFrameMarks, at: frameMarkAt,
   figureHtml: frameMarksFigureHtml, drawAll: drawAllFrameMarks,
@@ -3529,8 +3733,10 @@ window.TrackAIQuality = { extractAI: extractAI, gatePose: gatePose, poseHipTorso
   getQuality: function(){ return AI.quality; }, getSubject: function(){ return AI.subject; },
   getGoneAt: function(){ return AI.subjectGoneAt; }, classify: classify };
 window.TrackAIDeep = { segmentReps: segmentReps, buildDeepReport: buildDeepReport, pickVideos: pickVideos, absorbFrame: absorbFrame,
-  /* v3.23.0 */ strideRate: strideRate };
-window.TrackAISkeleton = { drawSkeleton: drawSkeleton, skelFaultJoints: skelFaultJoints, drawLiveSkeleton: drawLiveSkeleton, drawLiveSkeleton2: drawLiveSkeleton2 };
+  /* v3.23.0 */ strideRate: strideRate,
+  /* v3.31.0 */ firstMovementMs: firstMovementMs };
+window.TrackAISkeleton = { drawSkeleton: drawSkeleton, skelFaultJoints: skelFaultJoints, drawLiveSkeleton: drawLiveSkeleton, drawLiveSkeleton2: drawLiveSkeleton2,
+  /* v3.31.0 */ drawSkelOnFrame: drawSkelOnFrame };
 /* v3.0.0: self-check + auto slow-mo (test hooks + honest logic, shared). */
 window.TrackAISelfCheck = { verify: verifySelfCheck, compare: compareSelfCheck,
   findFastSegments: findFastSegments, maxJointDisp: maxJointDisp, FAST_DISP: FAST_DISP };
