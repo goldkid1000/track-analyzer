@@ -961,19 +961,32 @@ function scoreFrame(activity, f){
   /* v2.2.0: arm-swing trips take priority — the generic chain below
    * would mislabel arm practice (e.g. a low shinReach is meaningless
    * when the feet are planted). */
+  /* v3.30.0: overstride / foot-recovery / thigh-separation are
+   * RUNNING faults — they only mean something while the legs cycle
+   * through a stride. The chain below used to trip them on any
+   * activity, so a bench press with feet planted ahead of the knees
+   * read as 'Overstriding', and the top of a squat or hinge (knees
+   * straight, thighs parallel — the correct shape) read as 'Foot
+   * recovery' or 'Thigh separation', sending sprint drills for a
+   * lift that was fine. The three trips now fire only for the
+   * running family (sprint / drill / moving / block-start); squat,
+   * hinge, bench and set frames fall through to their own faults
+   * (squat depth, hinge back, knee tracking) or to no fault at all.
+   * Arm-swing already had its own priority branch above (v2.2.0). */
+  var running = activity === 'sprint' || activity === 'drill' || activity === 'moving' || activity === 'block-start';
   if(activity === 'arm-swing'){
     var maxHandTrip = f.hipLift + Math.max(f.hipY - f.wristLY, f.hipY - f.wristRY) / f.torso;
     if(maxHandTrip < -0.35) tripped = 'armHeight';
     else if(f.elbow < 50 || f.elbow > 130) tripped = 'elbowShape';
     else if(f.crossing > 0.3) tripped = 'armCross';
   }
-  else if(f.shinReach > 0.12) tripped = 'overstride';
+  else if(running && f.shinReach > 0.12) tripped = 'overstride';
   else if((activity === 'block-start' || activity === 'set') && f.lean < 20) tripped = 'earlyRise';
   else if(f.crossing > 0.3) tripped = 'armCross';
   else if(f.elbow < 70 || f.elbow > 130) tripped = 'elbowShape';
   else if(activity === 'sprint' && f.lean > 30) tripped = 'tallPosture';
-  else if(Math.min(f.kneeL, f.kneeR) > 105) tripped = 'footRecovery';
-  else if(f.thighSep < 60) tripped = 'thighSep';
+  else if(running && Math.min(f.kneeL, f.kneeR) > 105) tripped = 'footRecovery';
+  else if(running && f.thighSep < 60) tripped = 'thighSep';
   else if(activity === 'squat' && AI.squat.dip < 0.08) tripped = 'squatDepth';
   else if(activity === 'hinge' && f.lean > 55) tripped = 'hingeBack';
   else if(f.sideRatio > 0.58 && Math.abs(f.kneeX - f.ankleX) > 0.08 * f.torso) tripped = 'squatKnee';

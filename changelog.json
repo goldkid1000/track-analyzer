@@ -1,5 +1,13 @@
 [
  {
+  "version": "3.30.0",
+  "date": "2026-11-19",
+  "notes": [
+   "Your bench, squat and hinge reps could come back with sprint faults they never had: the fault picker ran the running checks on every activity, so a bench press with your feet planted ahead of your knees was called ‘Overstriding’, and the top of a squat or hinge — knees straight, thighs parallel, the correct shape — was called ‘Foot recovery’ or ‘Thigh separation’, and the report sent you sprint drills for a lift that was fine. Overstriding, foot recovery and thigh separation are now only called on running — sprints, drills and block starts — so a lift rep names its own fault (squat depth, hinge back, knee tracking) or no fault at all. Real sprint faults still trip exactly as before."
+  ],
+  "notify": true
+ },
+ {
   "version": "3.29.0",
   "date": "2026-11-18",
   "notes": [

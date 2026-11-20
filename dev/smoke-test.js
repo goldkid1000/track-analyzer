@@ -2517,6 +2517,37 @@ const W = sandbox;
   t('v3.29.0 deep frames: the stored frame carries the near-knee angle (kneeNear) alongside the front knee',
     aiSrc.indexOf('kneeNear: f.kneeNear') >= 0);
 
+  /* ================= v3.30.0 ================= */
+  // Sprint-only faults tripped on lifts: scoreFrame's fault chain
+  // ran overstride / foot-recovery / thigh-separation on EVERY
+  // activity, so a bench press with feet planted ahead of the knees
+  // read as 'Overstriding', and the top of a squat or hinge (knees
+  // straight, thighs parallel — the correct shape) read as 'Foot
+  // recovery' or 'Thigh separation', sending sprint drills for a
+  // lift that was fine. The three running faults now fire only for
+  // the running family (sprint / drill / moving / block-start);
+  // squat, hinge, bench and set frames fall through to their own
+  // faults (squat depth, hinge back, knee tracking) or none at all.
+  const F330 = { lean: 20, shinReach: 0, thighSep: 90, armSplit: 0.5, kneeL: 100, kneeR: 100,
+    thigh: 90, crossing: 0, hipLift: 1, hipY: 0.5, wristLY: 0.4, wristRY: 0.4, torso: 0.3,
+    kneeX: 0.50, ankleX: 0.50, sideRatio: 0.9, elbow: 90, elbowL: 90, elbowR: 90 };
+  const sf330 = W.TrackAI._test.scoreFrame;
+  t('v3.30.0 trips: bench press with feet ahead of the knees trips no sprint fault (was overstride)',
+    sf330('bench', Object.assign({}, F330, { lean: 85, shinReach: 0.2, thighSep: 20 })).tripped === null);
+  t('v3.30.0 trips: top of a squat (knees straight, thighs parallel) trips squat depth, not foot recovery / thigh separation',
+    sf330('squat', Object.assign({}, F330, { lean: 12, kneeL: 170, kneeR: 170, thighSep: 10, shinReach: 0 })).tripped === 'squatDepth');
+  t('v3.30.0 trips: bottom of a squat (knees bent, thighs parallel) trips no sprint fault (was thigh separation)',
+    ['overstride', 'footRecovery', 'thighSep'].indexOf(
+      sf330('squat', Object.assign({}, F330, { lean: 25, kneeL: 95, kneeR: 95, thighSep: 10, shinReach: 0 })).tripped) === -1);
+  t('v3.30.0 trips: top of a hinge (knees straight, thighs parallel) trips no fault at all (was foot recovery)',
+    sf330('hinge', Object.assign({}, F330, { lean: 15, kneeL: 172, kneeR: 170, thighSep: 10, shinReach: 0 })).tripped === null);
+  t('v3.30.0 trips: a real sprint overstride still trips overstride',
+    sf330('sprint', Object.assign({}, F330, { lean: 15, shinReach: 0.25, thighSep: 90 })).tripped === 'overstride');
+  t('v3.30.0 trips: a real sprint with poor foot recovery still trips foot recovery',
+    sf330('sprint', Object.assign({}, F330, { lean: 15, shinReach: 0, thighSep: 90, kneeL: 120, kneeR: 118 })).tripped === 'footRecovery');
+  t('v3.30.0 trips: a real drill overstride still trips overstride',
+    sf330('drill', Object.assign({}, F330, { lean: 15, shinReach: 0.25, thighSep: 90 })).tripped === 'overstride');
+
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR', e && e.stack || e); process.exit(2); });
