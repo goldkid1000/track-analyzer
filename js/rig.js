@@ -564,14 +564,32 @@ function paintRig(rig){
   if(!rig.contentMap) rig.contentMap = contentMapFor(rig);
   if(!rig.ctx){ rig.ctx = canvas.getContext('2d'); if(!rig.ctx) return; }
   var ctx = rig.ctx;
+  var map = rig.contentMap;
+  /* v3.33.0: paint the live video frame UNDER the rig. The overlay
+   * canvas is transparent and the design trusted the <video> element
+   * underneath to show the person — on iOS that element can stay
+   * black (play() issued while the panel was hidden, compositing
+   * inside the rounded overflow-hidden card) while pose still works,
+   * because pose draws the same video into an offscreen canvas and
+   * gets real frames. Painting the frame here makes the live view
+   * show him with the rig on him no matter what the <video> element
+   * does. Same content map as the bones, so frame and rig align
+   * exactly. Painted even before pose locks on, so he sees himself
+   * to get into frame. No video / video not ready: no frame, bones
+   * still draw (honest fallback, no crash). */
+  var hasFrame = !!(video && video.readyState >= 2);
+  function paintFrame(){
+    ctx.drawImage(video, map.bx, map.by, map.mx, map.my);
+  }
   if(!rig.hasTarget){
-    if(!rig.cleared){ ctx.clearRect(0, 0, canvas.width, canvas.height); rig.cleared = true; }
+    if(hasFrame){ paintFrame(); rig.cleared = false; }
+    else if(!rig.cleared){ ctx.clearRect(0, 0, canvas.width, canvas.height); rig.cleared = true; }
     return;
   }
   rig.cleared = false;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if(hasFrame) paintFrame();
   var cw = canvas.width, ch = canvas.height;
-  var map = rig.contentMap;
   function MX(x){ return x * map.mx + map.bx; }
   function MY(y){ return y * map.my + map.by; }
   var i, a, b, x1, y1, x2, y2;

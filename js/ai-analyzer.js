@@ -140,7 +140,10 @@ var AI = {
   replayRigTimer: null, replayRigBound: false,
   lastClassic: null, lastTripped: null, lastGuideIssue: '',
   announcingUntil: 0,
-  deep: { frames1: [], frames2: [], worst: null, worstStreak: 0, worstStreakAct: null, bestStreak: 0, bestStreakAct: null },
+  deep: { frames1: [], frames2: [], worst: null, worstStreak: 0, worstStreakAct: null, bestStreak: 0, bestStreakAct: null,
+    /* v3.33.0: set-position capture for block starts — setCandidate is
+     * the latest still set frame (its canvas holds the pixels),
+     * setFrames the frozen ones, one per block start. */ setCandidate: null, setFrames: [], setCanvas: null },
   /* v3.1.0: subject lock + analysis quality (real-video fix pass). */
   subject: null, subjectGoneAt: null, startDir: 0, lastSetT: -1e9,
   /* v3.12.0: per-clip facing memory (mirrors the two-camera fix). */
@@ -1264,16 +1267,37 @@ function onFrame(f, angle, nowMs){
   if(activity === 'sprint' || activity === 'block-start' || activity === 'squat' || activity === 'drill' || activity === 'hinge' || activity === 'bench' || activity === 'arm-swing'){
     maybeCaptureWorst(scored.score, activity, AI.lastLandmarks1, scored.tripped);
   }
+  /* v3.33.0: set-position capture — every still set frame refreshes
+   * the candidate; entering the drive freezes it as this start's
+   * set photo (see maybeCaptureSet / freezeSetFrame). */
+  if(activity === 'set') maybeCaptureSet(now, AI.lastLandmarks1);
+  if(activity === 'block-start' && prev !== 'block-start') freezeSetFrame();
 }
 function snapshotVideo(){
   var v = $('aiVideo');
   if(!v || v.readyState < 2) return null;
   try{
     var c = document.createElement('canvas');
-    var w = 320, h = Math.round(320 * v.videoHeight / Math.max(1, v.videoWidth));
+    /* v3.33.0: capture at the video's own resolution, not the old
+     * 320px-wide downscale — every Best/Worst photo was a blurry
+     * quarter-size re-capture of a frame the camera had already
+     * delivered sharp. The width is capped at 1920 (a 4K upload
+     * trims to 1080p, still full HD); the aspect is the clip's own,
+     * so there are no black bars. JPEG 0.85 instead of 0.7. The
+     * photos live in memory only — the saved session record never
+     * stores their data URLs — so the bigger captures cannot blow
+     * the localStorage quota. */
+    var nw = v.videoWidth || 0, nh = v.videoHeight || 0;
+    var w, h;
+    if(nw > 0 && nh > 0){
+      w = Math.min(nw, 1920);
+      h = Math.round(w * nh / nw);
+    } else {
+      w = 320; h = Math.round(320 * v.videoHeight / Math.max(1, v.videoWidth));
+    }
     c.width = w; c.height = h;
     c.getContext('2d').drawImage(v, 0, 0, w, h);
-    return c.toDataURL('image/jpeg', 0.7);
+    return c.toDataURL('image/jpeg', 0.85);
   }catch(e){ return null; }
 }
 /* v3.15.0: the Best frame must be HELD, not a one-frame glitch — the
@@ -1324,6 +1348,86 @@ function maybeCaptureWorst(score, activity, lm, tripped){
   /* v3.24.0: keep the fault that tripped on this frame — the caption
    * names it, so the worst frame says what was wrong in it. */
   AI.deep.worst = { score: score, activity: activity, url: url, lm: lm || null, tripped: tripped || null };
+}
+/* v3.33.0: the SET position as its own photo. When a block start is
+ * analysed, the deep report shows the frame at the set position —
+ * the last still "set" frame before the drive, the same frame
+ * firstMovementMs uses as its baseline, so the photo and the
+ * first-movement number agree on the moment.
+ *
+ * Why a canvas, not a snapshot per set frame: the last set frame is
+ * only identifiable in retrospect (it is the last 'set' frame before
+ * the drive), and by the time the drive starts the video has moved
+ * on. So every still 'set' frame is painted into one reusable
+ * offscreen canvas at the video's own resolution (one cheap GPU
+ * blit per frame — no JPEG encode, no jank), and the candidate
+ * records that frame's time + landmarks. When the drive starts the
+ * candidate freezes: the canvas is encoded ONCE into the photo. The
+ * canvas always holds the latest set frame, so the frozen photo is
+ * that exact frame, not a neighbour — and because the athlete is
+ * holding still in set, the frame the pose analysed and the frame
+ * the canvas holds are the same position.
+ *
+ * One entry per block start: freezeSetFrame runs on ENTERING
+ * block-start (any previous activity), then clears the candidate so
+ * the next start gets its own set frames. Entries are matched to
+ * reps in runDeepAnalysis by attachSetFrames. */
+function maybeCaptureSet(t, lm){
+  if(!AI.deep) return;
+  var v = $('aiVideo');
+  if(!v || v.readyState < 2) return;
+  try{
+    var c = AI.deep.setCanvas;
+    if(!c){ c = document.createElement('canvas'); AI.deep.setCanvas = c; }
+    var w = v.videoWidth || 0, h = v.videoHeight || 0;
+    if(w <= 0 || h <= 0){ w = 320; h = Math.round(320 * v.videoHeight / Math.max(1, v.videoWidth)); }
+    if(c.width !== w) c.width = w;
+    if(c.height !== h) c.height = h;
+    c.getContext('2d').drawImage(v, 0, 0, w, h);
+    AI.deep.setCandidate = { t: t, lm: lm || null };
+  }catch(e){ /* no set photo this frame — the report simply shows none */ }
+}
+function freezeSetFrame(){
+  if(!AI.deep || !AI.deep.setCandidate) return;
+  var url = null;
+  if(AI.deep.setCanvas){
+    try{ url = AI.deep.setCanvas.toDataURL('image/jpeg', 0.85); }catch(e){ url = null; }
+  }
+  /* A photo without a frame is not a photo — drop the candidate
+   * rather than attaching a blank entry to a rep. */
+  var cand = AI.deep.setCandidate;
+  AI.deep.setCandidate = null;
+  if(!url) return;
+  AI.deep.setFrames.push({ t: cand.t, url: url, lm: cand.lm });
+}
+/* v3.33.0: match each frozen set photo to the block-start rep it
+ * belongs to. The rule mirrors firstMovementMs: a rep's set frame
+ * is the latest set entry at or before the rep's start — and an
+ * entry belongs to the FIRST rep that starts after it, so a photo
+ * from one start can never leak onto a later start. An entry left
+ * over from an earlier rep (a classifier flicker, or a start too
+ * short to validate) is skipped by the guard: it must come after
+ * the previous rep ended. Entries with no rep after them are simply
+ * never shown. Pure function over plain data — no DOM, no video. */
+function attachSetFrames(reps, setFrames){
+  if(!reps || !setFrames || !setFrames.length) return;
+  var pool = setFrames.slice().sort(function(a, b){ return a.t - b.t; });
+  var prevEnd = null;
+  reps.forEach(function(rep){
+    if(!rep) return;
+    if(rep.activity === 'block-start' && typeof rep.startT === 'number'){
+      var best = null, bestIdx = -1;
+      for(var i = 0; i < pool.length; i++){
+        var e = pool[i];
+        if(!e || typeof e.t !== 'number') continue;
+        if(e.t > rep.startT) continue;
+        if(prevEnd !== null && e.t <= prevEnd) continue;
+        if(best === null || e.t > best.t){ best = e; bestIdx = i; }
+      }
+      if(best){ rep.setFrame = best; pool[bestIdx] = null; }
+    }
+    if(typeof rep.endT === 'number') prevEnd = rep.endT;
+  });
 }
 /* v3.24.0: the Worst frame names its fault. The frame already knew
  * which check tripped on it (scoreFrame returns it, and the clip
@@ -1450,7 +1554,12 @@ function drawLiveSkeleton(rawLm){
   var ctx = canvas.getContext('2d');
   if(!ctx) return;
   if(!rawLm){ ctx.clearRect(0, 0, canvas.width, canvas.height); return; }
-  drawSkeleton(canvas, simplifyLm(rawLm), skelFaultJoints(AI.lastTripped || ''));
+  /* v3.33.0: the fallback used to draw only the bones on a
+   * transparent canvas, trusting the <video> behind it to show the
+   * person — the same trust that left Giel's live view black. Pass
+   * the video as the background so the frame is painted under the
+   * rig here too; not ready yet means bones only, as before. */
+  drawSkeleton(canvas, simplifyLm(rawLm), skelFaultJoints(AI.lastTripped || ''), v.readyState >= 2 ? v : null);
 }
 /* Same rig on the Camera 2 preview (two-camera mode): the skeleton is
  * drawn ON the person in the Camera 2 video. */
@@ -1470,7 +1579,10 @@ function drawLiveSkeleton2(rawLm){
   var ctx = canvas.getContext('2d');
   if(!ctx) return;
   if(!rawLm){ ctx.clearRect(0, 0, canvas.width, canvas.height); return; }
-  drawSkeleton(canvas, simplifyLm(rawLm), skelFaultJoints(AI.lastTripped || ''));
+  /* v3.33.0: same as drawLiveSkeleton's fallback — the video frame
+   * goes under the rig, never just the bones on a transparent
+   * canvas. */
+  drawSkeleton(canvas, simplifyLm(rawLm), skelFaultJoints(AI.lastTripped || ''), v.readyState >= 2 ? v : null);
 }
 function clearLiveSkeleton(){
   if(window.TrackRig){
@@ -2544,8 +2656,17 @@ function drawSkeleton(canvas, lm, faultJoints, bgImg){
   if(!ctx) return [];
   var w = canvas.width, h = canvas.height;
   ctx.clearRect(0, 0, w, h);
-  if(bgImg && bgImg.naturalWidth > 0 && bgImg.naturalHeight > 0){
-    try{ ctx.drawImage(bgImg, 0, 0, w, h); }catch(e){}
+  /* v3.33.0: bgImg can be an Image (deep-report photos) or a live
+   * <video> (the live fallback in drawLiveSkeleton, when the rig
+   * engine is missing) — a video reports videoWidth/videoHeight,
+   * not naturalWidth/naturalHeight. Either way the frame goes under
+   * the bones at the canvas's own size. */
+  if(bgImg){
+    var bw = bgImg.naturalWidth || bgImg.videoWidth || 0;
+    var bh = bgImg.naturalHeight || bgImg.videoHeight || 0;
+    if(bw > 0 && bh > 0){
+      try{ ctx.drawImage(bgImg, 0, 0, w, h); }catch(e){}
+    }
   }
   var sf = Math.max(0.75, Math.min(2, Math.min(w, h) / 320));
   var pts = {};
@@ -2606,7 +2727,7 @@ function bindSkelClick(canvas, faultInfo){
  * the frame's real shape — a 16:9 or portrait frame got a vertically
  * stretched skeleton whose joints sat in the wrong places next to
  * the photo. Each canvas now takes its frame's own aspect (capped
- * at 640px wide) before the skeleton is drawn.
+ * at 1280px wide, v3.33.0 — was 640) before the skeleton is drawn.
  * v3.31.0: module-level (was a closure inside renderDeepReport) so
  * the composite path is testable. */
 function drawSkelOnFrame(canvas, url, lm, joints, faultInfo){
@@ -2618,7 +2739,12 @@ function drawSkelOnFrame(canvas, url, lm, joints, faultInfo){
     var im = new Image();
     im.onload = function(){
       if(im.naturalWidth > 0){
-        var s = Math.min(1, 640 / im.naturalWidth);
+        /* v3.33.0: the rig canvas caps at 1280px wide, not 640 — the
+         * captured photos are full-resolution now, and a 640px rig
+         * drawn over a 1280px photo would upscale soft. 1280 stays
+         * sharp at any phone display size while bounding canvas
+         * memory. */
+        var s = Math.min(1, 1280 / im.naturalWidth);
         canvas.width = Math.max(1, Math.round(im.naturalWidth * s));
         canvas.height = Math.max(1, Math.round(im.naturalHeight * s));
       }
@@ -2665,6 +2791,23 @@ function renderDeepReport(report){
       escHtml(worstCaption(report.worst)) + '</figcaption></figure>' +
       '<canvas id="deepSkelWorst" width="320" height="240"></canvas></div>';
   }
+  /* v3.33.0: the set position as its own photo — the last still set
+   * frame before the drive, the same frame the first-movement
+   * number uses as its baseline. One photo per block start that
+   * has one; a start with no set frames shows nothing, never a
+   * neighbour's photo. The rig canvas rides on the frame, like the
+   * Best/Worst photos above. */
+  var setReps = (report.reps || []).filter(function(r){ return r && r.activity === 'block-start' && r.setFrame; });
+  if(setReps.length){
+    html += '<h5>Set position</h5>';
+    setReps.forEach(function(r, i){
+      var cap = 'Set position (rep ' + (report.reps.indexOf(r) + 1) + ') — still, before the drive';
+      if(typeof r.firstMoveSecs === 'number') cap += ' · first movement ~' + r.firstMoveSecs.toFixed(2) + 's after this frame';
+      html += '<div class="ai-frame-skel"><figure><img src="' + r.setFrame.url + '" alt="Set position"><figcaption>' +
+        escHtml(cap) + '</figcaption></figure>' +
+        '<canvas id="deepSkelSet' + i + '" width="320" height="240"></canvas></div>';
+    });
+  }
   if(report.faultList.length){
     var top = report.faultList.slice(0, 2);
     html += '<h5>Skeleton — where the fix is</h5>';
@@ -2690,6 +2833,11 @@ function renderDeepReport(report){
   var worstUrl = report.worst ? report.worst.url : null;
   drawSkelOnFrame($('deepSkelBest'), bestUrl, bestLm, topJoints, topFault);
   drawSkelOnFrame($('deepSkelWorst'), worstUrl, worstLm, topJoints, topFault);
+  /* v3.33.0: the set-position photos get their rigs too — no fault
+   * joints highlighted (this is the set, not a fault frame). */
+  setReps.forEach(function(r, i){
+    drawSkelOnFrame($('deepSkelSet' + i), r.setFrame.url, r.setFrame.lm, [], null);
+  });
   (report.faultList.slice(0, 2)).forEach(function(f, i){
     drawSkelOnFrame($('deepSkelFault' + i), worstUrl || bestUrl, worstLm || bestLm, skelFaultJoints(f.check), f);
   });
@@ -2728,6 +2876,11 @@ function runDeepAnalysis(){
           if(fm !== null) rep.firstMoveSecs = fm;
         }
       });
+      /* v3.33.0: set-position photo for each block start — the last
+       * still set frame before the drive, the same frame the
+       * first-movement number above uses as its baseline. Silent
+       * when none was captured (a start with no set frames). */
+      attachSetFrames(state.reps, AI.deep.setFrames);
       var vidEl = $('aiVideo');
       /* v3.2.0: for a clip, the summary's "Time" is the CLIP's length,
        * not the wall-clock time the phone spent processing it. */
@@ -3243,7 +3396,8 @@ function startAI(reuseStream, opts){
   AI.lastClassic = null; AI.lastTripped = null; AI.lastGuideIssue = '';
   renderClassicMetrics(null);
   AI.session = { startedAt: Date.now(), reps: {}, faultCounts: {}, fixes: [], bestFrames: [] };
-  AI.deep = { frames1: [], frames2: [], worst: null, worstStreak: 0, worstStreakAct: null, bestStreak: 0, bestStreakAct: null };
+  AI.deep = { frames1: [], frames2: [], worst: null, worstStreak: 0, worstStreakAct: null, bestStreak: 0, bestStreakAct: null,
+    /* v3.33.0: set-position capture (see the AI.deep literal above). */ setCandidate: null, setFrames: [], setCanvas: null };
   AI.deepReport = null;
   /* v3.31.0: a new session starts with no recorder and no replay.
    * The previous recorded clip's URL was released by the clipUrl
@@ -3719,11 +3873,14 @@ window.TrackAI = { setBlockStarts: setBlockStarts, getBlockStarts: function(){ r
     resetBest: function(){ AI.session = { startedAt: Date.now(), reps: {}, faultCounts: {}, fixes: [], bestFrames: [] };
       AI.deep.bestStreak = 0; AI.deep.bestStreakAct = null; },
     renderClipMarkers: renderClipMarkers, getDeep: function(){ return AI.deep; },
-    resetDeep: function(){ AI.deep = { frames1: [], frames2: [], worst: null, worstStreak: 0, worstStreakAct: null, bestStreak: 0, bestStreakAct: null }; },
+    resetDeep: function(){ AI.deep = { frames1: [], frames2: [], worst: null, worstStreak: 0, worstStreakAct: null, bestStreak: 0, bestStreakAct: null,
+      /* v3.33.0: set-position capture (see the AI.deep literal above). */ setCandidate: null, setFrames: [], setCanvas: null }; },
     setStartLocked: function(v){ AI.startLocked = !!v; }, setState: function(v){ AI.state = v; },
     /* v3.25.0 */ squatRepTick: squatRepTick,
     /* v3.19.0 */ sustainedRange: sustainedRange,
     /* v3.31.0 */ firstMovementMs: firstMovementMs, MOVE_DISP: MOVE_DISP, runDeepAnalysis: runDeepAnalysis,
+    /* v3.33.0 */ snapshotVideo: snapshotVideo, maybeCaptureSet: maybeCaptureSet, freezeSetFrame: freezeSetFrame,
+    attachSetFrames: attachSetFrames,
     /* v3.32.0 */ setSquatDip: function(v){ AI.squat.dip = v; },
     getRecorder: function(){ return AI.recorder; }, isReplayClip: function(){ return AI.replayClip; },
     getRecordedUrl: function(){ return AI.recordedUrl; }, isReplayRigBound: function(){ return AI.replayRigBound; },

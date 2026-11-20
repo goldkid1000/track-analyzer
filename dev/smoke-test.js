@@ -98,9 +98,16 @@ const sandbox = { console, setTimeout, clearTimeout, setInterval: () => 999, cle
   document: documentStub, URL: { createObjectURL: () => 'blob:x', revokeObjectURL(){} },
   Blob: function(){}, FileReader: class { readAsDataURL(){} },
   /* v3.31.0: Image fires onload when src is set (async, like a real
-   * image load), so drawSkelOnFrame's composite path is testable. */
+   * image load), so drawSkelOnFrame's composite path is testable.
+   * v3.33.0: ?w= / ?h= in the src set naturalWidth/naturalHeight,
+   * so a test can load a 1920-wide photo and check the rig canvas
+   * caps at 1280. */
   Image: class { constructor(){ this.complete = false; this.naturalWidth = 320; this.naturalHeight = 240; this._src = ''; }
-    set src(v){ this._src = v; var self = this; setTimeout(function(){ self.complete = true; if(self.onload) self.onload(); }, 0); }
+    set src(v){ this._src = v;
+      var mw = /[?&]w=(\d+)/.exec(v || ''), mh = /[?&]h=(\d+)/.exec(v || '');
+      if(mw) this.naturalWidth = parseInt(mw[1], 10);
+      if(mh) this.naturalHeight = parseInt(mh[1], 10);
+      var self = this; setTimeout(function(){ self.complete = true; if(self.onload) self.onload(); }, 0); }
     get src(){ return this._src; } },
   MediaRecorder: MediaRecorderStub,
   SpeechSynthesisUtterance: class { constructor(x){ this.text = x; } },
@@ -2731,6 +2738,263 @@ const W = sandbox;
   W.TrackAI._test.setSquatDip(0);
   t('v3.32.0 trips: a shallow squat with knees caving still trips squatDepth first (priority unchanged)',
     sf332('squat', Object.assign({}, F332, { lean: 20 })).tripped === 'squatDepth');
+
+  /* ================= v3.33.0 ================= */
+  // THE COMPLAINT (screenshot, Nov 20 10:10): the LIVE AI Analyzer
+  // view showed the skeleton floating on black — "Skeleton lines on
+  // you", "Seeing: Set position", no person visible. v3.31.0 fixed
+  // the deep-report/review canvases only; the live loop (paintRig)
+  // never drew the video frame into the overlay canvas — it only
+  // clearRects and draws bones, trusting the <video> element
+  // underneath to show the person. On iOS that element can stay
+  // black (play() issued while the panel was hidden, compositing
+  // inside the rounded overflow-hidden card — camera-kit.js already
+  // documents the black-preview failure) while pose still works,
+  // because pose draws the same video into an offscreen canvas and
+  // gets real frames. v3.33.0 paints the live video frame into the
+  // overlay canvas under the rig, with the same content map the
+  // bones use, so frame and rig align exactly — and it paints the
+  // frame even before pose locks on, so he sees himself to get into
+  // frame. No video / video not ready: honest fallback, no crash,
+  // no image drawn.
+  function liveRig(key, vw, vh, readyState){
+    const c = makeEl(key + 'Canvas'); c.clientWidth = 320; c.clientHeight = 240;
+    const ctx = c.getContext('2d');
+    const calls = [];
+    const od = ctx.drawImage.bind(ctx), os = ctx.stroke.bind(ctx);
+    ctx.drawImage = function(){ calls.push(['image'].concat([].slice.call(arguments))); return od.apply(ctx, arguments); };
+    ctx.stroke = function(){ calls.push(['stroke']); return os.apply(ctx, arguments); };
+    const v = makeEl(key + 'Video'); v.readyState = readyState; v.clientWidth = 320; v.clientHeight = 240;
+    v.videoWidth = vw; v.videoHeight = vh;
+    W.TrackRig.registerFeed(key, v, c, {});
+    return { rig: W.TrackRig._test.getRigByKey(key), video: v, canvas: c, calls: calls };
+  }
+  t('v3.33.0 live frame: paintRig with a ready video + target paints the video frame BEFORE the bones (frame under the rig, not black behind it)',
+    (() => { const L = liveRig('live-frame', 640, 360, 4);
+      W.TrackRig.setTarget(L.canvas, poseDict, [], []);
+      W.TrackRig._test.advanceRig(L.rig, 1);
+      W.TrackRig._test.paintRig(L.rig);
+      W.TrackRig.unregisterFeed('live-frame');
+      // Contain map for 640x360 in a 320x240 canvas: scale 0.5 ->
+      // frame 320x180, letterboxed 30px top/bottom.
+      const img = L.calls.filter(a => a[0] === 'image');
+      const firstStroke = L.calls.findIndex(a => a[0] === 'stroke');
+      return img.length >= 1 && img[0][1] === L.video && img[0][2] === 0 && img[0][3] === 30 &&
+        img[0][4] === 320 && img[0][5] === 180 && firstStroke > 0 &&
+        L.calls[0][0] === 'image'; })());
+  t('v3.33.0 live frame: portrait phone video (720x1280) letterboxes centered under the rig (contain map)',
+    (() => { const L = liveRig('live-portrait', 720, 1280, 4);
+      W.TrackRig.setTarget(L.canvas, poseDict, [], []);
+      W.TrackRig._test.advanceRig(L.rig, 1);
+      W.TrackRig._test.paintRig(L.rig);
+      W.TrackRig.unregisterFeed('live-portrait');
+      // Contain map for 720x1280 in a 320x240 canvas: scale 0.1875 ->
+      // frame 135x240, centered with 92.5px pillars left/right.
+      const img = L.calls.filter(a => a[0] === 'image');
+      return img.length >= 1 && img[0][1] === L.video && img[0][2] === 92.5 && img[0][3] === 0 &&
+        img[0][4] === 135 && img[0][5] === 240; })());
+  t('v3.33.0 live frame: paintRig with a ready video but NO pose target still paints the frame (he sees himself before pose locks on)',
+    (() => { const L = liveRig('live-notarget', 640, 360, 4);
+      W.TrackRig._test.paintRig(L.rig);
+      W.TrackRig.unregisterFeed('live-notarget');
+      const img = L.calls.filter(a => a[0] === 'image');
+      return img.length >= 1 && img[0][1] === L.video &&
+        L.calls.filter(a => a[0] === 'stroke').length === 0; })());
+  t('v3.33.0 live frame: video not ready (readyState 1) paints no frame, bones still draw (honest fallback)',
+    (() => { const L = liveRig('live-notready', 640, 360, 1);
+      W.TrackRig.setTarget(L.canvas, poseDict, [], []);
+      W.TrackRig._test.advanceRig(L.rig, 1);
+      W.TrackRig._test.paintRig(L.rig);
+      W.TrackRig.unregisterFeed('live-notready');
+      return L.calls.filter(a => a[0] === 'image').length === 0 &&
+        L.calls.filter(a => a[0] === 'stroke').length > 0; })());
+  t('v3.33.0 live frame: no video at all paints no frame, bones still draw (live fallback unchanged)',
+    (() => { const c = makeEl('live-novideoCanvas'); c.clientWidth = 320; c.clientHeight = 240;
+      const ctx = c.getContext('2d');
+      const calls = [];
+      const od = ctx.drawImage.bind(ctx), os = ctx.stroke.bind(ctx);
+      ctx.drawImage = function(){ calls.push(['image'].concat([].slice.call(arguments))); return od.apply(ctx, arguments); };
+      ctx.stroke = function(){ calls.push(['stroke']); return os.apply(ctx, arguments); };
+      const rig = W.TrackRig.registerDraw(c, null);
+      W.TrackRig.setTarget(c, poseDict, [], []);
+      W.TrackRig._test.advanceRig(rig, 1);
+      W.TrackRig._test.paintRig(rig);
+      return calls.filter(a => a[0] === 'image').length === 0 &&
+        calls.filter(a => a[0] === 'stroke').length > 0; })());
+
+  /* ================= v3.33.0 (added scope) ================= */
+  // SET-POSITION CAPTURE + CAPTURE QUALITY. The Best/Worst photos
+  // were 320px-wide downscales of frames the camera had already
+  // delivered sharp, and the deep report never showed the set
+  // position at all. v3.33.0 captures at the video's own resolution,
+  // and freezes the last still set frame — the first-movement
+  // baseline — as its own labelled photo with the rig on it. The
+  // live fallback (rig engine missing) also painted no frame.
+  // (aiTest and aiVideo are the suite-level consts above: W.TrackAI._test
+  // and $('aiVideo').)
+  aiVideo.readyState = 4; aiVideo.videoWidth = 1280; aiVideo.videoHeight = 720;
+  function spyCanvasCreate(){
+    const created = [];
+    const orig = W.document.createElement;
+    W.document.createElement = function(tag){
+      const el = orig(tag);
+      if(tag === 'canvas'){
+        const otd = el.toDataURL.bind(el);
+        el._tdArgs = null;
+        el.toDataURL = function(){ el._tdArgs = [].slice.call(arguments); return otd.apply(el, arguments); };
+        created.push(el);
+      }
+      return el;
+    };
+    return { created: created, restore: function(){ W.document.createElement = orig; } };
+  }
+  t('v3.33.0 capture quality: snapshotVideo captures at the video\'s own resolution (1280x720), not the old 320px downscale, JPEG 0.85',
+    (() => { const sp = spyCanvasCreate();
+      const url = aiTest.snapshotVideo();
+      sp.restore();
+      const c = sp.created[0];
+      return !!url && c && c.width === 1280 && c.height === 720 &&
+        c._tdArgs && c._tdArgs[0] === 'image/jpeg' && c._tdArgs[1] === 0.85; })());
+  t('v3.33.0 capture quality: snapshotVideo caps a 4K upload at 1920 wide (1080p, still full HD)',
+    (() => { aiVideo.videoWidth = 3840; aiVideo.videoHeight = 2160;
+      const sp = spyCanvasCreate();
+      const url = aiTest.snapshotVideo();
+      sp.restore();
+      const c = sp.created[0];
+      aiVideo.videoWidth = 1280; aiVideo.videoHeight = 720;
+      return !!url && c && c.width === 1920 && c.height === 1080; })());
+  t('v3.33.0 capture quality: snapshotVideo keeps the clip\'s own aspect — portrait 720x1280, no black bars',
+    (() => { aiVideo.videoWidth = 720; aiVideo.videoHeight = 1280;
+      const sp = spyCanvasCreate();
+      const url = aiTest.snapshotVideo();
+      sp.restore();
+      const c = sp.created[0];
+      aiVideo.videoWidth = 1280; aiVideo.videoHeight = 720;
+      return !!url && c && c.width === 720 && c.height === 1280; })());
+  t('v3.33.0 capture quality: snapshotVideo with no video ready returns null (honest, no crash)',
+    (() => { aiVideo.readyState = 1;
+      const url = aiTest.snapshotVideo();
+      aiVideo.readyState = 4;
+      return url === null; })());
+  const compCap = await (async () => { const c = W.document.createElement('canvas'); c.width = 320; c.height = 240;
+    const calls = spyCtx(c);
+    skel.drawSkelOnFrame(c, 'data:image/jpeg;base64,x?w=1920&h=1080', lmDict, [], null);
+    await sleep(50);
+    return { w: c.width, h: c.height, first: calls[0] }; })();
+  t('v3.33.0 capture quality: drawSkelOnFrame with a 1920-wide photo caps the rig canvas at 1280 (not 640), frame under the rig',
+    compCap.w === 1280 && compCap.h === 720 && compCap.first === 'image');
+  const compSmall = await (async () => { const c = W.document.createElement('canvas'); c.width = 320; c.height = 240;
+    skel.drawSkelOnFrame(c, 'data:image/jpeg;base64,x?w=640&h=480', lmDict, [], null);
+    await sleep(50);
+    return { w: c.width, h: c.height }; })();
+  t('v3.33.0 capture quality: drawSkelOnFrame with a 640-wide photo does not upscale (canvas stays 640)',
+    compSmall.w === 640 && compSmall.h === 480);
+  // Live fallback: when the rig engine is missing, drawLiveSkeleton
+  // used to draw only the bones on a transparent canvas, trusting
+  // the <video> behind it — the same trust that left the live view
+  // black. The video frame goes under the rig here too.
+  t('v3.33.0 live frame: drawSkeleton with a video element as background draws the frame before the bones',
+    (() => { const c = W.document.createElement('canvas'); c.width = 320; c.height = 240;
+      const calls = spyCtx(c);
+      skel.drawSkeleton(c, lmDict, [], { videoWidth: 640, videoHeight: 360 });
+      return calls[0] === 'image' && calls.indexOf('stroke') > 0; })());
+  t('v3.33.0 live frame: drawLiveSkeleton fallback (rig engine missing) paints the video frame under the bones',
+    (() => { const savedRig = W.TrackRig;
+      try{
+        W.TrackRig = undefined;
+        const v = $('aiVideo'); v.readyState = 4; v.clientWidth = 320; v.clientHeight = 240;
+        v.videoWidth = 640; v.videoHeight = 360; v.naturalWidth = 0; v.naturalHeight = 0;
+        const c = $('aiSkelOverlay');
+        const calls = spyCtx(c);
+        const raw = [];
+        for(let i = 0; i < 33; i++) raw.push({ x: 0.5, y: 0.5, visibility: 0.9 });
+        raw[11] = { x: 0.5, y: 0.25, visibility: 0.9 }; raw[12] = { x: 0.58, y: 0.25, visibility: 0.9 };
+        raw[23] = { x: 0.48, y: 0.55, visibility: 0.9 }; raw[24] = { x: 0.54, y: 0.55, visibility: 0.9 };
+        raw[25] = { x: 0.4, y: 0.72, visibility: 0.9 }; raw[26] = { x: 0.6, y: 0.72, visibility: 0.9 };
+        W.TrackAISkeleton.drawLiveSkeleton(raw);
+        return calls[0] === 'image' && calls.indexOf('stroke') > 0;
+      } finally {
+        W.TrackRig = savedRig;
+        const v = $('aiVideo'); v.naturalWidth = 320; v.naturalHeight = 240;
+        v.videoWidth = 1280; v.videoHeight = 720;
+      } })());
+  // Set-position capture: the candidate is the latest still set
+  // frame; freezing on entering the drive makes it that start's
+  // photo. The canvas holds the pixels, so no JPEG encode runs per
+  // frame — only one encode at freeze time.
+  aiTest.resetDeep();
+  t('v3.33.0 set capture: maybeCaptureSet records the latest still set frame (time + landmarks), overwriting earlier ones',
+    (() => { aiTest.maybeCaptureSet(1000, lmDict);
+      aiTest.maybeCaptureSet(1200, lmDict);
+      const d = aiTest.getDeep();
+      return d.setCandidate && d.setCandidate.t === 1200 && d.setCandidate.lm === lmDict &&
+        d.setCanvas && d.setCanvas.width === 1280 && d.setCanvas.height === 720; })());
+  t('v3.33.0 set capture: maybeCaptureSet paints the video frame into the set canvas at native resolution',
+    (() => { const d = aiTest.getDeep();
+      const ctx = d.setCanvas.getContext('2d');
+      const seen = [];
+      const od = ctx.drawImage.bind(ctx);
+      ctx.drawImage = function(){ seen.push([].slice.call(arguments)); return od.apply(ctx, arguments); };
+      aiTest.maybeCaptureSet(1350, lmDict);
+      return seen.length === 1 && seen[0][0] === aiVideo && seen[0][1] === 0 && seen[0][2] === 0 &&
+        seen[0][3] === 1280 && seen[0][4] === 720; })());
+  t('v3.33.0 set capture: freezeSetFrame pushes the exact candidate (time + landmarks + photo) and clears it',
+    (() => { const before = aiTest.getDeep().setFrames.length;
+      aiTest.freezeSetFrame();
+      const d = aiTest.getDeep();
+      const e = d.setFrames[d.setFrames.length - 1];
+      const afterFirst = d.setFrames.length;
+      aiTest.freezeSetFrame(); // no candidate left: no-op
+      return d.setFrames.length === before + 1 && e && e.t === 1350 && e.lm === lmDict &&
+        typeof e.url === 'string' && e.url.indexOf('data:image/jpeg') === 0 &&
+        d.setCandidate === null && d.setFrames.length === afterFirst; })());
+  t('v3.33.0 set capture: freezeSetFrame with no candidate is a no-op (no phantom photo)',
+    (() => { aiTest.resetDeep();
+      aiTest.freezeSetFrame();
+      return aiTest.getDeep().setFrames.length === 0; })());
+  function setEntry(t){ return { t: t, url: 'data:image/jpeg;base64,x', lm: lmDict }; }
+  function bsRep(startT, endT){ return { activity: 'block-start', startT: startT, endT: endT, frames: 8, best: 80, worst: 60, tripCounts: {}, samples: [] }; }
+  t('v3.33.0 set capture: attachSetFrames attaches the latest set entry at or before the rep start (the first-movement baseline)',
+    (() => { const reps = [bsRep(1050, 2500)];
+      aiTest.attachSetFrames(reps, [setEntry(750), setEntry(900)]);
+      return reps[0].setFrame && reps[0].setFrame.t === 900; })());
+  t('v3.33.0 set capture: attachSetFrames never attaches an entry after the rep start',
+    (() => { const reps = [bsRep(1050, 2500)];
+      aiTest.attachSetFrames(reps, [setEntry(2000)]);
+      return !reps[0].setFrame; })());
+  t('v3.33.0 set capture: attachSetFrames gives two starts their own photos (no leak)',
+    (() => { const reps = [bsRep(1050, 2500), bsRep(5000, 6500)];
+      aiTest.attachSetFrames(reps, [setEntry(900), setEntry(4800)]);
+      return reps[0].setFrame && reps[0].setFrame.t === 900 && reps[1].setFrame && reps[1].setFrame.t === 4800; })());
+  t('v3.33.0 set capture: attachSetFrames never hands a leftover entry from one start to a later start',
+    (() => { const reps = [bsRep(1050, 2500), bsRep(5000, 6500)];
+      aiTest.attachSetFrames(reps, [setEntry(900), setEntry(1500)]);
+      return reps[0].setFrame && reps[0].setFrame.t === 900 && !reps[1].setFrame; })());
+  t('v3.33.0 set capture: the attached photo IS the exact frame firstMovementMs uses as its baseline (last still set frame)',
+    (() => { const fr = [];
+      for(let t = 0; t <= 900; t += 150) fr.push({ t: t, activity: 'set', score: 80, tripped: null, disp: 0.01, f: Object.assign({}, fmF) });
+      [1050, 1200, 1350, 1500].forEach(function(t, i){ fr.push({ t: t, activity: 'block-start', score: 75, tripped: null, disp: i === 0 ? 0.02 : 0.3, f: Object.assign({}, fmF) }); });
+      const reps = [bsRep(1050, 1500)];
+      const fmSecs = aiTest.firstMovementMs(fr, reps[0]);
+      aiTest.attachSetFrames(reps, [setEntry(750), setEntry(900)]);
+      // firstMovementMs measures from the last set frame (t=900):
+      // first sustained movement at 1200 -> 0.3s. The photo must be
+      // that same frame (t=900), not a neighbour.
+      return fmSecs !== null && Math.abs(fmSecs - 0.3) < 0.01 && reps[0].setFrame && reps[0].setFrame.t === 900; })());
+  t('v3.33.0 set capture: renderDeepReport shows a labelled Set position photo with the first-movement tie-in',
+    (() => { const reps = [Object.assign(bsRep(1050, 2500), { firstMoveSecs: 0.42,
+        setFrame: setEntry(900), samples: [{ t: 1200, lean: 40, kneeL: 100 }] })];
+      const rep = W.TrackAIDeep.buildDeepReport(reps, 0, {});
+      aiTest.renderDeepReport(rep);
+      const html = $('aiDeepReport').innerHTML;
+      return html.indexOf('Set position') >= 0 && html.indexOf('rep 1') >= 0 &&
+        html.indexOf('first movement ~0.42s after this frame') >= 0 &&
+        html.indexOf('deepSkelSet0') >= 0 && html.indexOf('data:image/jpeg') >= 0; })());
+  t('v3.33.0 set capture: renderDeepReport shows no Set position section when no set frame was captured (silent, never a neighbour)',
+    (() => { const reps = [Object.assign(bsRep(1050, 2500), { samples: [{ t: 1200, lean: 40, kneeL: 100 }] })];
+      const rep = W.TrackAIDeep.buildDeepReport(reps, 0, {});
+      aiTest.renderDeepReport(rep);
+      return $('aiDeepReport').innerHTML.indexOf('Set position') === -1; })());
 
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
