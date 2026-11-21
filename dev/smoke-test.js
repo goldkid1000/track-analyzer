@@ -2996,6 +2996,172 @@ const W = sandbox;
       aiTest.renderDeepReport(rep);
       return $('aiDeepReport').innerHTML.indexOf('Set position') === -1; })());
 
+  /* ================= v3.34.0 ================= */
+  // THE BUG (known since v3.32.0, confirmed by repro): classify()
+  // read a real barbell bench press as 'arm-swing' — still hips +
+  // lean ~85 + wrists travelling the bar path hit the still-hip
+  // arm-swing escape before the bench branch was ever reached, and
+  // the bench branch itself was nearly unreachable anyway: it needed
+  // motion >= 0.05 AND wrists at different heights, but a barbell
+  // bench has still hips and LEVEL wrists (both hands ride the same
+  // bar). Bench reps never counted live and bench frames got
+  // arm-swing scores, callouts and drill videos. v3.34.0: lying down
+  // (lean > 60) with the wrists travelling is a bench, checked
+  // BEFORE the arm-swing escape in both the still-hip branch and the
+  // moving branch (where the old wrist-difference guard is replaced
+  // by the same wrist-travel evidence); and a bench rep is one press
+  // — the bar dips from a held top and returns — counted live by
+  // benchRepTick (the squatRepTick pattern, on bar height) and split
+  // the same way in the deep segmenter, so the deep report counts
+  // presses, not sets. Lying still (no wrist travel) is still not
+  // a bench: a pause between sets never counts as a press.
+  function benchFrame334(wristY, o){
+    o = o || {};
+    return { missing: [], hipX: o.hipX === undefined ? 0.5 : o.hipX,
+      hipY: o.hipY === undefined ? 0.60 : o.hipY,
+      kneeL: o.kneeL === undefined ? 90 : o.kneeL,
+      kneeR: o.kneeR === undefined ? 90 : o.kneeR,
+      lean: o.lean === undefined ? 85 : o.lean,
+      torso: 0.3, wristLY: wristY, wristRY: wristY };
+  }
+  function runFrames334(frames, stepMs){
+    aiTest.setState('none');
+    const hist = []; let act = 'rest';
+    for(let i = 0; i < frames.length; i++) act = aiTest.classify(frames[i], hist, i * stepMs);
+    return act;
+  }
+  function benchTrace334(n, o){
+    o = o || {};
+    const out = [];
+    const period = o.period || 30; // ~1s per press at 33ms steps
+    for(let i = 0; i < n; i++){
+      const w = 0.45 + 0.10 * Math.sin(i * 2 * Math.PI / period);
+      const fr = benchFrame334(w, o);
+      if(o.hipSway) fr.hipY = 0.60 + 0.02 * Math.sin(i * 2 * Math.PI / period);
+      out.push(fr);
+    }
+    return out;
+  }
+  t('v3.34.0 classify: a real barbell bench press (still hips, lean ~85, level wrists travelling the bar path) reads as bench, not arm-swing',
+    runFrames334(benchTrace334(60), 33) === 'bench');
+  t('v3.34.0 classify: a bench press with slight hip motion (leg drive) still reads as bench, not hinge',
+    runFrames334(benchTrace334(60, { hipSway: true }), 33) === 'bench');
+  t('v3.34.0 classify: standing arm swings still read as arm-swing (the bench gate needs a lying-down torso)',
+    (() => { const fr = [];
+      for(let i = 0; i < 60; i++) fr.push({ missing: [], hipX: 0.5, hipY: 0.60, kneeL: 170, kneeR: 170,
+        lean: 10, torso: 0.3,
+        wristLY: 0.45 + 0.15 * Math.sin(i * 2 * Math.PI / 30),
+        wristRY: 0.45 + 0.15 * Math.sin(i * 2 * Math.PI / 30) });
+      return runFrames334(fr, 33) === 'arm-swing'; })());
+  t('v3.34.0 classify: lying still on the bench (wrists not travelling) is not a bench rep — no phantom press from a pause between sets',
+    (() => { const fr = [];
+      for(let i = 0; i < 60; i++) fr.push(benchFrame334(0.45));
+      return runFrames334(fr, 33) === 'set'; })());
+  t('v3.34.0 classify: a set position still reads as set (bench gate needs travelling wrists, not just a bent-knee crouch)',
+    (() => { const fr = [];
+      for(let i = 0; i < 60; i++) fr.push({ missing: [], hipX: 0.5, hipY: 0.60, kneeL: 110, kneeR: 110,
+        lean: 40, torso: 0.3, wristLY: 0.45, wristRY: 0.45 });
+      return runFrames334(fr, 33) === 'set'; })());
+  t('v3.34.0 classify: squat and drill traces still read as squat and drill (no bench theft from hip motion)',
+    runTurn327(squatTrace327(60, -1), 33) === 'squat' &&
+    (() => { const ys = [];
+      for(let i = 0; i < 60; i++) ys.push(i % 2 ? 0.72 : 0.60);
+      return runTurn327(ys, 33) === 'drill'; })());
+  function freshBench334(){ return { phase: 'up', dip: 0, base: null, samples: [] }; }
+  function benchBarTrace334(presses, o){
+    // barY in torso units: top 1.00, chest 1.80. One press: hold top 5,
+    // down 10, bottom 3, up 10, hold top 5 (~1.1s at 33ms steps).
+    o = o || {};
+    const dipTo = o.dipTo === undefined ? 1.80 : o.dipTo;
+    const down = o.slow ? 60 : 10, up = o.slow ? 60 : 10;
+    const out = [];
+    for(let p = 0; p < presses; p++){
+      for(let i = 0; i < 5; i++) out.push(1.00);
+      for(let i = 1; i <= down; i++) out.push(1.00 + (dipTo - 1.00) * i / down);
+      for(let i = 0; i < 3; i++) out.push(dipTo);
+      for(let i = 1; i <= up; i++) out.push(dipTo - (dipTo - 1.00) * i / up);
+      for(let i = 0; i < 5; i++) out.push(1.00);
+    }
+    return out;
+  }
+  function countBenchTicks334(barYs){
+    try{
+      const st = freshBench334(); let n = 0;
+      barYs.forEach(function(y){ if(aiTest.benchRepTick(st, y)) n++; });
+      return n;
+    }catch(e){ return -1; }
+  }
+  t('v3.34.0 bench tick: three full presses count as three reps',
+    countBenchTicks334(benchBarTrace334(3)) === 3);
+  t('v3.34.0 bench tick: one press counts once, and a slow press (60-sample descent) still counts (held-top baseline, like the squat fix)',
+    countBenchTicks334(benchBarTrace334(1)) === 1 &&
+    countBenchTicks334(benchBarTrace334(1, { slow: true })) === 1);
+  t('v3.34.0 bench tick: shallow presses (dip 0.10 torso units) count nothing — no rep invented from a wobble',
+    countBenchTicks334(benchBarTrace334(3, { dipTo: 1.10 })) === 0);
+  t('v3.34.0 bench tick: one glitched bar-height frame cannot move the held top or invent a rep',
+    (() => { const ys = benchBarTrace334(1);
+      ys.splice(2, 0, 0.20); // one wrist misread far above the top, mid-hold
+      return countBenchTicks334(ys) === 1; })());
+  t('v3.34.0 bench tick: a missing bar height is skipped, never counted and never a crash',
+    (() => { try{
+      const st = freshBench334();
+      return aiTest.benchRepTick(st, null) === false && aiTest.benchRepTick(st, NaN) === false &&
+        countBenchTicks334(benchBarTrace334(1)) === 1;
+    }catch(e){ return false; } })());
+  t('v3.34.0 extract: barY is the mean visible wrist height in torso units (the bar path the tick reads)',
+    (() => { try{
+      const f = W.TrackAIQuality.extractAI(benchPose([0.60, 0.50]));
+      return !f.missing.length && typeof f.barY === 'number' && Math.abs(f.barY - 0.50 / f.torso) < 0.01;
+    }catch(e){ return false; } })());
+  t('v3.34.0 extract: one wrist hidden -> barY is the visible wrist only; both hidden -> null, never guessed',
+    (() => { try{
+      const one = W.TrackAIQuality.extractAI(benchPose([0.753, 0.629], true));
+      const lm = benchPose([0.753, 0.629]);
+      [13, 15, 14, 16].forEach(i => { lm[i] = Object.assign({}, lm[i], { visibility: 0.3 }); });
+      const none = W.TrackAIQuality.extractAI(lm);
+      return !one.missing.length && typeof one.barY === 'number' && Math.abs(one.barY - 0.50 / one.torso) < 0.01 &&
+        !none.missing.length && none.barY === null;
+    }catch(e){ return false; } })());
+  function benchSegFrames334(presses, o){
+    o = o || {};
+    const barYs = benchBarTrace334(presses, o);
+    const out = [];
+    barYs.forEach(function(y, i){
+      out.push({ t: i * 33, activity: 'bench', score: 80, tripped: null,
+        f: { lean: 85, kneeL: 90, kneeR: 90, elbow: 100, thighSep: 20, shinReach: 0.1, barY: y } });
+    });
+    if(o.trailingHold){ // 2s of bar held at the top after the last press, still labelled bench
+      const start = out.length;
+      for(let i = 0; i < 60; i++) out.push({ t: (start + i) * 33, activity: 'bench', score: 80, tripped: null,
+        f: { lean: 85, kneeL: 90, kneeR: 90, elbow: 100, thighSep: 20, shinReach: 0.1, barY: 1.00 } });
+    }
+    return out;
+  }
+  function benchRepCount334(frames){
+    try{
+      const valid = aiTest.validateSegments(W.TrackAIDeep.segmentReps(frames));
+      return valid.filter(function(r){ return r.activity === 'bench'; }).length;
+    }catch(e){ return -1; }
+  }
+  t('v3.34.0 deep reps: a 3-press bench set segments into 3 bench reps, not one rep per set',
+    benchRepCount334(benchSegFrames334(3)) === 3);
+  t('v3.34.0 deep reps: the hold after the last press is not a fourth rep',
+    benchRepCount334(benchSegFrames334(3, { trailingHold: true })) === 3);
+  t('v3.34.0 deep reps: a shallow set with no full press still counts one bench rep (the old convention), never zero',
+    benchRepCount334(benchSegFrames334(3, { dipTo: 1.10 })) === 1);
+  t('v3.34.0 deep reps: two sets separated by rest count per set (2 + 1)',
+    (() => { const frames = benchSegFrames334(2);
+      const gap = frames.length;
+      for(let i = 0; i < 10; i++) frames.push({ t: (gap + i) * 33, activity: 'rest', score: 0, tripped: null, f: null });
+      const second = benchSegFrames334(1);
+      second.forEach(function(fr){ fr.t += (gap + 10) * 33; frames.push(fr); });
+      return benchRepCount334(frames) === 3; })());
+  t('v3.34.0 best capture: a held good bench press is accepted by the Best-frame capture (the onFrame gate now admits bench too, so a good press can reach AI Photo)',
+    (() => { aiTest.resetBest();
+      aiTest.maybeCaptureBest(88, 'bench', null);
+      aiTest.maybeCaptureBest(92, 'bench', null);
+      return aiTest.getBestFrames().length === 1 && aiTest.getBestFrames()[0].activity === 'bench'; })());
+
   console.log('\n' + (results.length - failures) + '/' + results.length + ' PASS');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR', e && e.stack || e); process.exit(2); });

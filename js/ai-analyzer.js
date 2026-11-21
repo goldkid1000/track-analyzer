@@ -123,6 +123,7 @@ var AI = {
   session: null, // {startedAt, reps:{}, faultCounts:{}, fixes:[], bestFrames:[]}
   lastFixKey: '', lastSpeak: 0, cueIdx: 0,
   squat: { phase: 'up', dip: 0, base: null, samples: [] }, // v3.25.0: held standing baseline (was a sliding 2s-window base)
+  bench: { phase: 'up', dip: 0, base: null, samples: [] }, // v3.34.0: held lockout baseline, same pattern, on bar height
   movingSince: 0, setSince: 0,
   mode: 'idle', // idle | watching | coaching
   lastFrontal: false, lastLandmarks1: null, lastRawLm: null,
@@ -814,6 +815,17 @@ function extractAI(lm){
   if(elbowR !== null) elbows.push(elbowR);
   var elbow = elbows.length ? elbows.reduce(function(a, b){ return a + b; }, 0) / elbows.length : NaN;
   var bothWrists = visOf(lm[15]) > 0.58 && visOf(lm[16]) > 0.58;
+  /* v3.34.0: bar height for the bench-press rep counter — the mean
+   * height of the VISIBLE wrists, in torso units (distance-invariant:
+   * a far camera shrinks wrist travel and torso together, so the dip
+   * stays ~1 torso unit for a real press). One wrist hidden: the
+   * visible one carries it. Both hidden: null — never guessed from
+   * a pose the engine cannot see. */
+  var barY = null;
+  var barWs = [];
+  if(visOf(lm[15]) > 0.58) barWs.push(lm[15].y);
+  if(visOf(lm[16]) > 0.58) barWs.push(lm[16].y);
+  if(barWs.length) barY = (barWs.reduce(function(a, b){ return a + b; }, 0) / barWs.length) / torso;
   var thighSep = kneeFar === null ? NaN
     : Math.acos(clamp(((lm[25].x - hip.x) * (lm[26].x - hip.x) + (lm[25].y - hip.y) * (lm[26].y - hip.y)) /
       (Math.hypot(lm[25].x - hip.x, lm[25].y - hip.y) * Math.hypot(lm[26].x - hip.x, lm[26].y - hip.y) || 1), -1, 1)) * 180 / Math.PI;
@@ -836,6 +848,7 @@ function extractAI(lm){
     crossing: (bothWrists && visOf(lm[11]) > 0.58 && visOf(lm[12]) > 0.58)
       ? ((lm[15].x - lm[11].x) + (lm[12].x - lm[16].x)) / torso : NaN,
     wristLY: lm[15].y, wristRY: lm[16].y,
+    barY: barY,
     kneeX: lm[kneeI].x, ankleX: lm[ankI].x,
     sideRatio: Math.abs(lm[11].x - lm[12].x) / (Math.abs(lm[11].y - lm[12].y) + 0.03)
   };
@@ -907,7 +920,20 @@ function classify(f, hist, nowMs){
     });
     armExc = Math.max(sustainedRange(wL), sustainedRange(wR)) / last.torso;
   }
-  if(motion < 0.05){ if(armExc > 0.3) return 'arm-swing'; return crouched ? 'set' : 'rest'; }
+  /* v3.34.0: a bench press has still hips and travelling wrists, so
+   * it used to fall into the arm-swing escape below — a barbell bench
+   * read as 'arm-swing' and bench reps never counted. Lying down
+   * (lean > 60) with the wrists travelling the bar path is a bench,
+   * not arm practice: arm swings are upright (lean ~10-25). Lying
+   * still (wrists not travelling) is still rest/set, so a pause
+   * between sets never counts as a press. Known edge, stated not
+   * hidden: the app has no core-work activity, so a sit-up (lying
+   * down, hands travelling with the torso) can also read as bench. */
+  if(motion < 0.05){
+    if(last.lean > 60 && armExc > 0.3) return 'bench';
+    if(armExc > 0.3) return 'arm-swing';
+    return crouched ? 'set' : 'rest';
+  }
   /* v3.1.0: starts go BOTH ways — the owner's clip drives LEFT
    * (velX negative), which the old velX > 0.3 check could never see.
    * Also reachable briefly after 'set': block extension can pass
@@ -923,7 +949,12 @@ function classify(f, hist, nowMs){
    * stay 'set' until the drive actually starts. */
   if(now - AI.lastSetT < 3000 && motion < 0.3) return 'set';
   if(hipRangeY > 0.10 && Math.abs(velX) < 0.15) return turns >= 4 ? 'drill' : 'squat';
-  if(last.lean > 60 && Math.abs(velX) < 0.15 && Math.abs(last.wristLY - last.wristRY) > 0.05) return 'bench';
+  /* v3.34.0: the old guard needed the wrists at DIFFERENT heights,
+   * but both hands ride the same bar at the same height — a real
+   * bench with any hip motion (leg drive) fell through to 'hinge'.
+   * The evidence for a bench is the wrists TRAVELLING the bar path
+   * (armExc), the same evidence the still-hip branch uses above. */
+  if(last.lean > 60 && Math.abs(velX) < 0.15 && armExc > 0.3) return 'bench';
   if(last.lean > 45 && motion < 0.25) return 'hinge';
   if(Math.abs(velX) > 0.25) return 'sprint';
   if(armExc > 0.3) return 'arm-swing';
@@ -1143,6 +1174,46 @@ function squatRepTick(st, hipY){
   }
   return false;
 }
+/* v3.34.0: the bench-press rep counter — the squatRepTick pattern,
+ * on BAR height instead of hip height. A press is one cycle: the bar
+ * dips from a HELD top (lockout) by >= 0.15 torso units and returns
+ * to within 0.05 of that top. The top baseline is re-based ONLY
+ * while the bar is demonstrably still (recent samples' sustained
+ * range under 0.01 torso units), so a slow descent cannot drag it
+ * down with the bar, and the second-lowest sample sets it, so one
+ * glitched wrist frame can't drag it either. Once a descent starts
+ * the baseline freezes for the whole press, and a rep counts only
+ * when the bar comes back to the top — a long hold at the chest
+ * counts nothing, and a shallow wobble (< 0.15) never starts a rep.
+ * barY is in torso units (see extractAI), so the thresholds hold at
+ * any camera distance. Returns true when a press completes; st.dip
+ * is the deepest dip of the current press. Limit, stated not hidden:
+ * a descent slower than ~0.015 torso units/s (a press taking over
+ * ~50s to lower the bar) still reads as still, so it never starts a
+ * rep — no real press descends that slowly. */
+function benchRepTick(st, barY){
+  if(typeof barY !== 'number' || !isFinite(barY)) return false;
+  if(st.phase !== 'down'){
+    st.samples.push(barY);
+    if(st.samples.length > 20) st.samples.shift();
+    /* Still at the top: the recent bar heights barely move. A
+     * descent — even a slow one — moves them more than this over the
+     * window, so the baseline stays frozen mid-press. */
+    if(st.samples.length >= 5 && sustainedRange(st.samples) < 0.01){
+      var s = st.samples.slice().sort(function(a, b){ return a - b; });
+      st.base = s.length >= 3 ? s[1] : s[0];
+    }
+  }
+  var base = (st.base == null) ? barY : st.base;
+  var dip = barY - base;
+  if(dip > st.dip) st.dip = dip;
+  if(st.phase === 'up' && dip > 0.15){ st.phase = 'down'; }
+  else if(st.phase === 'down' && dip < 0.05){
+    st.phase = 'up'; st.dip = 0; st.samples = [];
+    return true;
+  }
+  return false;
+}
 function onFrame(f, angle, nowMs){
   if(angle !== 1) return; // state machine + reps run off angle 1 only
   /* v3.0.0 auto slow-mo: how far the fastest joint jumped since the
@@ -1163,11 +1234,21 @@ function onFrame(f, angle, nowMs){
   if(activity === 'squat' && f && !f.missing){
     if(squatRepTick(AI.squat, f.hipY)) countRep('squat');
   }
+  /* v3.34.0: bench presses count live, one per press — the same held
+   * baseline pattern as squats, on bar height (see benchRepTick). */
+  if(activity === 'bench' && f && !f.missing){
+    if(benchRepTick(AI.bench, f.barY)) countRep('bench');
+  }
   if(activity === 'set') AI.lastSetT = now;
   if(activity !== prev){
     AI.state = activity; AI.stateSince = now;
     if(activity === 'sprint' || activity === 'block-start') AI.movingSince = now;
     if(activity === 'set') AI.setSince = now;
+    /* v3.34.0: an abandoned press (bar racked mid-descent, spotter
+     * rescue) must not complete itself on the next set's first
+     * top-hold frame — the bench tick resets when bench ends, so the
+     * next set starts from a fresh held top. */
+    if(prev === 'bench' && activity !== 'bench') AI.bench = { phase: 'up', dip: 0, base: null, samples: [] };
     /* v3.1.0: a start that ends with the athlete leaving the frame
      * still counts — there is no 'rest' after an exit. The rep is
      * banked once the subject lock confirms the athlete is gone
@@ -1221,7 +1302,10 @@ function onFrame(f, angle, nowMs){
      * doubled the rate. kneeL stays as stored (the deep report's
      * 'front knee' median reads it); kneeNear is the single-leg
      * signal the fallback needs. */
-    f: { lean: f.lean, kneeL: f.kneeFront, kneeNear: f.kneeNear, kneeR: f.kneeRear, elbow: f.elbow, thighSep: f.thighSep, shinReach: f.shinReach } });
+    f: { lean: f.lean, kneeL: f.kneeFront, kneeNear: f.kneeNear, kneeR: f.kneeRear, elbow: f.elbow, thighSep: f.thighSep, shinReach: f.shinReach,
+    /* v3.34.0: bar height rides along so the deep segmenter can split
+     * a bench set into presses with the same bar-cycle rule the live
+     * counter uses (see absorbFrame). */ barY: f.barY } });
   if(AI.deep.frames1.length > 900) AI.deep.frames1.shift();
   // Live callout every ~5s while moving: praise + one fix.
   if((activity === 'sprint' || activity === 'block-start' || activity === 'squat' || activity === 'hinge' || activity === 'drill' || activity === 'bench' || activity === 'arm-swing') && now - AI.lastCallout > 5000){
@@ -1261,7 +1345,10 @@ function onFrame(f, angle, nowMs){
   // Best frames: top-3 snapshots by score during reps.
   // v2.2.0: arm swings capture too — before this, arm practice never
   // produced a best frame, so nothing ever reached AI Photo.
-  if(scored.score >= 70 && (activity === 'sprint' || activity === 'block-start' || activity === 'squat' || activity === 'arm-swing')){
+  // v3.34.0: bench captures too — before this, a good press never
+  // produced a Best frame either (the onFrame gate is the only place
+  // that filters; maybeCaptureBest itself takes any activity).
+  if(scored.score >= 70 && (activity === 'sprint' || activity === 'block-start' || activity === 'squat' || activity === 'arm-swing' || activity === 'bench')){
     maybeCaptureBest(scored.score, activity, AI.lastLandmarks1);
   }
   if(activity === 'sprint' || activity === 'block-start' || activity === 'squat' || activity === 'drill' || activity === 'hinge' || activity === 'bench' || activity === 'arm-swing'){
@@ -2299,6 +2386,11 @@ function startCoachingFromWatch(){
  * counted 0, the self-contradiction in the owner's recording. */
 var REP_ACTIVITIES = ['block-start', 'sprint', 'drill', 'squat', 'hinge', 'bench', 'arm-swing'];
 function absorbFrame(state, fr){
+  /* v3.34.0: the bench tick resets when the bench bout ends (see the
+   * onFrame reset above) — an abandoned press never completes itself
+   * on the next set. Covers every non-bench frame, including tracking
+   * gaps ('none') and other rep activities. */
+  if(fr.activity !== 'bench' && state.bench) state.bench = null;
   if(REP_ACTIVITIES.indexOf(fr.activity) === -1){ state.cur = null; return; }
   var cur = state.cur;
   if(!cur || cur.activity !== fr.activity){
@@ -2315,9 +2407,26 @@ function absorbFrame(state, fr){
    * never mutate the stored frames. Samples without a time (older
    * hand-built reps) simply yield no rate, never a crash. */
   if(fr.f){ var s = {}; for(var k in fr.f){ if(Object.prototype.hasOwnProperty.call(fr.f, k)) s[k] = fr.f[k]; } s.t = fr.t; cur.samples.push(s); }
+  /* v3.34.0: a bench segment is one continuous bench bout, but a
+   * bench rep is one press — split the bout at each completed press
+   * with the SAME bar-cycle rule the live counter uses (benchRepTick
+   * on the stored bar heights), so the deep report counts presses,
+   * not sets, and agrees with the live counter. A segment closed by
+   * a press carries presses = 1; the tail after the last press (the
+   * hold at lockout before the bar is racked) carries none, and
+   * validateSegments drops that tail. A bout with no completed press
+   * (shallow presses, or frames stored before barY existed) never
+   * splits and still counts as one bench rep, the old convention. */
+  if(fr.activity === 'bench' && fr.f && typeof fr.f.barY === 'number'){
+    if(!state.bench) state.bench = { phase: 'up', dip: 0, base: null, samples: [] };
+    if(benchRepTick(state.bench, fr.f.barY)){
+      cur.presses = (cur.presses || 0) + 1;
+      state.cur = null;
+    }
+  }
 }
 function segmentReps(frames){
-  var state = { reps: [], cur: null };
+  var state = { reps: [], cur: null, bench: { phase: 'up', dip: 0, base: null, samples: [] } };
   frames.forEach(function(fr){ absorbFrame(state, fr); });
   return state.reps;
 }
@@ -2330,10 +2439,21 @@ function segmentReps(frames){
  * summary, deep check, Last session card and AI Photo can never
  * disagree again. Scores are clamped into range here too. */
 function validateSegments(reps){
-  return (reps || []).filter(function(r){
+  return (reps || []).filter(function(r, idx, arr){
     if(!r || REP_ACTIVITIES.indexOf(r.activity) === -1) return false;
     if(r.frames < 3) return false;
     if(r.endT - r.startT < 300) return false;
+    /* v3.34.0: a bench segment that ends without a completed press is
+     * the hold at lockout after the last press of a set, not another
+     * press — drop it when it directly follows a bench segment that
+     * DID complete a press (the set's tail). A lone bench segment
+     * with no completed press is kept: one rep, the old convention
+     * for a sustained bench bout (shallow presses, or frames stored
+     * before barY existed). */
+    if(r.activity === 'bench' && !r.presses && idx > 0){
+      var prev = arr[idx - 1];
+      if(prev && prev.activity === 'bench' && prev.presses) return false;
+    }
     return true;
   }).map(function(r){
     r.best = r.best < 0 ? -1 : pct(r.best);
@@ -3417,6 +3537,7 @@ function startAI(reuseStream, opts){
   resetAIFacing();
   AI.quality = { sampled: 0, detected: 0, accepted: 0, rejected: 0, scored: 0 };
   AI.squat = { phase: 'up', dip: 0, base: null, samples: [] };
+  AI.bench = { phase: 'up', dip: 0, base: null, samples: [] };
   AI.mode = 'coaching';
   setText('aiRepCount', '0');
   setText('aiGood', '—'); setText('aiFix', '—');
@@ -3877,6 +3998,7 @@ window.TrackAI = { setBlockStarts: setBlockStarts, getBlockStarts: function(){ r
       /* v3.33.0: set-position capture (see the AI.deep literal above). */ setCandidate: null, setFrames: [], setCanvas: null }; },
     setStartLocked: function(v){ AI.startLocked = !!v; }, setState: function(v){ AI.state = v; },
     /* v3.25.0 */ squatRepTick: squatRepTick,
+    /* v3.34.0 */ benchRepTick: benchRepTick,
     /* v3.19.0 */ sustainedRange: sustainedRange,
     /* v3.31.0 */ firstMovementMs: firstMovementMs, MOVE_DISP: MOVE_DISP, runDeepAnalysis: runDeepAnalysis,
     /* v3.33.0 */ snapshotVideo: snapshotVideo, maybeCaptureSet: maybeCaptureSet, freezeSetFrame: freezeSetFrame,

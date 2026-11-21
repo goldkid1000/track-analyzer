@@ -1,5 +1,14 @@
 [
  {
+  "version": "3.34.0",
+  "date": "2026-11-21",
+  "notes": [
+   "Your bench press used to read as arm swings: still hips and moving hands looked like arm practice to the camera, so a bench set never counted a bench rep and got arm-swing scores and drill videos instead. Lying down with the bar travelling up and down is now read as a bench press, and a rep is one press — the bar dipping from lockout and coming back up — so the counter ticks once per press while you lift.",
+   "The deep check counts presses now, not sets: a set of eight presses shows eight bench reps, each with its own score, and the hold after your last press is not counted as an extra rep. A pause between sets with the bar still counts as nothing, a shallow half-press doesn't count, and a good press can now be a Best frame, like a squat."
+  ],
+  "notify": true
+ },
+ {
   "version": "3.33.0",
   "date": "2026-11-20",
   "notes": [
